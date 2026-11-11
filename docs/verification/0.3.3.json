@@ -1,0 +1,87 @@
+{
+  "format": 1,
+  "version": "0.3.3",
+  "source_commit": "bc8661283f1c1cd0d75bcf3a1a04db8391af7a67",
+  "source_branch": "feat/desktop-reception",
+  "maintenance_branch": "maint/reception-workbench",
+  "original_candidate": {
+    "backend_tests": 75,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "typecheck_passed": true,
+    "packaged_demo_window_passed": true,
+    "full_test_suite_run": false,
+    "asar_sha256": "0bc8c76867c1cfb2af83e8face31c72a0614a454c521af3bb9beace7853ae83b",
+    "installer_sha256": "df291911492f435946457db7abfd143c93bb38feac81e8d50785c2bc34c243b3",
+    "archive_sha256": "4a762bd3d078ab7c08bdef14e26050571759d5433a674c6ae3d308b58a7252f2",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "original_wait_timeout": "One test timed out in the initial run; its cause remains unestablished. Isolated and final focused runs passed."
+  },
+  "maintenance_directory": {
+    "status": "passed",
+    "fresh_dependencies_verified": true,
+    "electron_runtime_installed": true,
+    "independent_git_directory": true,
+    "old_worktree_linked": false,
+    "source_copy_files": 247,
+    "unchanged_non_document_files": 237,
+    "backend_focused_tests": 108,
+    "node_tool_tests": 87,
+    "typecheck_passed": true,
+    "build_passed": true,
+    "actual_source_window_passed": true,
+    "screenshot_visually_reviewed": true,
+    "normal_shutdown_passed": true,
+    "full_test_suite_run": false,
+    "initial_runner_issue": "The first setup wrapper did not finish closing its log. Installs completed and the independent environment check passed.",
+    "initial_window_issue": "The fresh Electron package had no dist runtime. The pinned package installer populated it; final window checks passed."
+  },
+  "publication": {
+    "status": "published-and-verified",
+    "repository": "juccistar/reception-workbench-releases",
+    "tag": "v0.3.3",
+    "release_id": 441362861,
+    "url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.3",
+    "published_at": "2026-11-11T07:42:28Z",
+    "assets": [
+      {
+        "file": "ReceptionWorkbench-Setup-0.3.3.exe",
+        "bytes": 134474481,
+        "sha256": "df291911492f435946457db7abfd143c93bb38feac81e8d50785c2bc34c243b3",
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.3/ReceptionWorkbench-Setup-0.3.3.exe"
+      },
+      {
+        "file": "ReceptionWorkbench-Setup-0.3.3.exe.blockmap",
+        "bytes": 140155,
+        "sha256": "b8f87f2c245161527aa8b8e71ab60c1f23daf601e71aa1327dde33fab94deee0",
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.3/ReceptionWorkbench-Setup-0.3.3.exe.blockmap"
+      },
+      {
+        "file": "latest.yml",
+        "bytes": 722,
+        "sha256": "2a8ee60d79a3d9594a6b0795d09d6ee88d70c57d26ac69909dc9ef8ae23d84ba",
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.3/latest.yml"
+      },
+      {
+        "file": "ReceptionWorkbench-0.3.3.zip",
+        "bytes": 176228843,
+        "sha256": "4a762bd3d078ab7c08bdef14e26050571759d5433a674c6ae3d308b58a7252f2",
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.3/ReceptionWorkbench-0.3.3.zip"
+      }
+    ],
+    "release_signature": "ed25519",
+    "windows_signed": false
+  },
+  "real_ai_calls": 0,
+  "customer_sends": 0,
+  "production_data_migrated": false,
+  "installer_executed": false,
+  "default_runtime_promoted": false,
+  "limitations": [
+    "The original 14-character Ready literal and acceptance of that exact form remain unverified.",
+    "No real Accio two-round customer send was performed.",
+    "Current-source mismatches and unknown card formats remain blocked.",
+    "Source migration does not migrate existing business data or authorize deleting the old business root."
+  ]
+}

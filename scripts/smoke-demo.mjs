@@ -1,0 +1,50 @@
+import { _electron as electron } from 'playwright';
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, open, readFile, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const index=process.argv.indexOf('--label');
+const label=index<0?'':process.argv[index+1];
+assert(/^[a-z0-9][a-z0-9-]{0,60}$/.test(label||''),'Pass a new --label');
+const version=JSON.parse(await readFile(path.join(root,'package.json'),'utf8')).version;
+const output=path.join(root,'artifacts/verification/demo-'+label);await mkdir(output);
+await (await open(path.join(output,'attempt.claim'),'wx')).close();
+const temporary=await mkdtemp(path.join(os.tmpdir(),'arw-source-demo-'));
+const data=path.join(temporary,'data');
+const env={...process.env};
+for(const key of Object.keys(env)) if(/^(ACCIO|PHOENIX|RECEPTION)_/i.test(key)||/^(ELECTRON_RUN_AS_NODE|PYTHONPATH|PYTHONHOME|GH_TOKEN|GITHUB_TOKEN)$/i.test(key)||/credential|secret|token|password|api.?key/i.test(key)) delete env[key];
+env.RECEPTION_BOOTSTRAP_DIR=path.join(temporary,'bootstrap');env.LOCALAPPDATA=path.join(temporary,'local-app-data');
+env.CHROME_LOG_FILE=path.join(output,'chromium.log');
+const report={status:'failed',version,mode:'demo',real_ai_calls:0,customer_sends:0,production_data_accessed:false,actual_window:true,business_ipc_mocked:false,window_closed:false,renderer_errors:[]};
+async function until(check,message,timeout=45000){const end=Date.now()+timeout;while(Date.now()<end){if(await check())return;await new Promise(resolve=>setTimeout(resolve,100));}throw new Error(message);}
+let application;
+try{
+ application=await electron.launch({executablePath:path.join(root,'node_modules/electron/dist/electron.exe'),args:[path.join(root,'artifacts/app/main/index.js'),'--data-dir',data,'--log-file='+env.CHROME_LOG_FILE],cwd:root,env,timeout:45000});
+ const owned=application.process();
+ report.electron_runtime_version=await application.evaluate(()=>process.versions.electron);
+ const page=await application.firstWindow();page.on('pageerror',error=>report.renderer_errors.push(error.message));
+ await page.getByRole('textbox',{name:'回复正文',exact:true}).waitFor({timeout:45000});
+ const invoke=(method,params={})=>page.evaluate(({method,params})=>window.reception.invoke(method,params),{method,params});
+ const snapshot=()=>invoke('get_snapshot');assert.equal((await snapshot()).app.mode,'demo');assert.equal((await snapshot()).app.version,version);
+ await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setContentSize(1440,940));
+ await page.getByRole('button',{name:/Emma Wilson/}).click();await page.getByRole('main',{name:'Emma Wilson 的客户接待'}).waitFor();
+ await page.getByRole('checkbox',{name:'自动中文翻译',exact:true}).check();
+ await invoke('check_ai');await until(async()=>(await snapshot()).checks.ai.status==='demo','Demo AI check did not finish');
+ const cid='demo-emma';await invoke('inject_demo',{conversation_id:cid,text:'Hello'});
+ const detail=()=>invoke('get_conversation',{conversation_id:cid});let message;
+ await until(async()=>{message=(await detail()).messages.find(row=>row.role==='buyer'&&row.text==='Hello');return !!message;},'Synthetic source missing');
+ const items=[{kind:'message',source_id:message.message_id}];await invoke('request_translations',{conversation_id:cid,items,client_request_id:label+'-translation'});
+ await until(async()=>(await invoke('get_translations',{conversation_id:cid,items})).items.some(row=>row.status==='ready'&&row.text==='你好'),'Demo translation failed');
+ await page.getByRole('button',{name:'生成回复建议',exact:true}).click();await until(async()=>(await detail()).manual_suggestion?.status==='ready','Manual suggestion failed');
+ assert.equal((await detail()).conversation.human_owned,false);assert.equal((await snapshot()).reception.running,false);assert.equal((await snapshot()).outbox.length,0);
+ assert.equal(await page.getByRole('textbox',{name:'回复正文',exact:true}).inputValue(),'');
+ await page.getByText('AI 回复建议',{exact:true}).waitFor();
+ await page.getByText('你好',{exact:true}).first().scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,'window.png'),animations:'disabled'});
+ await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());await until(()=>owned.exitCode!==null,'Window did not close normally');
+ assert.equal((await readFile(path.join(data,'.reception-clean-shutdown'),'utf8')).trim(),'reception-managed-clean-v1');
+ assert.deepEqual(report.renderer_errors,[]);report.window_closed=true;report.status='passed';application=null;
+}catch(error){report.error=error.message;process.exitCode=1;}
+finally{if(application)await application.close().catch(()=>{});await writeFile(path.join(output,'result.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx'});}
+console.log(JSON.stringify(report));

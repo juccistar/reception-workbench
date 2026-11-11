@@ -1,0 +1,250 @@
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ArrowDown, ArrowLeft, ArrowUpRight, BookOpen, CheckCheck, ChevronDown, ChevronRight, CircleHelp, ClipboardList, Clock3, FileText, Globe2, History, Layers3, ListFilter, MapPin, MessageCircle, Package, PanelRightClose, PencilLine, RefreshCw, Save, Search, Send, ShieldAlert, Sparkles, Tag, UserRound, UsersRound } from 'lucide-react';
+import type { ConversationSummary, Message, ReadingSnapshot, ReceptionBridge } from '../../shared/api';
+import type { Workbench } from '../hooks/useWorkbench';
+import { currentGeneration, effectiveReceptionStatus, receptionLabel, registrationSummary } from '../receptionStatus';
+import { compareMessages, useReadAcknowledgement, type ObservedMessage } from '../hooks/useReadAcknowledgement';
+import { ReplyActivity } from './ReplyActivity';
+import { MessageImages } from './MessageImages';
+import { useTranslations } from '../hooks/useTranslations';
+
+const scrollBehavior = (): ScrollBehavior => window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'auto' : 'smooth';
+import { Badge, Button, Empty, Feedback, IconButton, StateBadge, dateTime, fieldLabels, jobLabels, time } from './ui';
+
+export function CustomerList({ model, close }: { model: Workbench; close?: () => void }) {
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('all');
+  const conversations = model.snapshot?.conversations ?? [];
+  const filtered = conversations.filter(item => `${item.customer_name} ${item.last_message} ${item.country || ''}`.toLocaleLowerCase().includes(search.toLocaleLowerCase())).filter(item => filter === 'all' || (filter === 'pending' && item.reply_pending === true) || (filter === 'assist' && ((item.assistance_open_count ?? 0) > 0 || item.state === 'needs_human' || (model.snapshot?.assistance_tasks ?? []).some(task => task.conversation_id === item.conversation_id && task.status === 'open'))) || (filter === 'human' && item.human_owned) || (filter === 'quote' && item.state === 'waiting_quote'));
+  const choose = async (item: ConversationSummary) => { if (await model.selectConversation(item.conversation_id, item.case_id)) close?.(); };
+  return <section className="customer-list" aria-label="客户列表">
+    <div className="list-heading"><h2>客户接待 <span>{model.snapshot ? conversations.length : '—'}</span></h2><IconButton label="同步近期消息" disabled={!model.connected || model.busy('sync_messages')} onClick={() => void model.runJob('sync_messages')}><RefreshCw size={17} className={model.busy('sync_messages') ? 'spin' : ''} /></IconButton></div>
+    <div className="list-search"><Search size={17} /><input aria-label="搜索已同步客户" placeholder="搜索客户、地区或最近消息" value={search} onChange={event => setSearch(event.target.value)} /></div>
+    <div className="list-tabs" aria-label="筛选客户">{[['all', '全部'], ['pending', '待回复'], ['assist', '待你协助'], ['human', '人工接管'], ['quote', '待报价']].map(([value, label]) => <button type="button" key={value} aria-pressed={filter === value} className={filter === value ? 'selected' : ''} onClick={() => setFilter(value)}>{label}</button>)}</div>
+    <div className="customer-rows">{model.loading ? <div className="list-loading">正在读取本地客户…</div> : filtered.length === 0 ? <Empty title={search || filter !== 'all' ? '没有匹配的客户' : '尚无已同步客户'}>{search ? '这里只搜索已同步的本地资料。' : '先在连接与设置中核验读取，再同步消息。'}</Empty> : filtered.map(item => <button type="button" className={`customer-row ${model.selection.conversationId === item.conversation_id ? 'active' : ''}`} key={item.conversation_id} data-conversation-id={item.conversation_id} onClick={() => void choose(item)} aria-current={model.selection.conversationId === item.conversation_id ? 'true' : undefined}>
+      <div className="customer-top"><span className="customer-name">{item.customer_name}</span><time>{time(item.last_timestamp)}</time></div><p>{item.last_message || '暂无消息正文'}</p><div className="customer-bottom"><StateBadge state={item.state} />{item.reply_pending === true && <Badge tone="amber">待回复</Badge>}{item.unread_count > 0 && <span className="unread" aria-label={`${item.unread_count} 条未读`}>{item.unread_count}</span>}</div><small className="customer-reception" title={item.reception_status?.reason}>{model.closing ? '工作台正在关闭' : !model.connected ? '服务未连接 · 状态待同步' : item.reception_status?.reason ?? (item.human_owned ? '此客户由人工接待' : '接待状态待同步')}</small>
+    </button>)}</div>
+    <div className="list-foot"><span className={`connection-dot ${model.connected ? 'on' : ''}`} />{model.connected ? '本地已同步客户' : '服务未连接'}<ListFilter size={13} /></div>
+  </section>;
+}
+
+export function Requirements({ model, bridge, collapse, locate }: { model: Workbench; bridge?: ReceptionBridge; collapse?: () => void; locate: (id: string) => void }) {
+  const detail = model.detail;
+  const item = detail?.case;
+  const supported = ['product', 'quantity', 'specifications', 'customization', 'destination', 'delivery', 'budget', 'packaging', 'contact'];
+  const caseSources = item ? [...(item.summary && item.summary.length <= 50000 ? [{ item: { kind: 'case_text' as const, source_id: item.case_id, field: 'summary' }, version: item.summary }] : []), ...Object.entries(item.facts).filter(([name, fact]) => supported.includes(name) && !fact.display_value && !!fact.value && fact.value.length <= 50000).map(([name, fact]) => ({ item: { kind: 'case_text' as const, source_id: item.case_id, field: `facts.${name}` }, version: fact.value }))] : [];
+  const translationReady = model.snapshot?.app.mode === 'demo' || model.snapshot?.checks.ai.status === 'passed';
+  const translations = useTranslations(bridge, detail?.conversation.conversation_id ?? '', !!detail && translationReady, caseSources, model.snapshot?.app.seller_id ?? '');
+  if (!detail) return <div className="requirements"><Empty title="选择客户查看采购需求" /></div>;
+  const current = detail.case;
+  const facts = Object.entries(current.facts);
+  const sources = detail.draft?.validation.sources ?? [];
+  const product = (current.facts.product?.value ?? '').toLocaleLowerCase();
+  const policies = model.snapshot?.policies.filter(policy => policy.confirmed && policy.public && (!policy.valid_until || policy.valid_until > Date.now()) && (!policy.product_scope.length || policy.product_scope.some(scope => product.includes(scope.toLocaleLowerCase()) || current.procurement_key.toLocaleLowerCase() === scope.toLocaleLowerCase()))) ?? [];
+  const registration = registrationSummary(model.snapshot?.outbox ?? [], current);
+  return <section className="requirements" aria-label="采购需求">
+    <div className="requirements-heading"><h2>采购需求</h2>{collapse && <IconButton label="收起需求侧栏" aria-expanded="true" onClick={collapse}><PanelRightClose size={18} /></IconButton>}</div>
+    <div className="requirements-scroll">
+      <div className="case-caption"><label>采购事项 <select aria-label="当前采购事项" value={model.selection.caseId} onChange={event => void model.selectConversation(detail.conversation.conversation_id, event.target.value)}>{detail.cases.map(item => <option value={item.case_id} key={item.case_id}>{item.facts.product?.display_value || item.facts.product?.value || item.procurement_key || '待整理事项'}</option>)}</select></label><StateBadge state={current.state} /></div>
+      <p className="case-summary">{translations.get({ kind: 'case_text', source_id: current.case_id, field: 'summary' }, current.summary)?.text || current.summary || current.procurement_key || '需求正在整理，尚无确认摘要。'}</p>
+      <section className="fact-card">{facts.length === 0 ? <p className="muted">尚无有依据的采购事实。</p> : facts.map(([key, fact]) => { const Icon = key === 'product' ? Package : key === 'quantity' ? Layers3 : key === 'destination' ? MapPin : key === 'customization' ? Tag : FileText; return <div className="fact" key={key}><Icon size={17} /><span>{fieldLabels[key] ?? key}</span><div><strong>{fact.display_value || translations.get({ kind: 'case_text', source_id: current.case_id, field: `facts.${key}` }, fact.value)?.text || fact.value}</strong>{fact.status !== 'confirmed' && <Badge tone="amber">{fact.status === 'conflict' ? '存在冲突' : '待核实'}</Badge>}{fact.evidence_ids.length > 0 && <button type="button" className="source-link" onClick={() => locate(fact.evidence_ids[0])}>查看原文 <ArrowUpRight size={12} /></button>}</div></div>; })}</section>
+      <section className={`requirements-section ${current.missing.length ? 'missing-section' : ''}`}><h3><CircleHelp size={17} />待确认{current.missing.length > 0 && <span>{current.missing.length}</span>}</h3>{current.missing.length ? <ul className="missing-list">{current.missing.map(key => <li key={key}><span className="open-circle" />{fieldLabels[key] ?? key}<Badge tone="amber">待确认</Badge></li>)}</ul> : <p className="muted">当前必填条件已齐全。报价和承诺仍需人工核实。</p>}</section>
+      <section className="requirements-section"><h3><BookOpen size={17} />回复依据</h3>{sources.length > 0 && <div className="source-tags">{sources.map(source => <span key={source}>{model.snapshot?.policies.find(policy => policy.policy_id === source)?.title ?? (detail.messages.some(message => message.message_id === source) ? '客户消息依据' : /^photo_obs_[a-f0-9]{64}$/.test(source) ? '图片观察 · 待确认' : source)}</span>)}</div>}{policies.map(policy => <details className="policy-source" key={policy.policy_id}><summary><FileText size={15} /><span>{policy.title}</span><ChevronRight size={14} /></summary><p className="preserve-text">{policy.content}</p><small>v{policy.revision} · {policy.public ? '可用于客户回复' : '仅内部参考'} · {policy.product_scope.join('、') || '通用资料'}</small></details>)}{!policies.length && <p className="muted">尚无已确认资料，不能据此承诺费用、库存或交期。</p>}</section>
+      <section className="requirements-section revision-info"><h3><History size={17} />事项与历史</h3><div><span>需求版本</span><strong>v{current.revision}</strong></div><div><span>最近更新</span><span>{dateTime(current.updated_at)}</span></div><p>{detail.history.message || '历史覆盖尚待核验'}</p></section>
+    </div>
+    <div className="requirements-foot"><CheckCheck size={16} /><span>{model.editor?.dirty ? '聊天草稿尚未保存' : '需求已保存在本地'}<small>{registration}</small><button type="button" className="source-link" onClick={() => void model.navigate('activity')}>查看运行记录 <ArrowUpRight size={12} /></button></span></div>
+  </section>;
+}
+
+export function SupplementPanel({ model }: { model: Workbench }) {
+  const note = model.supplement;
+  return <section className="supplement-panel" aria-label="业务补充"><h2>业务补充</h2><p>仅用于主动生成回复建议，不会自动发送。</p><textarea aria-label="业务补充内容" disabled={!model.detail} value={note?.body ?? ''} onChange={event => model.editSupplement(event.target.value)} placeholder="例如报价、交期或其他补充信息" /><small role="status">{note?.error ? `保存失败：${note.error}` : note?.saving ? '正在保存' : note?.dirty ? '等待保存' : '已保存'}</small>{note?.error && <button type="button" onClick={() => void model.saveSupplement(model.selection.conversationId)}>重试保存</button>}</section>;
+}
+
+export function Conversation({ model, bridge, openList, openDetails, registerLocate }: { model: Workbench; bridge?: ReceptionBridge; openList: () => void; openDetails: () => void; registerLocate: (locate: (id: string) => void) => void }) {
+  const detail = model.detail;
+  const editor = model.editor;
+  const receiptAttempt = editor?.send;
+  const successReceiptKey = receiptAttempt && ['accepted', 'succeeded'].includes(receiptAttempt.status) ? receiptAttempt.params.client_request_id : '';
+  const [dismissedReceipts, setDismissedReceipts] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (!successReceiptKey || dismissedReceipts.has(successReceiptKey)) return;
+    const dismiss = () => setDismissedReceipts(previous => new Set(previous).add(successReceiptKey));
+    if (editor?.body) { dismiss(); return; }
+    const timer = setTimeout(dismiss, 4000);
+    return () => clearTimeout(timer);
+  }, [successReceiptKey, editor?.body, dismissedReceipts]);
+  const [olderByConversation, setOlderByConversation] = useState<Record<string, ObservedMessage[]>>({});
+  const [hasMore, setHasMore] = useState<Record<string, boolean>>({});
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [newMessages, setNewMessages] = useState(false);
+  const [showSuggestion, setShowSuggestion] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const listRef = useRef<HTMLDivElement>(null);
+  const previousConversation = useRef('');
+  const wasVisible = useRef(false);
+  const previousLastMessage = useRef('');
+  const pinned = useRef(true);
+  const older = olderByConversation[model.selection.conversationId] ?? [];
+  const currentMessages = (detail?.messages ?? []).map(message => ({ ...message, observed_sequence: detail?.reading?.observed_sequence ?? null }));
+  const messages = [...new Map([...older, ...currentMessages].map(message => [message.message_id, message])).values()].sort(compareMessages);
+  const conversationId = model.selection.conversationId;
+  const seller = model.snapshot?.app.seller_id ?? '';
+  const [translate, setTranslate] = useState(false);
+  useEffect(() => { try { setTranslate(localStorage.getItem(`reception.translation.${seller}`) === 'on'); } catch { setTranslate(false); } }, [seller]);
+  const toggleTranslate = (enabled: boolean) => { setTranslate(enabled); try { localStorage.setItem(`reception.translation.${seller}`, enabled ? 'on' : 'off'); } catch { /* preference remains in memory */ } };
+  const translationSources = messages.filter(message => !!message.text.trim() && message.text.trim() !== '[image]' && message.text.length <= 50000).map(message => ({ item: { kind: 'message' as const, source_id: message.message_id }, version: message.text }));
+  const translationReady = model.snapshot?.app.mode === 'demo' || model.snapshot?.checks.ai.status === 'passed';
+  const translations = useTranslations(bridge, conversationId, translate && translationReady, translationSources, seller);
+  const [imageRevision, setImageRevision] = useState(0);
+  const autoImages = new Set(messages.filter(message => message.role === 'buyer' && message.attachments.some(attachment => attachment.kind === 'image')).slice(-4).map(message => message.message_id));
+  useEffect(() => bridge?.onEvent(event => {
+    if (event.event !== 'state.changed') return;
+    const data = event.data && typeof event.data === 'object' ? event.data as Record<string, unknown> : {};
+    if (data.reason !== 'translations_updated' && (!data.conversation_id || data.conversation_id === conversationId)) setImageRevision(value => value + 1);
+  }), [bridge, conversationId]);
+  const visibleConversation = useRef(conversationId);
+  visibleConversation.current = conversationId;
+  const selectedCaseId = model.selection.caseId;
+  const activeJobs = model.jobs.filter(job => job.kind !== 'generate_draft' && (job.status === 'running' || job.status === 'queued') && (job.case_id === selectedCaseId || job.conversation_id === conversationId));
+  const generationJob = detail && detail.conversation.conversation_id === conversationId && detail.case.case_id === selectedCaseId
+    && model.connected && !model.closing && !detail.conversation.human_owned && editor?.manualState !== 'pending'
+    ? currentGeneration(detail, model.jobs) : null;
+  const replyActivity = generationJob && (!generationJob.automatic || model.snapshot?.reception.running) ? generationJob : null;
+  const pendingGeneration = detail && detail.conversation.conversation_id === conversationId && detail.case.case_id === selectedCaseId
+    && model.connected && !model.closing && !detail.conversation.human_owned && editor?.manualState !== 'pending'
+    ? model.generationRequests.find(item => item.conversation_id === conversationId && item.case_id === selectedCaseId) : null;
+  const activityKey = replyActivity ? `${replyActivity.job_id}:${replyActivity.status}` : pendingGeneration?.job_id ?? '';
+  const previousActivity = useRef('');
+  const reading = useReadAcknowledgement({ viewport: listRef, conversationId, detail, messages,
+    active: model.page === 'reception' && model.connected && !model.closing,
+    acknowledge: model.markMessagesRead });
+  const status = detail ? effectiveReceptionStatus(model.snapshot, detail.conversation) : undefined;
+
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  useEffect(() => { setShowSuggestion(false); }, [selectedCaseId]);
+  useLayoutEffect(() => {
+    const node = listRef.current;
+    if (model.page !== 'reception') { wasVisible.current = false; return; }
+    if (!node || !detail) { wasVisible.current = false; return; }
+    const last = messages[messages.length - 1]?.message_id ?? '';
+    if (previousConversation.current !== conversationId || !wasVisible.current) {
+      node.scrollTop = model.scrollPositions.current.get(conversationId) ?? node.scrollHeight;
+      pinned.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+      setNewMessages(false);
+      previousConversation.current = conversationId;
+    } else if (last !== previousLastMessage.current) {
+      if (pinned.current) node.scrollTop = node.scrollHeight;
+      else setNewMessages(true);
+    }
+    if (previousActivity.current !== activityKey && pinned.current) node.scrollTop = node.scrollHeight;
+    previousActivity.current = activityKey;
+    previousLastMessage.current = last;
+    wasVisible.current = true;
+  }, [conversationId, detail, messages.length, model.scrollPositions, model.page, activityKey]);
+  useEffect(() => {
+    const node = listRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (pinned.current && model.page === 'reception') node.scrollTop = node.scrollHeight;
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [conversationId, !!detail, model.page]);
+  const locate = (id: string) => {
+    const message = [...(listRef.current?.querySelectorAll<HTMLElement>('[data-message-id]') ?? [])].find(node => node.dataset.messageId === id);
+    if (message) { message.scrollIntoView({ block: 'center', behavior: scrollBehavior() }); message.classList.add('message-highlight'); setTimeout(() => message.classList.remove('message-highlight'), 2000); }
+    else model.setNotice('这条依据原文尚未载入。可先加载本地旧消息，或点击“补全历史”后再查看。');
+  };
+  useEffect(() => { registerLocate(locate); });
+  const loadOlder = async () => {
+    if (!detail || loadingMore) return;
+    const owner = conversationId;
+    const oldHeight = listRef.current?.scrollHeight ?? 0;
+    const oldTop = listRef.current?.scrollTop ?? 0;
+    setLoadingMore(true);
+    try {
+      const result = await model.invoke<{ items: Message[]; has_more: boolean; reading?: ReadingSnapshot }>('get_messages', { conversation_id: owner, before_id: messages[0]?.message_id, limit: 50 });
+      const observed = result.items.map(message => ({ ...message, observed_sequence: result.reading?.observed_sequence ?? null }));
+      setOlderByConversation(previous => ({ ...previous, [owner]: [...observed, ...(previous[owner] ?? [])] }));
+      setHasMore(previous => ({ ...previous, [owner]: result.has_more }));
+      requestAnimationFrame(() => { if (listRef.current && visibleConversation.current === owner) listRef.current.scrollTop = oldTop + listRef.current.scrollHeight - oldHeight; });
+    } catch (failure) { model.setNotice(failure instanceof Error ? failure.message : '本地历史读取失败。'); }
+    finally { setLoadingMore(false); }
+  };
+
+  const refreshReading = async () => {
+    if (!detail || loadingMore) return;
+    const owner = conversationId;
+    setLoadingMore(true);
+    try {
+      const refreshed: ObservedMessage[] = [];
+      let cursor = detail.messages[0]?.message_id;
+      while (refreshed.length < older.length) {
+        const result = await model.invoke<{ items: Message[]; has_more: boolean; reading?: ReadingSnapshot }>('get_messages', { conversation_id: owner, before_id: cursor, limit: Math.min(200, older.length - refreshed.length) });
+        refreshed.unshift(...result.items.map(message => ({ ...message, observed_sequence: result.reading?.observed_sequence ?? null })));
+        if (!result.has_more || !result.items.length) break;
+        const next = result.items[0].message_id;
+        if (next === cursor) throw new Error('历史读取没有推进，请稍后重试。');
+        cursor = next;
+      }
+      setOlderByConversation(previous => ({ ...previous, [owner]: refreshed }));
+      if (visibleConversation.current === owner) {
+        await model.loadDetail(owner, selectedCaseId, true);
+        reading.retry();
+      }
+    } catch (failure) { model.setNotice(failure instanceof Error ? failure.message : '阅读进度暂未保存。'); }
+    finally { setLoadingMore(false); }
+  };
+
+  if (!detail) return <main className="conversation"><div className="empty-chat"><div className="empty-chat-mark"><MessageCircle size={35} strokeWidth={1.4} /></div><h2>{model.detailLoading ? '正在打开客户会话' : model.detailError ? '会话暂时无法打开' : '每一次询盘，都从好好回应开始'}</h2><p>{model.detailError || '选择左侧客户，查看原始消息、整理需求和准备回复。'}</p>{model.detailError && <Button onClick={() => void model.loadDetail(conversationId, selectedCaseId)}>重新读取会话</Button>}<Button className="mobile-list-button" onClick={openList}><UsersRound size={16} />选择客户</Button></div></main>;
+  const current = detail.case;
+  const critical: string[] = [];
+  if (!model.connected) critical.push('服务已断开，正文已保留，暂不能发送或确认发送结果。');
+  if (model.sendIssue.includes('结果未知')) critical.push(model.sendIssue);
+  const factConflict = Object.values(current.facts).some(fact => fact.status === 'conflict');
+  const attempt = editor?.send;
+  const sending = model.pending.includes(`send:${conversationId}`) || (!!attempt && ['requesting', 'queued', 'running'].includes(attempt.status));
+  const canSend = model.canSend;
+  const generating = model.generationRequests.some(item => item.conversation_id === conversationId) || model.pending.includes(`generate_manual_suggestion:${conversationId}`) || model.jobs.some(job => job.kind === 'manual_suggestion' && job.conversation_id === conversationId && ['queued', 'running'].includes(job.status));
+  const saveLabel = editor?.saveState === 'saving' ? '保存中…' : editor?.saveState === 'error' ? '保存失败' : editor?.dirty ? '等待保存' : editor?.server ? '已保存' : '尚未输入';
+  const sendLabels: Record<string, string> = { requesting: '正在提交发送请求', retry: '请求尚未确认，可重试原发送', queued: '发送任务已排队，尚未确认平台受理', running: '正在发送，等待平台回执', succeeded: '发送任务已完成', accepted: '平台已受理', rejected: '平台未受理', failed: '发送任务失败', stale: '发送版本已失效', cancelled: '发送任务已取消', unknown: '发送结果未知，请核查原操作' };
+
+  return <main className="conversation" aria-label={`${detail.conversation.customer_name} 的客户接待`}>
+    <header className="conversation-header"><div className="conversation-identity"><IconButton label="打开客户列表" className="mobile-list-button" onClick={openList}><UsersRound size={20} /></IconButton><div className="avatar large">{detail.conversation.customer_name.slice(0, 1).toUpperCase()}</div><div><h1>{detail.conversation.customer_name}</h1><p>{detail.conversation.country && <><MapPin size={13} />{detail.conversation.country}<span>·</span></>}<span>{current.facts.product?.value || '当前采购'}</span></p></div></div><div className="conversation-tools"><Button variant="ghost" disabled={!model.connected || model.closing || editor?.dirty || editor?.saving || editor?.manualState === 'pending' || sending || attempt?.status === 'retry' || attempt?.status === 'unknown' || model.busy('takeover')} title="只调整此客户的自动接待；恢复后仍遵循全局启停、授权范围与能力检查。" onClick={() => void model.mutate('takeover', { conversation_id: conversationId, enabled: !detail.conversation.human_owned }, detail.conversation.human_owned ? '已恢复此客户自动接待；实际运行仍遵循全局状态和授权范围。' : '已暂停此客户自动接待，您可以直接聊天。')}><UserRound size={16} /><span>{detail.conversation.human_owned ? '恢复此客户自动接待' : '暂停此客户自动接待'}</span></Button><Button variant="ghost" aria-label="采购需求" onClick={openDetails}><ClipboardList size={17} /><span>采购需求</span></Button></div></header>
+    <div className="conversation-state" aria-label="此客户接待状态"><p>{receptionLabel(model.snapshot, detail, model.connected, model.closing)}</p>{status && model.connected && !model.closing && <><small>{status.owner === 'human' ? '当前由人工接待' : status.owner === 'automatic' ? '当前由自动接待处理' : '当前未自动接待'}{status.activity && ` · ${jobLabels[status.activity.kind] ?? '后台任务'}${status.activity.status === 'queued' ? '排队中' : '执行中'}`}</small>{status.blockers.filter(blocker => blocker.message !== status.reason).length > 0 && <details><summary>查看暂未回复的原因</summary><ul>{status.blockers.filter(blocker => blocker.message !== status.reason).map(blocker => <li key={blocker.code}>{blocker.message}</li>)}</ul></details>}</>}</div>
+    <div className="conversation-notices">
+      {factConflict && <p className="quality-reminders">采购事实存在冲突，可在需求侧栏核实原文。</p>}
+      {!!detail.draft?.validation.warnings?.length && <div className="quality-reminders" role="note" aria-label="回复质量提醒">{detail.draft.validation.warnings.map((warning, index) => <p key={`${warning.code}-${index}`}>质量提醒：{warning.message}</p>)}</div>}
+      {critical.length > 0 && <div className="critical-strip" role="status"><ShieldAlert size={17} /><div>{critical.map(issue => <p key={issue}>{issue}</p>)}</div></div>}
+      {activeJobs.length > 0 && <div className="active-task" role="status"><span className="tiny-spinner" /><span>{activeJobs.map(job => `${jobLabels[job.kind] ?? '后台任务'} · ${job.message || job.stage || '处理中'} · 已等待 ${Math.max(0, Math.floor((now - (job.started_at || job.created_at)) / 1000))} 秒`).join('；')}</span></div>}
+    </div>
+    <div className="history-bar"><span><History size={13} />{detail.history.status === 'complete' ? '本地历史已补全' : detail.history.status === 'failed' ? '历史补全未完成' : '近期消息 · 较早历史未完整'}</span><button type="button" disabled={!model.connected || model.busy('fill_history')} onClick={() => void model.runJob('fill_history', { conversation_id: conversationId })}>补全历史 <ChevronRight size={12} /></button></div>
+    <label className="translation-toggle"><input type="checkbox" checked={translate} onChange={event => toggleTranslate(event.target.checked)} /> 自动中文翻译</label>
+    {reading.failed && <div className="read-progress-error" role="status">阅读进度暂未保存，未读数会保留。<button type="button" disabled={loadingMore || !model.connected} onClick={() => void refreshReading()}>刷新原文并重试</button></div>}
+    <div className="message-viewport">
+    <div className="messages" ref={listRef} data-conversation-id={conversationId} aria-label="原始聊天记录" onScroll={event => { const node = event.currentTarget; model.scrollPositions.current.set(conversationId, node.scrollTop); pinned.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; if (pinned.current) setNewMessages(false); }}>
+      <div className="history-load">{hasMore[conversationId] !== false && <button type="button" disabled={loadingMore || !model.connected} onClick={() => void loadOlder()}>{loadingMore ? '正在读取…' : '加载本地更早消息'}</button>}</div>
+      {messages.length === 0 ? <Empty title="此客户尚无本地原始消息">草稿不会被当作已发送历史。</Empty> : messages.map(message => <article className={`message ${message.role === 'seller' ? 'seller-message' : 'buyer-message'}`} key={message.message_id} data-message-id={message.message_id}><div className="message-meta"><span>{message.role === 'buyer' ? detail.conversation.customer_name : '商家'}</span><time title={dateTime(message.timestamp_ms)}>{time(message.timestamp_ms)}</time></div><div className="message-bubble">{message.text && !(message.text.trim() === '[image]' && message.attachments.some(attachment => attachment.kind === 'image')) && <p>{message.text}</p>}{translate && translationSources.some(source => source.item.source_id === message.message_id) && (() => { const item = { kind: 'message' as const, source_id: message.message_id }; const result = translations.get(item, message.text); return result?.status === 'ready' && result.text?.trim() === message.text.trim() ? null : <div className="message-translation">{result?.status === 'ready' ? result.text : result?.status === 'failed' ? <span>翻译失败 <button type="button" onClick={() => translations.retry(item, message.text)}>重试</button></span> : '正在翻译…'}</div>; })()}{message.attachments.length > 0 && <MessageImages key={`${conversationId}:${message.message_id}`} attachments={message.attachments} conversationId={conversationId} messageId={message.message_id} role={message.role} autoLoad={autoImages.has(message.message_id)} revision={imageRevision} bridge={bridge} />}</div></article>)}
+      {(replyActivity || pendingGeneration) && <ReplyActivity key={replyActivity?.job_id ?? pendingGeneration!.job_id} phase={replyActivity ? replyActivity.status === 'deferred' ? 'retry' : replyActivity.status === 'queued' ? 'queued' : 'running' : 'confirming'} />}
+    </div>
+    {newMessages && <button type="button" className="new-messages" onClick={() => { listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: scrollBehavior() }); setNewMessages(false); pinned.current = true; }}><ArrowDown size={14} />有新消息，查看最新</button>}
+    </div>
+    <section className="composer" aria-label="回复草稿">
+      <div className="composer-content">
+      <div className="composer-heading"><div><PencilLine size={18} /><h2>回复客户</h2></div><span className={`save-state ${editor?.saveState === 'error' ? 'save-error' : ''}`} aria-live="polite">{editor?.edited ? '人工编辑 · ' : ''}{saveLabel}</span></div>
+      {detail.manual_suggestion && <div className="suggestion-banner"><span><Sparkles size={14} />AI 回复建议{detail.manual_suggestion.status === 'stale' ? ' · 依据已变化' : ''}</span><button type="button" onClick={() => setShowSuggestion(value => !value)}>{showSuggestion ? '收起建议' : '查看建议'}</button></div>}
+      {showSuggestion && detail.manual_suggestion && <div className="suggestion-preview"><p>{detail.manual_suggestion.body}</p><Button onClick={() => { model.adoptSuggestion(); setShowSuggestion(false); }}>采用到输入框</Button></div>}
+      {model.generationIssue && <p className="composer-mode">{model.generationIssue}</p>}
+      <textarea aria-label="回复正文" placeholder="输入回复，点击发送或按 Ctrl+Enter；输入时会暂停此客户自动接待…" value={editor?.body ?? ''} onChange={event => model.editBody(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && event.ctrlKey) { event.preventDefault(); if (canSend && !sending) void model.send(); } }} spellCheck={false} />
+      {editor?.manualState === 'pending' && <p className="composer-mode" role="status">正在暂停此客户自动接待，确认成功后即可发送。</p>}
+      {editor?.manualState === 'error' && <Feedback tone="red">{editor.manualError}<Button onClick={() => void model.beginManualEdit(conversationId)}>重试暂停此客户自动接待</Button></Feedback>}
+      {editor?.error && <Feedback tone="red">{editor.error} 当前正文已保留。</Feedback>}
+      {attempt && (!successReceiptKey || (!editor?.body && !dismissedReceipts.has(successReceiptKey))) && <div className="chat-send-receipt" role="status"><strong>{sendLabels[attempt.status]}</strong>{!successReceiptKey && !['requesting', 'queued', 'running'].includes(attempt.status) && attempt.message && <p>{attempt.message}</p>}{['retry', 'unknown'].includes(attempt.status) && <details><summary>查看原发送正文</summary><p className="preserve-text">{attempt.body}</p><small>请求 {attempt.params.client_request_id}</small>{attempt.jobId && <small>任务 {attempt.jobId}</small>}</details>}</div>}
+      {model.sendIssue.includes('结果未知') && <div>{model.unknownOperations.map(operation => <Button key={operation.operation_id} disabled={!model.connected} loading={model.busy(`reconcile:${operation.operation_id}`)} onClick={() => void model.reconcileOperation(operation.operation_id)}>核查原操作 {operation.operation_id}</Button>)}<Button variant="ghost" onClick={() => void model.navigate('activity')}>查看并核查原操作</Button></div>}
+      <div className="composer-source"><CircleHelp size={13} /><span>正文自动保存；点击发送即提交本条回复。</span></div>
+      </div>
+      <div className="composer-actions"><div /><div className="composer-send-actions"><Button variant="ghost" loading={generating} disabled={!model.canGenerate || generating} title={model.generationIssue || undefined} onClick={() => void model.generate()}><Sparkles size={16} />生成回复建议</Button><Button variant="primary" loading={sending} disabled={!canSend} onClick={() => void model.send()} title={model.sendIssue || (attempt?.status === 'retry' ? '使用原请求编号、客户、正文和版本重试' : '保存确切正文后发送本条回复')}><Send size={16} />{attempt?.status === 'retry' ? '重试原发送' : '发送'}</Button></div></div>
+    </section>
+  </main>;
+}

@@ -1,0 +1,51 @@
+Source: 国际站询盘助手桌面版/reception_app, local working tree at 2026-11-06.
+Copied only public Python source, not account/configuration/database/runtime files.
+Upstream baseline commit: 399a35d (source includes existing uncommitted adapter fixes).
+
+models.py, fact_rules.py, diagnostics.py, registration_fields.py:
+  Pure contracts, conservative fact completeness and registration projections.
+adapters/common.py, tool_signals.py, ai_runtime.py, desktop_query.py, feishu.py:
+  Process boundary, durable side-effect ledger, tool signal checks, explicitly
+  selected agent metadata, single request execution and optional Lark protocol.
+  tool_signals.py additionally rejects structured tool_use/function_call blocks.
+adapters/live.py:
+  Extracted native identity/read/history/read-ready/seal/send/registration methods.
+  Legacy AI prompt/planner, global polling, notification and retry entry points removed.
+  Runtime authorization is supplied by the new NativeGateway override.
+
+No runtime import refers to the original source directory. All dependencies are
+Python standard library or files within this vendor package. Qt, controller,
+storage, settings, databases, credentials and account records were not copied.
+Own-account completion-record recovery is enabled only for the current supplied
+account and the exact request nonce; no other-account or customer-task scanning.
+Native AI uses 180s CLI / 190s process budgets, no tool approval.
+2026-11-10 local desktop_query.py changes: optional per-call cancellation, bounded
+child-tree termination and pipe draining for auxiliary read-only requests.
+Desktop query uses owned_process.py for interruptible input and per-call process
+ownership (a Windows job assigned while suspended, or a POSIX process group).
+2026-11-10 local continuity changes: common.py/live.py permit a freshly authorized
+automatic send attempt after an authoritative rejected/submission_started=False
+receipt, preserving the old attempt and conversation-wide accepted/unknown fences.
+System acknowledgement/final/verification continuations are implemented outside
+this vendor package, with exact source/latest checks and accepted-ledger proof.
+Local live.py preflight guards expose stable, sanitized codes for ready artifacts,
+identity, sealing and source validation. Identity, latest-source and send fences
+remain strict; the bounded historical card projection below is explicit.
+2026-11-11 desktop_query.py retains the bounded _stop compatibility helper for
+visual_query.py; text queries continue to use OwnedProcess. diagnostics.py carries
+only explicitly allowed exception class names, never arbitrary exception messages,
+customer content, ready artifacts or authorization values. Automatic retry limits
+and legacy job-state recovery live in reception_service/send_retry_policy.py,
+outside this vendor package; original native operations and receipts are retained.
+2026-11-11 version 0.3.3: only recognized historical card renderings may use the
+current canonical platform text in memory. Ready must also carry the native
+[Card] marker or the same descriptor payload under a recognized card prefix;
+unmarked unrelated prose and differing concrete product descriptors stay blocked.
+The original 14-character Ready literal has not been recovered or inferred.
+The current buyer source and ordinary prose remain strict; Ready files and sealed
+tokens are never rewritten. Projected
+cards require matching identity, role and time, and their canonical role/text/time
+and empty attachments are rechecked using the existing post-seal history read.
+Naive card clocks must agree with the verified source display clock at their
+stated precision; no fixed merchant or host timezone is assumed. Unknown results,
+conversation fences, source/version checks and retry limits remain unchanged.
