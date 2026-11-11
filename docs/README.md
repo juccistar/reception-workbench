@@ -1,6 +1,6 @@
 # 文档入口
 
-当前维护源码为0.3.3，使用独立分支`maint/reception-workbench`。发布及验证状态以以下现有记录为准。
+当前源码为0.3.3，作为独立项目在私有仓库`juccistar/reception-workbench`的`main`分支维护。安装包和客户端更新继续使用`juccistar/reception-workbench-releases`。当前仓库关系见[项目约定](PROJECT.md)，历史来源与各阶段验证记录保留原时点。
 
 | 用途 | 入口 |
 | --- | --- |

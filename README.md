@@ -4,9 +4,9 @@
 
 [0.3.3已公开发布](https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.3)，四个附件的服务端摘要与匿名下载均校验通过。功能边界、安装包哈希及本版验收见[发布说明](docs/0.3.3发布说明.md)。发布不代表本机已安装。
 
-这是位于`E:\ReceptionWorkbench`的独立维护目录，使用自己的`.git`，维护分支为[maint/reception-workbench](https://github.com/juccistar/alibaba-inquiry-quote/tree/maint/reception-workbench)，远端仍为原私有源码仓库。它从源码检查点`bc8661283f1c1cd0d75bcf3a1a04db8391af7a67`建立精简独立历史，旧树保留在`feat/desktop-reception`；后续维护在本分支提交推送。
+这是位于`E:\ReceptionWorkbench`的独立源码项目，源码保存在私有仓库[juccistar/reception-workbench](https://github.com/juccistar/reception-workbench)，默认分支为`main`。本目录使用自己的`.git`，后续开发、提交和推送均在该独立仓库进行。原仓库和临时导出分支仅保留为来源历史，见[项目与仓库约定](docs/PROJECT.md)。安装包发布和客户端更新继续使用原公开发行仓库[juccistar/reception-workbench-releases](https://github.com/juccistar/reception-workbench-releases)。
 
-初次复制只纳入247个必要文件，未复制旧Git对象、发行包、历史截图、旧依赖目录或业务数据。237个非文档文件与原检查点逐字节一致，现行文档已按新根整理，见[来源清单](docs/SOURCE_BASELINE.json)。依赖在本目录重新安装；新环境108项后端定向检查、87项工具测试、类型检查、构建和实际Demo窗口均通过，见[验证记录](docs/verification/0.3.3.json)。未运行完整测试套件，真实平台两轮发送与原14字符Ready展示仍待验证。
+初次复制只纳入247个必要文件，未复制旧Git对象、发行包、历史截图、旧依赖目录或业务数据。初次导出时237个非文档文件与原检查点逐字节一致；本次独立项目调整仅涉及仓库元数据、打包入口和文档。原始来源与验收记录保留在[来源清单](docs/SOURCE_BASELINE.json)，当前仓库关系见[项目约定](docs/PROJECT.md)。依赖在本目录重新安装；新环境108项后端定向检查、87项工具测试、类型检查、构建和实际Demo窗口均通过，见[验证记录](docs/verification/0.3.3.json)。未运行完整测试套件，真实平台两轮发送与原14字符Ready展示仍待验证。
 
 从本目录执行`npm start`可运行演示工作台；环境准备、源码修改后的构建、定向测试与候选打包见[开发说明](docs/DEVELOPMENT.md)。真实连接仍须使用当前目标商家的Accio授权环境；启动不恢复自动接待权限。
 

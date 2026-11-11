@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 当前维护入口
 
-本目录是客户接待工作台的独立源码根，维护分支为`maint/reception-workbench`，远端为私有仓库`juccistar/alibaba-inquiry-quote`。源码起点为0.3.3；原树和历史在`feat/desktop-reception`保留，来源见[基线清单](docs/SOURCE_BASELINE.json)。本目录有自己的`.git`，不依赖旧目录。提交与推送使用当前维护分支，未经任务要求不改写`main`。
+本目录是单独维护的客户接待工作台项目，源码仓库为私有的`juccistar/reception-workbench`，默认分支为`main`；Git的`origin`只指向该独立仓库。后续开发、提交和推送在本项目进行。原`alibaba-inquiry-quote`仓库与当时的导出分支只作为历史来源，详见[基线清单](docs/SOURCE_BASELINE.json)，不再作为本项目的提交目的地。
+
+安装包、便携ZIP及客户端更新继续使用公开仓库`juccistar/reception-workbench-releases`。源码仓库与发行仓库职责分开，发布命令须显式指定原发行仓库。推荐安装包构建入口为`npm run package:release -- --candidate --output relase/release-next`，固定预置原更新源；普通`package`入口保留通用打包能力。不要更换应用标识、数据命名空间或固定签名公钥，详见[项目约定](docs/PROJECT.md)。
 
 先读[开发说明](docs/DEVELOPMENT.md)、[现行规则](docs/CURRENT_RULES.md)、[实施契约](docs/IMPLEMENTATION_CONTRACT.md)和[架构](docs/项目开发/02-架构文档.md)。当前发布与验证范围见[0.3.3说明](docs/0.3.3发布说明.md)，待办见[ROADMAP](docs/ROADMAP.md)。
 

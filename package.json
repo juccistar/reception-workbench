@@ -3,6 +3,10 @@
   "version": "0.3.3",
   "private": true,
   "description": "Customer reception desktop workbench",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juccistar/reception-workbench.git"
+  },
   "main": "artifacts/app/main/index.js",
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -12,7 +16,8 @@
     "test:tools": "node --test scripts/tests/*.test.mjs",
     "test": "npm run test:backend && npm run test:ui && npm run test:tools",
     "typecheck": "tsc --noEmit -p apps/desktop/tsconfig.json",
-    "package": "node scripts/package.mjs"
+    "package": "node scripts/package.mjs",
+    "package:release": "node scripts/package.mjs --installer --update-url https://github.com/juccistar/reception-workbench-releases"
   },
   "dependencies": {
     "electron-updater": "6.8.11",

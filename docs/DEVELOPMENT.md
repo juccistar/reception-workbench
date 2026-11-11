@@ -43,4 +43,6 @@ npm run package -- --candidate --output E:\ReceptionWorkbench\relase\candidate-e
 
 输出必须是符合脚本限制的全新空目录；`--candidate` 避免更新默认发行入口。添加 `--installer` 可构建安装包；可选 `--update-url` 仅与安装包一起使用，接受受支持的公开 GitHub 仓库或 HTTPS 目录。安装包构建要求 `%LOCALAPPDATA%\AlibabaReceptionWorkbenchReleaseKeys` 内已有与源码固定公钥指纹匹配的 Ed25519 密钥，脚本不会为该发行自动创建或轮换密钥。私钥留在用户本机，绝不复制进源码、包或记录。更新元数据签名与 Windows 安装包代码签名是不同事项。
 
+本项目安装包候选优先使用`npm run package:release -- --candidate --output relase/release-next`，该入口固定预置原公开更新仓库。源码提交推送到私有的`juccistar/reception-workbench`，默认分支main；上传安装包时GitHub CLI必须显式指定`--repo juccistar/reception-workbench-releases`。两仓库职责见[项目约定](PROJECT.md)。
+
 打包、检查、安装、发布均须分别取得实际结果；源码版本及上述命令不代表这些步骤已完成。

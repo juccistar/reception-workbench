@@ -1,0 +1,48 @@
+{
+  "format": 1,
+  "date": "2026-11-11",
+  "status": "repository-created-and-local-configuration-verified",
+  "application_version": "0.3.3",
+  "source_project": {
+    "repository": "juccistar/reception-workbench",
+    "url": "https://github.com/juccistar/reception-workbench",
+    "private": true,
+    "github_fork": false,
+    "default_branch": "main",
+    "origin": "git@github.com:juccistar/reception-workbench.git"
+  },
+  "distribution": {
+    "repository": "juccistar/reception-workbench-releases",
+    "url": "https://github.com/juccistar/reception-workbench-releases",
+    "public": true,
+    "package_script": "package:release",
+    "update_source": "https://github.com/juccistar/reception-workbench-releases/",
+    "existing_release": "v0.3.3",
+    "existing_release_id": 441362861,
+    "rebuilt_or_republished_by_this_change": false
+  },
+  "compatibility": {
+    "package_name": "inquiry-reception-workbench",
+    "application_id": "local.inquiry.reception.workbench",
+    "public_key_sha256": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "reception_runtime_sources_changed": false,
+    "business_data_migrated": false
+  },
+  "validation": {
+    "configuration_tests": 9,
+    "failures": 0,
+    "release_provider": "github",
+    "release_owner": "juccistar",
+    "release_repository": "reception-workbench-releases",
+    "full_test_suite_rerun": false,
+    "new_package_built": false
+  },
+  "historical_origin": {
+    "repository": "juccistar/alibaba-inquiry-quote",
+    "source_branch": "feat/desktop-reception",
+    "source_commit": "bc8661283f1c1cd0d75bcf3a1a04db8391af7a67",
+    "temporary_export_branch": "maint/reception-workbench",
+    "temporary_export_commit": "81e080a2152ddd748992fa9c2901b8c9569eb52d",
+    "original_baseline_and_validation_records_preserved": true
+  }
+}
