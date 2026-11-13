@@ -61,7 +61,7 @@ try{
  await page.getByRole('button',{name:'生成回复建议',exact:true}).click();await until(async()=>(await detail()).manual_suggestion?.status==='ready','Manual suggestion failed');
  assert.equal((await detail()).conversation.human_owned,false);assert.equal((await snapshot()).reception.running,false);assert.equal((await snapshot()).outbox.length,0);
  assert.equal(await page.getByRole('textbox',{name:'回复正文',exact:true}).inputValue(),'');
- await page.getByText('AI 回复建议',{exact:true}).waitFor();
+ await page.getByRole('region',{name:'待处理回复建议',exact:true}).waitFor();
  await page.getByText('你好',{exact:true}).first().scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,'window.png'),animations:'disabled'});
  await until(async()=>(await invoke('get_translations',{conversation_id:cid,items})).items[0]?.text==='你好','Current-model translation was not cached');
  const beforeClose=await page.evaluate(()=>window.reception.getTranslationSettings());

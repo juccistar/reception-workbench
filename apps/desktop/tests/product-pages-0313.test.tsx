@@ -27,7 +27,7 @@ it('selects and clears a current case offer with the projected revision and sets
   const view = render(<ProductsPage initialProductId="p1" caseSelection={{ case_id: 'case1', revision: 7, customer_name: 'Emma', product_name: '棉帽', local_product_id: 'p1', offer_id: null }} onCaseChanged={changed} />);
   fireEvent.click(await screen.findByRole('button', { name: '选用于当前事项' }));
   expect(screen.getByText('当前客户：Emma · 棉帽')).toBeInTheDocument();
-  expect(await screen.findByRole('button', { name: '放大查看商品主图' })).toBeInTheDocument();
+  expect(await screen.findByRole('button', { name: '放大查看商品图片 1' })).toBeInTheDocument();
   expect(invoke).toHaveBeenCalledWith('get_product_main_image', { local_product_id: 'p1' });
   expect(screen.queryByText(/当前事项：case1/)).not.toBeInTheDocument();
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('select_supplier_offer', expect.objectContaining({ case_id: 'case1', offer_id: 'o1', expected_case_revision: 7, client_mutation_id: expect.any(String) })));
@@ -44,17 +44,17 @@ it('does not show a late product image after switching products', async () => {
   const invoke = vi.fn((method: string, params: Record<string, unknown>) => params.local_product_id === 'old' ? new Promise(resolve => { resolveOld = resolve; }) : Promise.resolve({ status: 'ready', data_url: 'data:image/png;base64,BBBB' }));
   const view = render(<ProductMainImage localProductId="old" metadata={{ status: 'loading' }} invoke={invoke as never} />);
   view.rerender(<ProductMainImage localProductId="new" metadata={{ status: 'ready' }} invoke={invoke as never} />);
-  const image = await screen.findByRole('img', { name: '商品主图' });
+  const image = await screen.findByRole('img', { name: '商品图片 1' });
   expect(image).toHaveAttribute('src', 'data:image/png;base64,BBBB');
   await act(async () => resolveOld({ status: 'ready', data_url: 'data:image/png;base64,AAAA' }));
-  expect(screen.getByRole('img', { name: '商品主图' })).toHaveAttribute('src', 'data:image/png;base64,BBBB');
+  expect(screen.getByRole('img', { name: '商品图片 1' })).toHaveAttribute('src', 'data:image/png;base64,BBBB');
 });
 
 it('rejects a remote URL returned by the local image RPC', async () => {
   const invoke = vi.fn(async () => ({ status: 'ready', data_url: 'https://example.com/image.png' }));
   render(<ProductMainImage localProductId="p1" metadata={{ status: 'ready' }} invoke={invoke as never} />);
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('get_product_main_image', { local_product_id: 'p1' }));
-  expect(screen.getByText('暂无可用商品主图')).toBeInTheDocument();
+  expect(screen.getByText('暂无商品图片')).toBeInTheDocument();
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
 });
 

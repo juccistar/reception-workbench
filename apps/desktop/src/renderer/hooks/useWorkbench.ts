@@ -362,20 +362,27 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const uploadSupplementFiles = useCallback(async (conversationId: string, files: File[]) => updateSupplementAttachments(conversationId, async () => {
     if (!bridge?.uploadSupplementAttachments) throw new Error('当前程序不支持粘贴或拖入附件，请更新程序。');
     const existing = supplements.current.get(conversationId)!.attachments;
-    if (!files.length || files.length + existing.length > 5) throw new Error('业务补充最多添加 5 个附件。');
-    if (files.reduce((total, file) => total + file.size, existing.reduce((total, file) => total + file.size, 0)) > 20 * 1024 * 1024) throw new Error('附件合计不能超过 20 MiB。');
-    const uploads: SupplementUpload[] = [];
+    if (existing.length >= 5) throw new Error('业务补充最多添加 5 个附件。');
+    const uploads: SupplementUpload[] = [], errors: string[] = [];
+    let total = existing.reduce((sum, file) => sum + file.size, 0);
     for (const file of files) {
-      if (file.size < 1 || file.size > 6 * 1024 * 1024) throw new Error('单个附件须大于零且不超过 6 MiB。');
-      const content_b64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onerror = () => reject(new Error('附件读取失败，请重新选择。'));
-        reader.onload = () => { const value = String(reader.result); const comma = value.indexOf(','); if (comma < 0) reject(new Error('附件读取失败。')); else resolve(value.slice(comma + 1)); };
-        reader.readAsDataURL(file);
-      });
-      uploads.push({ name: file.name || `粘贴图片-${Date.now()}.png`, content_b64 });
+      if (uploads.length + existing.length >= 5) { errors.push('业务补充最多添加 5 个附件。'); break; }
+      const name = file.name || `粘贴图片-${Date.now()}.png`;
+      if (!/\.(png|jpe?g|webp|pdf|txt|md|csv)$/i.test(name)) { errors.push('附件格式不支持，请使用图片、PDF 或 UTF-8 文本。'); continue; }
+      if (file.size < 1 || file.size > 6 * 1024 * 1024) { errors.push('单个附件须大于零且不超过 6 MiB。'); continue; }
+      if (total + file.size > 20 * 1024 * 1024) { errors.push('附件合计不能超过 20 MiB。'); continue; }
+      try {
+        const content_b64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onerror = () => reject(new Error('附件读取失败，请重新选择。'));
+          reader.onload = () => { const value = String(reader.result); const comma = value.indexOf(','); if (comma < 0) reject(new Error('附件读取失败。')); else resolve(value.slice(comma + 1)); };
+          reader.readAsDataURL(file);
+        });
+        uploads.push({ name, content_b64 }); total += file.size;
+      } catch { errors.push('附件读取失败，请重新选择。'); }
     }
-    return bridge.uploadSupplementAttachments(conversationId, uploads);
+    const result = uploads.length ? await bridge.uploadSupplementAttachments(conversationId, uploads) : { supplement: null, errors: [] };
+    return { ...result, errors: [...new Set([...errors, ...result.errors])] };
   }), [bridge, updateSupplementAttachments]);
   const pasteSupplementAttachments = useCallback(async (conversationId: string) => updateSupplementAttachments(conversationId, async () => bridge?.pasteSupplementAttachments?.(conversationId)), [bridge, updateSupplementAttachments]);
   const editSupplement = useCallback((body: string) => {

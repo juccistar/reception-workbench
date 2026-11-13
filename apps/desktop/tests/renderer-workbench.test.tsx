@@ -199,6 +199,14 @@ describe('0.3.15 compact workspace', () => {
     fireEvent.paste(note, { clipboardData: { files: [], getData: () => '' } });
     await waitFor(() => expect(nativePaste).toHaveBeenCalledWith('emma'));
   });
+  it('keeps valid dropped files when a neighbouring format is rejected', async () => {
+    const bridge = new FakeBridge();
+    const upload = vi.fn(async () => ({ supplement: { conversation_id: 'emma', body: '', revision: 1, updated_at: 1, attachments: [] }, errors: [] }));
+    Object.assign(bridge, { uploadSupplementAttachments: upload }); await openApp(bridge);
+    fireEvent.drop(document.querySelector('.supplement-composer')!, { dataTransfer: { files: [new File(['invalid'], 'bad.exe'), new File(['hello'], 'valid.txt')], types: ['Files'] } });
+    await waitFor(() => expect(upload).toHaveBeenCalledWith('emma', [{ name: 'valid.txt', content_b64: 'aGVsbG8=' }]));
+    expect(await screen.findByText(/附件格式不支持/)).toBeInTheDocument();
+  });
 });
 
 describe('mounted requirement workspace', () => {

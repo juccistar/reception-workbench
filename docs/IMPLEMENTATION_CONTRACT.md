@@ -1,6 +1,6 @@
 # 工作台实施契约
 
-本文维护0.3.14源码及公开发行的进程、接口和业务约束；交付范围及附件限制见[发布说明](0.3.14发布说明.md)、[验证记录](verification/0.3.14.json)。0.3.13的需求、摘要、产品及采购契约继续沿用，见[基础开发说明](0.3.13开发说明.md)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
+本文维护0.3.15源码的进程、接口和业务约束；紧凑布局、五图及附件输入见[发布说明](0.3.15发布说明.md)。当前候选验收中，上一公开版验证见[记录](verification/0.3.14.json)。0.3.13的需求、摘要、产品及采购契约继续沿用，见[基础开发说明](0.3.13开发说明.md)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
 
 ## 1. 进程与协议
 
@@ -43,7 +43,7 @@ Case.requirements_format为ai-v1，requirements只允许下列13键：
 
 商品链接不再由AI填写。product_identity.product_link仅对数字平台ID生成https://www.alibaba.com/product-detail/_<ID>.html；定制-数字是本地编号，URL为null，不作平台商品查询。定制ID须有真实产品需求依据、同事项稳定复用，碰撞时原子分配不同本地编号，不能误合并客户。AI或找货结果不能替换派生链接。其他需求仍不由程序扫描历史链接或假定cardType/fields/skus/imageUrl代填，不另存平台标题。
 
-新增Case/Product.product_main_image独立展示元数据：local_product_id、status、updated_at、message、width/height（可选），并标display_only，可保留primary_verified、selection_rule。get_product_main_image(local_product_id)仅本地返回安全data_url，列表/多事项投影不携带大图或原始source_url。后台调用icbu.product.list-information，JSON参数为productId（整数）、queryType=trunk、componentList=["images"]。仅解析已观察到的data（JSON字符串）→basicInfo.images[]，按最小imageIndex选originalImageUrl作为展示参考。响应不含商品ID，因此按已核身份及确切请求参数绑定，不声称响应回验；若显式返回异ID则拒绝。没有主图标志，primary_verified=false、selection_rule=lowest_image_index，页面注明“平台图组首图，仅供展示和找货参考”；不称SKU图。安全缓存放product_main_image及image_asset，不创建message_image关联，不替代或合并原客户product_images。
+新增Case/Product.product_main_image独立展示元数据：local_product_id、status、updated_at、message、width/height（可选），并标display_only，可保留primary_verified、selection_rule。get_product_main_image(local_product_id)仅本地返回安全data_url，列表/多事项投影不携带大图或原始source_url。后台调用icbu.product.list-information，JSON参数为productId（整数）、queryType=trunk、componentList=["images"]。仅解析已观察到的data（JSON字符串）→basicInfo.images[]，按imageIndex排序、对originalImageUrl去重并取最多五张，分项下载及安全缓存，部分失败不影响其余图片。images数组按原顺序投影status及可选尺寸，本地图片RPC可带各项data_url；顶层data_url兼容第一张有效缓存图，快照不含base64。旧单图记录持久标记image_group_version并安排一次补齐，loading/unknown及失败不反复查询。响应不含商品ID，因此按已核身份及确切请求参数绑定，不声称响应回验；若显式返回异ID则拒绝。没有主图标志，primary_verified=false、selection_rule=lowest_image_index，界面不再常驻显示来源解释，内部仍记录确切请求和排序证据；不称SKU图。安全缓存放product_main_image及image_asset，不创建message_image关联，不替代或合并原客户product_images。
 
 链接和主图不进入接待模型指定字段、photo_context/image_manifest或语义指纹；补图不增事项业务版本、不使旧回复过期。它们可以进入采购专属上下文，图搜参数只接受冻结的确切公共AliCDN主图URL。原消息或冻结润色正文中的链接原样保留。来源正文修改仍使实际需求失效，并解除旧供货关联；产品和原执行证据保全。
 
@@ -55,7 +55,7 @@ ConversationDetail.conversation_summary为{conversation_id,body,revision,updated
 
 Supplement新增attachments，按当前商家和conversation_id保存，字段含id、name、media_type、size、sha256、status、origin=business_supplement、created_at，可含pages及错误；界面只返回受限preview_data_url/text_preview，模型只得到元数据和实际提取的text，原件及预览不进入模型JSON。
 
-renderer通过chooseSupplementAttachment(conversationId)调用专用宿主IPC，原生选择单个本地文件后由宿主读取并调用私有upload_supplement_attachment(conversation_id,name,content_b64)；该方法不在普通API_METHODS中。公开remove_supplement_attachment仅接受conversation_id和attachment_id，不提供任意文件或路径读取。
+renderer通过chooseSupplementAttachments(conversationId)多选、uploadSupplementAttachments(conversationId,files)上传用户提供的{name,content_b64}，或pasteSupplementAttachments(conversationId)显式请求原生粘贴，返回{supplement,errors}批量结果，保留部分成功。路径只来自宿主文件选择或当前用户粘贴操作；Windows本地文件读取使用固定只读剪贴板命令，截图读取使用Electron异步剪贴板接口，具有超时、输出和字节限制，不接受renderer路径。旧chooseSupplementAttachment保留兼容。宿主逐项调用私有upload_supplement_attachment，该方法不在普通API_METHODS中。公开移除仍只接受会话及附件编号。
 
 支持PNG/JPEG/WebP、PDF、UTF-8 TXT/MD/CSV；单个6 MiB、最多5个、总计20 MiB。PDF最多10页、每附件提取16000字符，拒绝加密和无可提取文字的PDF；pypdf禁用外部jbig2dec并限制解压、解析工作量。专属展示缩略图最大256×256且JPEG不超过48 KiB，原始图片字节及哈希保持不变。上传JSON Lines仅为该私有方法放宽至8,400,000字符，其他方法沿用原预算。
 

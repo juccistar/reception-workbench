@@ -87,8 +87,7 @@ async function browserFile(mode, name, type, b64) {
 async function nativePaste(paths) {
  // Replace only OS clipboard sources; all renderer events, host IPC, file reading and backend writes are real.
  await app.evaluate(async ({ clipboard }, args) => {
-  const require = (await import('node:module')).createRequire(process.cwd() + '/clipboard-probe.cjs');
-  const child = require('node:child_process');
+  const child = process.mainModule.require('node:child_process');
   if (!globalThis.__receptionOriginalExecFile) {
    globalThis.__receptionOriginalExecFile = child.execFile;
    child.execFile = function (executable, command, options, callback) {
@@ -97,7 +96,7 @@ async function nativePaste(paths) {
    };
   }
   globalThis.__receptionSyntheticClipboardPaths = args.paths;
-  const { Blob } = await import('node:buffer');
+  const { Blob } = process.mainModule.require('node:buffer');
   clipboard.read = async () => [{ types: ['image/png'], getType: async () => new Blob([Buffer.from(args.imageB64, 'base64')], { type: 'image/png' }) }];
  }, { paths, imageB64 });
  await page.getByLabel('业务补充内容', { exact: true }).evaluate(node => node.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: new DataTransfer() })));
@@ -114,10 +113,10 @@ try {
  await resize(1920, 1080); await shot('layout-a-wide'); await resize(1440, 960);
  report.completed.push('layout-a-no-duplicate-row-five-local-images-and-zoom');
  await page.getByRole('button', { name: '资料与政策', exact: true }).click();
- await page.getByLabel('类别', { exact: true }).last().selectOption('reception');
+ await page.locator('.policy-form select').first().selectOption('reception');
  await page.getByRole('textbox', { name: '资料名称', exact: true }).fill('0.3.15 合成接待规则');
  await page.getByRole('textbox', { name: '资料内容', exact: true }).fill('报价须依据明确数量，不擅自承诺寄样。');
- await page.getByLabel('用途', { exact: true }).selectOption('internal_guidance');
+ await page.locator('.policy-form select').nth(1).selectOption('internal_guidance');
  await page.getByRole('checkbox', { name: /已审核采用/ }).check(); await page.getByRole('checkbox', { name: /启用资料/ }).check();
  await page.getByRole('button', { name: '保存资料', exact: true }).click();
  await until(async () => (await invoke('get_snapshot')).policies.some(row => row.title === '0.3.15 合成接待规则' && row.priority === 0), 'policy saved through real bridge');

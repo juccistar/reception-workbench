@@ -38,7 +38,9 @@ node --test scripts/tests/release-paths.test.mjs
 
 当前源码及最新公开发行均为0.3.14；接待规则修复及业务补充附件见[发布说明](0.3.14发布说明.md)和[验证记录](verification/0.3.14.json)。原需求、摘要、产品及采购基础见[0.3.13开发说明](0.3.13开发说明.md)。接待页中间显示宽聊天区、独立会话摘要及编辑器，右侧为中文需求和业务补充。有效新产品ID原子建立公共产品、需求绑定及一次采购任务；采购授权独立，unknown只核查原记录。数字平台ID的商品链接由程序派生，本地“定制-数字”编号不生成平台链接。独立商品主图使用list-information的trunk/images组件，由受限媒体池读取及缓存；当前按最小imageIndex选择展示参考图，不能称平台已核实主图。链接及主图不进入接待指定上下文或指纹，客户图片仍独立；采购等待主图时不占接待AI槽。旧提醒及解析RPC退役，需核实内容进入会话摘要，真实回执与续答防重关联保留。新建默认检测2秒、合并1秒、最近50条及必要依据，已有配置不改。
 
-0.3.14附件窗口检查可运行 `node scripts/smoke-supplement-attachments.mjs --label <未使用标签> --executable relase/<候选目录>/installer-build/win-unpacked/ReceptionWorkbench.exe`；仅替换原生文件选择框以选中临时合成PNG、PDF及文本，上传、提取、持久化和业务IPC均实际运行。按同一EXE的启动互斥要求串行执行窗口脚本，正常关闭后再运行smoke-demo，避免同时冷启动相同安装路径。检查生成模块可用 `node scripts/sync-reception-prompts.mjs --check`，它不改写文件。
+0.3.15窗口检查使用 `node scripts/smoke-workbench-0315.mjs --label <未使用标签>`，可加 `--executable relase/<候选目录>/installer-build/win-unpacked/ReceptionWorkbench.exe`。使用临时Demo库，验证A版布局、五图、真实资料保存、多选/拖入/粘贴附件、容量、并发补充、建议待处理及弃用/采用/润色和重开。仅原生文件选择及操作系统剪贴板来源使用替身，不读取真实剪贴板；业务IPC与随包后台实际执行。原型仍保存于 `docs/design/0.3.15`，正式实现以用户追加要求和本版发布说明为准。多个窗口脚本继续串行运行，截图须实际查看。
+
+0.3.14历史附件窗口检查可运行 `node scripts/smoke-supplement-attachments.mjs --label <未使用标签> --executable relase/<候选目录>/installer-build/win-unpacked/ReceptionWorkbench.exe`；仅替换原生文件选择框以选中临时合成PNG、PDF及文本，上传、提取、持久化和业务IPC均实际运行。按同一EXE的启动互斥要求串行执行窗口脚本，正常关闭后再运行smoke-demo，避免同时冷启动相同安装路径。检查生成模块可用 `node scripts/sync-reception-prompts.mjs --check`，它不改写文件。
 
 0.3.13窗口检查可运行 `node scripts/smoke-workbench-0313.mjs --label <未使用标签>`，添加 `--executable relase/<候选目录>/installer-build/win-unpacked/ReceptionWorkbench.exe` 可实际驱动安装包输入目录中的最终EXE，使用随包Python后台，不执行NSIS安装。该脚本验证独立摘要、无需求、派生链接、独立参考图、供应商/方案、窄窗及保存重开；`smoke-demo.mjs`另检翻译和建议。截图必须实际查看；夹具仅为隔离合成数据，不能替代真实业务验收。
 

@@ -1,6 +1,6 @@
 # 本地消息与运行结构
 
-面向维护人员，描述0.3.14的本地需求、摘要、采购及媒体存储；交付验证和附件限制见[发布说明](0.3.14发布说明.md)及[记录](verification/0.3.14.json)。业务根以当前商家profile和设置页为准，源码修改不迁移真实数据；合成回归不代表真实平台、供应商发送或长期运行验收。
+面向维护人员，描述0.3.15的本地需求、摘要、采购及媒体存储；紧凑布局、五图及附件输入见[发布说明](0.3.15发布说明.md)，当前候选验收中。业务根以当前商家profile和设置页为准，源码修改不迁移真实数据；合成回归不代表真实平台、供应商发送或长期运行验收。
 
 0.3.9 的内置目录是随程序打包的只读 JSON 资源，不在启动时写入商家库。明确采用后仍使用现有 policy 实体保存正文、用途、启用状态和来源版本，随完整业务备份保全，按商家隔离。内部备注不进入模型；旧非公开资料保持仅人工查看。协助开始时间、应用资料版本及固定读取诊断使用现有实体保存，不改变 Repository schema v2 或 Ledger v1。
 
@@ -40,7 +40,7 @@
 
 0.3.11需求媒体使用卖家业务库的JSON实体：`requirement_media`保存事项封面和按消息版本绑定的产品来源选择，`requirement_media_cache`保存商品/SKU展示图状态与图片资产关联，`requirement_media_mutation`和`requirement_media_request`保存幂等记录；已有`message_image`复用聊天图片关联，`image_asset`保存原图和安全预览。消息原文及附件保持原样，产品事实的`value`仍为文字。展示revision是本地投影的52位摘要整数，并非事项业务revision或递增计数；封面和展示缓存变化不改变业务生成指纹，来源选择变化则使相关未提交生成失效。
 
-0.3.13停用假定商品卡、历史链接及SKU字段业务解析；真实消息/图片协议、受控下载和缓存保留。需求图片是AI选择的get_requirement_media确切media_id，仅当前本地安全预览可展示。独立product_main_image用于商品展示和采购找货，后台通过独立媒体池读取并安全本地缓存，不占AI槽；采购可等待图片终态后使用图或文字找货。它不进入接待photo_context、manifest或语义指纹，不替代客户product_images。正式list-information读取使用productId整数、queryType=trunk、componentList=[images]；data为JSON字符串，图片来自basicInfo.images的imageIndex和originalImageUrl。响应无商品ID及主图标记，按确切请求绑定并选最小imageIndex作展示参考，不能称平台已证主图或SKU图；样本1601902417143在售状态未知，见[只读报告](../artifacts/verification/reception-0.3.13/product-image-component-accio.json)。跨商家不复用业务缓存，迟到结果复核owner、来源版本、服务世代及任务。界面不传任意URL或路径，快照不联网；全量SKU来源和图搜尚未验收。媒体及原图随业务库和有效WAL完整备份。
+0.3.13停用假定商品卡、历史链接及SKU字段业务解析；真实消息/图片协议、受控下载和缓存保留。需求图片是AI选择的get_requirement_media确切media_id，仅当前本地安全预览可展示。独立product_main_image用于商品展示和采购找货，后台通过独立媒体池读取并安全本地缓存，不占AI槽；采购可等待图片终态后使用图或文字找货。它不进入接待photo_context、manifest或语义指纹，不替代客户product_images。正式list-information读取使用productId整数、queryType=trunk、componentList=[images]；data为JSON字符串，图片来自basicInfo.images的imageIndex和originalImageUrl。响应无商品ID及主图标记，按确切请求绑定并按imageIndex排序、URL去重，最多保存五张；images中各项独立记录状态和资产引用，顶层兼容第一张有效缓存图。旧单图通过image_group_version持久安排一次补齐，未知与失败不反复查询；界面不常驻显示来源解释，不称平台已证主图或SKU图；样本1601902417143在售状态未知，见[只读报告](../artifacts/verification/reception-0.3.13/product-image-component-accio.json)。跨商家不复用业务缓存，迟到结果复核owner、来源版本、服务世代及任务。界面不传任意URL或路径，快照不联网；全量SKU来源和图搜尚未验收。媒体及原图随业务库和有效WAL完整备份。
 
 产品及采购使用library_product、supplier、supplier_offer、requirement_product_binding、procurement_task、library_mutation。产品键为商家+平台+AI产品ID，首次任务与产品原子建立，稍后调度；队列满不丢合法AI需求。产品复用公共资料，不共享客户数量、预算、地址、聊天、补充和私图；供货方案修订历史保留，当前需求选择独立于产品默认。选择、offer与product版本进入上下文指纹。
 
@@ -81,6 +81,8 @@ maintenance prepare仅在正常关闭且数据库checkpoint可核验时处理内
 人工正文按会话保存，使用 `client_request_id` 防重，提交确切正文版本。首次人工编辑只暂停本会话自动处理，其他客户不受影响；恢复该客户自动接待需要明确操作。人工发送保留身份/客户归属、平台正文格式、版本、退出撤权、请求幂等和整会话unknown保护，不套自动回复的资料或采购检查，不消耗自动额度。已发送人工消息进入实际历史及后续AI上下文。详情见 [人工接待使用](人工接待使用.md)。
 
 公司资料缓存仅保存公司名、seller_id和更新时间；`refresh_company_profile`是独立慢任务，快照读取不联网。右栏宽度和需求比例按商家保存。
+
+0.3.15建议处理记录仅在renderer的localStorage按模式、商家和conversation_id保存当前已处理suggestion_id，不保存正文、不写需求事实或发送回执。未处理建议直接在输入框上方显示，替换或弃用关闭；重开不重复展示同一条已处理结果，新suggestion_id仍需处理。原manual_suggestion实体保留，采用后的人工正文仍经现有CAS保存。
 
 ## 进程通信与关闭
 
