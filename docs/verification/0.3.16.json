@@ -1,7 +1,7 @@
 {
   "version": "0.3.16",
   "date": "2026-11-13",
-  "status": "targeted-validation",
+  "status": "published",
   "layout": "A-compact-three-column",
   "targeted_validation": {
     "full_suite_run": false,
@@ -32,18 +32,83 @@
     "business_ipc_mocked": false,
     "clipboard_write_sink_mocked": true,
     "external_browser_sink_mocked": true,
-    "earlier_attempt": {"report": "artifacts/verification/workbench-0316-source-a/report.json", "status": "failed", "reason": "Driver exact accessible name did not include the attachment image alt text; switched to its stable title selector."},
-    "visual_followup": "Constrain original-size viewport to its card and adjust case selector line height; final executable must verify these refinements."
+    "earlier_attempt": {
+      "report": "artifacts/verification/workbench-0316-source-a/report.json",
+      "status": "failed",
+      "reason": "Driver exact accessible name did not include the attachment image alt text; switched to its stable title selector."
+    },
+    "visual_followup": "Constrained the original-size viewport to its card and adjusted case selector line height; final candidate C geometry checks and visually reviewed screenshots verified both refinements."
   },
-  "development_commits": ["e309eb9", "269f951", "2713f15"],
+  "development_commits": [
+    "e309eb9",
+    "269f951",
+    "2713f15",
+    "56c5208"
+  ],
   "candidate": {
-    "status": "pending",
+    "status": "passed",
     "output": "relase/release-0.3.16-c",
-    "superseded_local_builds": ["relase/release-0.3.16-a", "relase/release-0.3.16-b"],
+    "superseded_local_builds": [
+      "relase/release-0.3.16-a",
+      "relase/release-0.3.16-b"
+    ],
     "superseded_reason": "Complete older-case image preparation and preserve closed-case state and current reception routing.",
-    "superseded_window_report": "artifacts/verification/workbench-0316-package-a/report.json"
+    "superseded_window_report": "artifacts/verification/workbench-0316-package-a/report.json",
+    "python_inputs": 84,
+    "frozen_backend_files": 75,
+    "portable_files": 164,
+    "zip_entries": 165,
+    "asar_sha256": "8a8e7c213338100d20fe5fdd9aacbabfa4394ea36097706516e13b7302d18abd",
+    "source_manifest_sha256": "e6aef724df2c613354a43b965a364620383626106df989e02dad8a29d2f70126",
+    "staging": "artifacts/build/package-input-1794561249889"
   },
-  "publication": {"status": "pending", "repository": "juccistar/reception-workbench-releases"},
+  "publication": {
+    "repository": "juccistar/reception-workbench-releases",
+    "release_id": 444040154,
+    "url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.16",
+    "published_at": "2026-11-13T09:29:22Z",
+    "draft": false,
+    "prerelease": false,
+    "latest": true,
+    "anonymous_complete_download": "passed",
+    "release_signature": "ed25519",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "windows_authenticode": "NotSigned",
+    "assets": [
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.16.exe",
+        "bytes": 137034548,
+        "sha256": "6c90eb2c4c85b2aad84748d0a77d1356dd2ba97b420dce3a77b53b7c5b7d409a",
+        "server_digest": "sha256:6c90eb2c4c85b2aad84748d0a77d1356dd2ba97b420dce3a77b53b7c5b7d409a",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.16/ReceptionWorkbench-Setup-0.3.16.exe",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.16.zip",
+        "bytes": 178823592,
+        "sha256": "26f8cd320fd081e18d210c9b4a8b9d8c940610efe069598ff1ce3632cee37e92",
+        "server_digest": "sha256:26f8cd320fd081e18d210c9b4a8b9d8c940610efe069598ff1ce3632cee37e92",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.16/ReceptionWorkbench-0.3.16.zip",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.16.exe.blockmap",
+        "bytes": 143446,
+        "sha256": "f16433e540db46def1177b4e143542f6106d38dd8f0c9dac90b41ad66e526616",
+        "server_digest": "sha256:f16433e540db46def1177b4e143542f6106d38dd8f0c9dac90b41ad66e526616",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.16/ReceptionWorkbench-Setup-0.3.16.exe.blockmap",
+        "complete": true
+      },
+      {
+        "name": "latest.yml",
+        "bytes": 726,
+        "sha256": "de9cff2ae328e5a32f2432a6c1adf54ade6899b8ef7f37dc3152951293cfe067",
+        "server_digest": "sha256:de9cff2ae328e5a32f2432a6c1adf54ade6899b8ef7f37dc3152951293cfe067",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.16/latest.yml",
+        "complete": true
+      }
+    ]
+  },
   "actual_installer_executed": false,
   "installed_application_replaced": false,
   "default_entry_promoted": false,
@@ -51,5 +116,54 @@
   "source_pushed": false,
   "real_ai_calls": 0,
   "real_customer_sends": 0,
-  "production_data_accessed": false
+  "production_data_accessed": false,
+  "build_commit": "56c5208",
+  "final_executable": {
+    "path": "relase/release-0.3.16-c/installer-build/win-unpacked/ReceptionWorkbench.exe",
+    "workbench_report": "artifacts/verification/workbench-0316-package-c/report.json",
+    "base_report": "artifacts/verification/demo-package-0316-base/result.json",
+    "status": "passed",
+    "screenshots": 11,
+    "screenshots_visually_reviewed": true,
+    "business_ipc_mocked": false,
+    "native_menu_selection_mocked": true,
+    "clipboard_write_sink_mocked": true,
+    "external_browser_sink_mocked": true,
+    "production_clipboard_accessed": false,
+    "real_ai_calls": 0,
+    "real_customer_sends": 0,
+    "completed": [
+      "real-private-chunks-original-hash-full-resolution-modal-and-thumbnail-copy",
+      "full-url-copy-and-separate-restricted-browser-arrow",
+      "one-click-history-deduplication-and-header-customer-toggle-with-global-paused",
+      "controlled-popovers-fixed-footer-split-resize-and-centred-supplement-original",
+      "real-demo-job-incremental-demand-no-change-revision-and-pinned-other-case",
+      "low-height-narrow-window-normal-reopen-and-dismissal-persistence"
+    ],
+    "original_image": {
+      "width": 1200,
+      "height": 900,
+      "size": 890979,
+      "sha": "ad337865d96a6d261217fcc9f161cfd2e5eaf391780da989a70c3c917ba116eb"
+    },
+    "copy_dimensions": [
+      {
+        "width": 1200,
+        "height": 900,
+        "bytes": 890979
+      },
+      {
+        "width": 1200,
+        "height": 900,
+        "bytes": 890979
+      }
+    ],
+    "translation_cache_reopen_verified": true,
+    "restart_reception_paused": true
+  },
+  "limitations": [
+    "Synthetic AI and media do not verify live model semantics, platform image access, image sourcing or supplier inquiries.",
+    "Native menu selection, clipboard write destination and external browser launch were substituted; no production clipboard was accessed.",
+    "Directed supplier inquiries and quote collection remain unavailable."
+  ]
 }
