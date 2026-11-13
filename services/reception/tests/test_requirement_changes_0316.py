@@ -257,6 +257,35 @@ class RequirementChangesTests(unittest.TestCase):
             self.service._validate_send(draft['draft_id'], draft['revision'], manual=True)
         self.assertEqual(caught.exception.code, 'stale_draft')
 
+    def test_manual_prepares_images_from_a_referenced_older_case(self):
+        from unittest.mock import patch
+        self.seed()
+        self.message('m2', 'Also I need red caps.')
+        second = self.apply([self.create(mid='m2', name='红色帽子', excerpt='red caps')], request='caps')['reply_case_ids'][0]
+        prepared = []
+        self.service.integrations.generate_manual = lambda context, request_id, **options: {'reply': 'Noted.', 'reply_sources': ['m2']}
+        self.service._prepare_direct_photos = lambda cid, job, epoch, facade: (prepared.append(cid) or (lambda: None))
+        def sources(repo, case, messages):
+            return [{'message_id': 'm1'}] if case and case['case_id'] == self.initial_case else []
+        with patch('reception_service.conversation_assistance.get_product_source_images', sources):
+            self.wait(self.service.call('generate_manual_suggestion', {'conversation_id': self.owner['conversation_id'],
+                'case_id': second, 'client_request_id': 'older-case-image'}))
+        self.assertEqual(prepared, [self.owner['conversation_id']])
+
+    def test_automatic_prepares_images_from_a_referenced_older_case(self):
+        from unittest.mock import patch
+        self.seed()
+        self.message('m2', 'Also I need red caps.')
+        second = self.apply([self.create(mid='m2', name='红色帽子', excerpt='red caps')], request='caps')['reply_case_ids'][0]
+        prepared = []
+        self.service.integrations.generate = lambda context, request_id, **options: {'action': 'ask', 'reply': 'Noted.', 'reply_sources': ['m2']}
+        self.service._prepare_direct_photos = lambda cid, job, epoch, facade: (prepared.append(cid) or (lambda: None))
+        def sources(repo, case, messages):
+            return [{'message_id': 'm1'}] if case and case['case_id'] == self.initial_case else []
+        with patch('reception_service.service.get_product_source_images', sources):
+            self.wait(self.service.call('generate_draft', {'case_id': second, 'expected_case_revision': self.case(second)['revision']}))
+        self.assertEqual(prepared, [self.owner['conversation_id']])
+
     def test_history_tasks_are_deduplicated_per_conversation(self):
         release = threading.Event()
         started = threading.Event()

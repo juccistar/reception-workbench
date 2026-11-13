@@ -7,13 +7,13 @@
     "full_suite_run": false,
     "typescript": "passed",
     "backend": {
-      "requirement_changes_and_multi_case": 15,
+      "requirement_changes_and_multi_case": 17,
       "prompt_actual_requests": 7,
       "business_supplements": 5,
       "original_media_chunks_copy_orientation": 6,
       "product_gallery_and_preview_budget": 10,
       "product_library_and_supplier_binding": 16,
-      "total_distinct_cases": 59,
+      "total_distinct_cases": 61,
       "status": "passed"
     },
     "desktop": {
@@ -35,8 +35,14 @@
     "earlier_attempt": {"report": "artifacts/verification/workbench-0316-source-a/report.json", "status": "failed", "reason": "Driver exact accessible name did not include the attachment image alt text; switched to its stable title selector."},
     "visual_followup": "Constrain original-size viewport to its card and adjust case selector line height; final executable must verify these refinements."
   },
-  "development_commits": ["e309eb9"],
-  "candidate": {"status": "pending"},
+  "development_commits": ["e309eb9", "269f951"],
+  "candidate": {
+    "status": "pending",
+    "output": "relase/release-0.3.16-b",
+    "superseded_local_build": "relase/release-0.3.16-a",
+    "superseded_reason": "Complete the automatic/manual image-preparation entry guards for older cases in the same conversation.",
+    "superseded_window_report": "artifacts/verification/workbench-0316-package-a/report.json"
+  },
   "publication": {"status": "pending", "repository": "juccistar/reception-workbench-releases"},
   "actual_installer_executed": false,
   "installed_application_replaced": false,

@@ -2113,7 +2113,10 @@ class ReceptionService(RequirementChangesMixin, CachedMediaMixin, ProductLibrary
                     self._invalidate(case['conversation_id'])
                     self._queue_outbox(case)
                 return {'message': '客户已要求停止联系；未调用 AI 或发送'}
-            has_photos = bool(get_product_source_images(self.repo, case, self.repo.list('message', conversation_id=case['conversation_id'])))
+            messages = self.repo.list('message', conversation_id=case['conversation_id'])
+            has_photos = any(get_product_source_images(self.repo, candidate, messages)
+                             for candidate in self.repo.list('case', conversation_id=case['conversation_id'])
+                             if candidate.get('seller_id') == self.seller_id and candidate.get('buyer_id') == case['buyer_id'])
         with self._job_phase(job_id, 'photo_prepare_ms'):
             photo_guard = self._prepare_direct_photos(case['conversation_id'], job_id, epoch, facade) if has_photos else None
         with self._lock:

@@ -221,7 +221,10 @@ class ConversationAssistanceMixin:
         cid = context['conversation_id']
         with self._lock:
             case = self.repo.get('case', context.get('case_id')) if context.get('case_id') else None
-            has_photos = bool(case and get_product_source_images(self.repo, case, self.repo.list('message', conversation_id=cid)))
+            messages = self.repo.list('message', conversation_id=cid)
+            has_photos = any(get_product_source_images(self.repo, candidate, messages)
+                             for candidate in self.repo.list('case', conversation_id=cid)
+                             if candidate.get('seller_id') == self.seller_id and candidate.get('buyer_id') == context['buyer_id'])
         if context.get('unsent_reply') or not has_photos:
             with self._lock:
                 token = self._read_token(facade)
