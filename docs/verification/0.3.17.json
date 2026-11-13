@@ -1,8 +1,8 @@
 {
   "version": "0.3.17",
   "date": "2026-11-13",
-  "status": "whatsapp-implemented-build-validation",
-  "public_latest": "0.3.16",
+  "status": "published",
+  "public_latest": "0.3.17",
   "repair": {
     "backend": {
       "product_main_image_file": 16,
@@ -44,7 +44,7 @@
     "commit": "1a81250"
   },
   "whatsapp": {
-    "status": "implemented-integration-validation",
+    "status": "implemented-targeted-and-final-package-verified",
     "ui": "original-web-ui-separate-module",
     "scope": "all-one-to-one-chats",
     "alibaba_binding": "optional-context-enhancement",
@@ -78,9 +78,19 @@
       "real_message_send": false,
       "qr_or_credentials_recorded": false,
       "report": "artifacts/verification/whatsapp-native-source-c/report.json",
-      "runtime_resource_closure_tested": true
+      "runtime_resource_closure_tested": true,
+      "final_package_report": "artifacts/verification/whatsapp-native-package-c/report.json",
+      "final_packaged_sdk_resources": true,
+      "earlier_driver_failures": "Two source fixture attempts referenced a bundled outer window variable; renamed it fixtureWindow and all DOM, exposeFunction, pre-injection and QR checks passed."
     },
-    "candidate_window": "pending",
+    "candidate_window": {
+      "status": "passed",
+      "report": "artifacts/verification/repairs-0317-package-c/report.json",
+      "screenshots": 6,
+      "screenshots_visually_reviewed": true,
+      "clipboard_write_sink_mocked": false,
+      "native_menu_selection_mocked": true
+    },
     "full_suite_run": false,
     "source_build_commit": "cc34d65",
     "source_window": {
@@ -91,8 +101,71 @@
     }
   },
   "publication": {
-    "status": "pending",
-    "repository": "juccistar/reception-workbench-releases"
+    "status": "published",
+    "repository": "juccistar/reception-workbench-releases",
+    "release_id": 444213207,
+    "url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.17",
+    "published_at": "2026-11-13T12:41:44Z",
+    "draft": false,
+    "prerelease": false,
+    "latest": true,
+    "release_signature": "ed25519",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "windows_authenticode": "NotSigned",
+    "anonymous_complete_download": "passed",
+    "assets": [
+      {
+        "name": "latest.yml",
+        "bytes": 726,
+        "sha256": "0b6b4b24dc297201eb76d0a282bea753e039dc4eeca7016b186f7c7ba5555d60",
+        "sha512": "yE7YiJ8p6pHxA7YAuhPCJU4VnsbnTGXAxIhZasfaiprQoXTMOI8l/vCsmYjf5LCASj/HAJYRr/ea+uaGLldJWg==",
+        "server_digest": "sha256:0b6b4b24dc297201eb76d0a282bea753e039dc4eeca7016b186f7c7ba5555d60",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.17/latest.yml",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.17.zip",
+        "bytes": 183378742,
+        "sha256": "141814685a0147a5a268cba6f46f2556de45054f4fe99a6c30d2e014bdbc1527",
+        "sha512": "HaYh941Q9M0Xqi7pvO08qjmPNOryHw/ZSsXBImGmHo+m9SF0kr4BLayDxZHeOYkcjyTTc+wNv6jdEA9+QuAQsg==",
+        "server_digest": "sha256:141814685a0147a5a268cba6f46f2556de45054f4fe99a6c30d2e014bdbc1527",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.17/ReceptionWorkbench-0.3.17.zip",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.17.exe",
+        "bytes": 140031066,
+        "sha256": "8803c7f85404e49c2b54e980e315523452d287f2d669d182a8a6e968a8395159",
+        "sha512": "JE2xyBFoI9UFs7cZKgeVkrycs3NVdx2FUM9nfoT6DZ+ECl6RxFIoE11U5QY7CcX5h8m8JoORW8COVYR7QY7bEA==",
+        "server_digest": "sha256:8803c7f85404e49c2b54e980e315523452d287f2d669d182a8a6e968a8395159",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.17/ReceptionWorkbench-Setup-0.3.17.exe",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.17.exe.blockmap",
+        "bytes": 146871,
+        "sha256": "ed53efc5a454155d9b57d9467179c6d6d1f89505a86c7532ab405476a461a1d7",
+        "sha512": "kQxo5m9iu/FCqgaiWjyfJQU4OH6gmBLkCw6j9fKWEl3Yz6mviVhqwesByT8WxhHdG3Y11jMx12zWIzNzFPdUBg==",
+        "server_digest": "sha256:ed53efc5a454155d9b57d9467179c6d6d1f89505a86c7532ab405476a461a1d7",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.17/ReceptionWorkbench-Setup-0.3.17.exe.blockmap",
+        "complete": true
+      }
+    ],
+    "anonymous_download_report": "artifacts/verification/public-0317-python/report.json",
+    "anonymous_download_method": "Bounded anonymous HTTP ranges via Python urllib/OpenSSL, combined with previously downloaded anonymous prefixes; final whole-file sizes and SHA256 matched local build and server digests",
+    "earlier_download_attempts": [
+      {
+        "report": "artifacts/verification/public-0317-c/report.json",
+        "status": "timeout",
+        "completed_small_assets": 2
+      },
+      {
+        "report": "artifacts/verification/public-0317-ranged/report.json",
+        "status": "failed",
+        "reason": "Node TLS/range request failed; Python urllib anonymous range probe passed and was used for final download"
+      }
+    ],
+    "signature_verified_on_downloaded_metadata": true
   },
   "actual_installer_executed": false,
   "installed_application_replaced": false,
@@ -103,7 +176,7 @@
   "real_customer_sends": 0,
   "production_data_accessed": false,
   "candidate": {
-    "status": "built-verification-pending",
+    "status": "passed",
     "output": "relase/release-0.3.17-c",
     "earlier_local_attempts": [
       {
@@ -124,6 +197,28 @@
     "staging": "artifacts/build/package-input-1794573043122",
     "portable_files": 165,
     "source_manifest_sha256": "0f3f03989375ec21cef1cd3522ced6c388f89e9c17ef843610690cf0ce5e40da",
-    "runtime_archive_sha256": "eaee2930b1140de6363549f9f1212aa0ade411b640581bb48ec18f600779f317"
+    "runtime_archive_sha256": "eaee2930b1140de6363549f9f1212aa0ade411b640581bb48ec18f600779f317",
+    "build_commit": "a150253",
+    "integrity_report": "artifacts/verification/release-0317-c-integrity.json",
+    "zip_report": "artifacts/verification/release-0317-c-zip.json",
+    "update_report": "artifacts/verification/release-0317-c-update.json",
+    "python_inputs": 85,
+    "zip_entries": 166,
+    "asar_sha256": "28e18e4ba4ad0530df62bd279cda18d3165b4c1bcb5e65fa37a0a4d08e069063",
+    "installer_sha256": "8803c7f85404e49c2b54e980e315523452d287f2d669d182a8a6e968a8395159",
+    "installer_bytes": 140031066,
+    "release_signature": "ed25519",
+    "windows_authenticode": "NotSigned"
+  },
+  "final_executable": {
+    "path": "relase/release-0.3.17-c/installer-build/win-unpacked/ReceptionWorkbench.exe",
+    "status": "passed",
+    "report": "artifacts/verification/repairs-0317-package-c/report.json",
+    "screenshots": 6,
+    "screenshots_visually_reviewed": true,
+    "normal_close": true,
+    "business_ipc_mocked": false,
+    "clipboard_write_sink_mocked": false,
+    "native_menu_selection_mocked": true
   }
 }
