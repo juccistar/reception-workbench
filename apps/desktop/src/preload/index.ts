@@ -6,6 +6,11 @@ function checkConversation(value: unknown): asserts value is string {
   if (typeof value !== 'string' || !value || value.length > 500) throw new Error('客户会话无效。');
 }
 const bridge: ReceptionBridge = {
+  getWhatsAppHostInfo: () => ipcRenderer.invoke('reception:whatsapp:status'),
+  connectWhatsApp: () => ipcRenderer.invoke('reception:whatsapp:connect'),
+  disconnectWhatsApp: () => ipcRenderer.invoke('reception:whatsapp:disconnect'),
+  setWhatsAppView: request => ipcRenderer.invoke('reception:whatsapp:view', request),
+  listWhatsAppChats: () => ipcRenderer.invoke('reception:whatsapp:chats'),
   getImageOriginal: reference => ipcRenderer.invoke('reception:image:original', reference),
   showImageMenu: reference => ipcRenderer.invoke('reception:image:menu', reference),
   openProductLink: reference => ipcRenderer.invoke('reception:product:open', reference),

@@ -23,6 +23,7 @@ from .manual_chat import ManualChatMixin
 from .conversation_assistance import ConversationAssistanceMixin
 from .requirement_changes import RequirementChangesMixin, requirement_revision
 from .cached_media import CachedMediaMixin
+from .whatsapp import WhatsAppMixin
 from .business_supplement import supplement_fingerprint
 from . import policy_library
 from .integrations.generation_metadata import applied_policy_summaries, checked_metadata
@@ -59,7 +60,10 @@ FAST = frozenset({'get_snapshot', 'get_conversation', 'get_messages', 'get_messa
                   'select_supplier_offer', 'bind_requirement_product', 'set_product_default_offer', 'get_procurement_settings',
                   'save_procurement_settings', 'set_procurement_enabled', 'list_procurement_tasks', 'request_procurement',
                   'reconcile_procurement', '_image_original_describe', '_image_original_chunk',
-                  '_image_copy_describe', '_image_copy_chunk', '_product_link_for_reference', '_copy_text_for_reference', 'shutdown'})
+                  '_image_copy_describe', '_image_copy_chunk', '_product_link_for_reference', '_copy_text_for_reference',
+                  'get_whatsapp_state', 'save_whatsapp_binding', 'get_whatsapp_context', 'set_whatsapp_reception',
+                  'takeover_whatsapp', 'reconcile_whatsapp_operation', '_wa_set_account', '_wa_ingest',
+                  '_wa_prepare_send', '_wa_transport_result', '_wa_ack', 'shutdown'})
 DEFAULT_SETTINGS = {'workctl_path': '', 'poll_seconds': 30, 'probe_seconds': 2, 'merge_seconds': 1,
                     'required_fields': ['product', 'quantity', 'specifications', 'destination'],
                     'image_batch_mib': 64, 'image_prepare_seconds': 60, 'image_parallelism': 2,
@@ -89,7 +93,7 @@ def coverage():
             'next_cursor': None, 'message': '尚未读取历史消息'}
 
 
-class ReceptionService(RequirementChangesMixin, CachedMediaMixin, ProductLibraryMixin, RequirementMediaMixin, ExecutionMixin, ProcurementMixin, ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
+class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin, ProductLibraryMixin, RequirementMediaMixin, ExecutionMixin, ProcurementMixin, ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
     def __init__(self, data_root: Path, mode='demo', seller_id='', emit=None):
         if mode not in ('demo', 'live'):
             raise ServiceError('invalid_mode', '运行模式无效')
@@ -166,6 +170,7 @@ class ReceptionService(RequirementChangesMixin, CachedMediaMixin, ProductLibrary
         self._init_message_monitor()
         self._recover()
         self._init_product_library()
+        self._init_whatsapp()
         self._initialize_unread()
         if mode == 'demo' and not self.repo.list('conversation'):
             self._seed()
@@ -285,6 +290,7 @@ class ReceptionService(RequirementChangesMixin, CachedMediaMixin, ProductLibrary
                 self.seller_id = seller
                 self.account_verified = True
                 self._recover()
+                self._init_whatsapp()
                 self._initialize_unread()
                 # Preserve jobs created in the unverified empty workspace only after recovery.
                 with self.repo.transaction():
@@ -895,6 +901,9 @@ class ReceptionService(RequirementChangesMixin, CachedMediaMixin, ProductLibrary
                         raise ServiceError('invalid_settings', '飞书字段映射格式无效')
                 value = {**updated['feishu'], **value}
             updated[key] = value
+        with self._lock, self.repo.transaction():
+            self._wa_enabled = False
+            self._wa_cancel()
         self._pause()
         with self._lock:
             self._reset_authorization_start()
@@ -952,6 +961,8 @@ class ReceptionService(RequirementChangesMixin, CachedMediaMixin, ProductLibrary
             self._epoch += 1
             self._cancel_generation_tasks(reason='shutdown' if closing else 'paused')
             if closing:
+                self._wa_enabled = False
+                self._wa_cancel()
                 self._closing = True
                 self._stop.set()
                 self._monitor_wake.set()
@@ -1610,6 +1621,7 @@ class ReceptionService(RequirementChangesMixin, CachedMediaMixin, ProductLibrary
             if self._closing:
                 return
             self._schedule_procurement()
+            self._schedule_whatsapp()
             self._schedule_continuity()
             self._schedule_generation_retries()
             with self.repo.lock:

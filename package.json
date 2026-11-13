@@ -22,8 +22,10 @@
   "dependencies": {
     "electron-updater": "6.8.11",
     "lucide-react": "^1.70.0",
+    "puppeteer": "24.38.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "whatsapp-web.js": "1.34.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0",

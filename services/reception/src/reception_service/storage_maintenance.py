@@ -1,6 +1,8 @@
 """Offline maintenance entry points for managed workspaces."""
 from contextlib import closing
 import os
+import hashlib
+import json
 from pathlib import Path
 import sqlite3
 import sys
@@ -8,7 +10,7 @@ import uuid
 
 from .storage_guard import StorageError, preflight_workspace, validate_database, REPOSITORY_VERSION, LEDGER_VERSION
 from .workspace_backup import (backup_workspace, restore_workspace, _files, _separate,
-                               _validate_archive, _hash, _receipt_roots, RECEIPTS)
+                               _validate_archive, _hash, _receipt_roots, _long_path, RECEIPTS)
 from .workspace_lock import WorkspaceLock, reject_links
 
 
@@ -76,7 +78,62 @@ def _ledgers(root):
     return result
 
 
+def _wa_ledger_record(path):
+    """Parse durable lines; a partial last line is not a recorded result."""
+    raw = _long_path(path).read_bytes()
+    lines = raw.split(b'\n')
+    try:
+        from .workspace_backup import _unique
+        intent = json.loads(lines[0].decode('utf-8'), object_pairs_hook=_unique)
+    except (UnicodeError, ValueError, StorageError, RecursionError):
+        # A crash can leave an incomplete intent file. It still owns the send
+        # key, so only an identical opaque file can preserve it safely.
+        return None, [], raw
+    try:
+        operation_hash = hashlib.sha256(intent['operation_id'].encode('utf-8')).hexdigest() if isinstance(intent, dict) and isinstance(intent.get('operation_id'), str) else None
+    except UnicodeError:
+        raise StorageError('Invalid WhatsApp ledger intent') from None
+    if (not isinstance(intent, dict) or operation_hash != path.stem
+            or any(not isinstance(intent.get(k), str) or not intent[k] for k in
+                   ('operation_id', 'account_id', 'connection_epoch', 'chat_id', 'body'))):
+        raise StorageError('Invalid WhatsApp ledger intent')
+    results = []
+    for line in lines[1:-1]:
+        try:
+            result = json.loads(line.decode('utf-8'), object_pairs_hook=_unique)
+        except (UnicodeError, ValueError, StorageError, RecursionError) as exc:
+            raise StorageError('Invalid WhatsApp ledger result') from exc
+        if (not isinstance(result, dict) or not isinstance(result.get('message_id'), str)
+                or not result['message_id'] or type(result.get('ack')) is not int):
+            raise StorageError('Invalid WhatsApp ledger result')
+        results.append(result)
+    return intent, results, raw
+
+
+def _check_whatsapp_history(current, archive):
+    def names(root):
+        return {name for name in _files(root, require_checkpoint=False, check_references=False)
+                if name.startswith(('demo/whatsapp-ledgers/', 'live/whatsapp-ledgers/'))}
+    old, restored = names(current), names(archive)
+    if not old <= restored:
+        raise StorageError('Backup is missing current WhatsApp ledger')
+    for name in old:
+        intent, results, raw = _wa_ledger_record(current / name)
+        other_intent, other_results, other_raw = _wa_ledger_record(archive / name)
+        if intent is None or other_intent is None:
+            if raw != other_raw:
+                raise StorageError('Backup conflicts with incomplete WhatsApp ledger')
+            continue
+        if intent != other_intent or len(results) > len(other_results):
+            raise StorageError('Backup conflicts with WhatsApp operation history')
+        for previous, candidate in zip(results, other_results):
+            if (any(candidate.get(key) != value for key, value in previous.items() if key != 'ack')
+                    or candidate['ack'] < previous['ack']):
+                raise StorageError('Backup would lose WhatsApp receipt evidence')
+
+
 def _check_history(current, archive):
+    _check_whatsapp_history(current, archive)
     old, restored = _ledgers(current), _ledgers(archive)
     for name, tables in restored.items():
         if name not in old and tables['retry_grants']:

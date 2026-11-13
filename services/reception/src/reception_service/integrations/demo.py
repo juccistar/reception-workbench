@@ -290,6 +290,17 @@ class DemoIntegration:
         result['verified_image_reads'] = refs
         return result
 
+    def generate_whatsapp(self, context, request_id, *, on_call_start=None, cancel_event=None):
+        self.resolve_identity(context.get('seller_id'))
+        if cancel_event is not None and cancel_event.is_set():
+            raise ServiceError('cancelled', '请求已取消', stage='analysis')
+        if on_call_start is not None:
+            on_call_start()
+        messages = context.get('whatsapp_messages', [])
+        source = next((m['source_id'] for m in reversed(messages) if m.get('role') == 'buyer'), None)
+        return {'reply': 'Thank you for your message. How can I help you?',
+                'reply_sources': [source] if source else [], 'wa_summary': '客户提出了沟通事项。'}
+
     def generate_requirements(self, context, request_id, *, on_call_start=None, cancel_event=None, photo_inputs=None):
         if cancel_event is not None and cancel_event.is_set():
             raise ServiceError('cancelled', '请求已取消', stage='analysis')

@@ -20,6 +20,7 @@ const block = marker => {
 const prompts = {
   COMMON: block('## 3. P01：'),
   AUTOMATIC_TASK: block('## 4. P02：'),
+  WHATSAPP_TASK: block('## 3A. WHATSAPP：'),
   REQUIREMENT_CHANGE_RULES: block('## 4A. P02-A：'),
   MANUAL_TASK: block('## 5. P03：'),
   POLISH_TASK: block('## 6. P04：'),
@@ -34,6 +35,7 @@ const output = ['"""Reviewed, shared generation prompts. Regenerate with scripts
   'PROMPT_VERSION = "reception-0.3.16"',
   ...Object.entries(prompts).map(([name, value]) => `${name} = ${JSON.stringify(value)}`),
   'AUTOMATIC = COMMON + "\\n" + AUTOMATIC_TASK + "\\n" + REQUIREMENT_CHANGE_RULES + "\\ncontext =\\n"',
+  'WHATSAPP = COMMON + "\\n" + WHATSAPP_TASK + "\\ncontext =\\n"',
   'MANUAL = COMMON + "\\n" + MANUAL_TASK + "\\n" + REQUIREMENT_CHANGE_RULES + "\\ncontext =\\n"',
   'POLISH = COMMON + "\\n" + POLISH_TASK + "\\ncontext =\\n"',
   'REQUIREMENTS = COMMON + "\\n" + REQUIREMENTS_TASK + "\\n" + REQUIREMENT_CHANGE_RULES + "\\ncontext =\\n"',

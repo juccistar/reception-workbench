@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { ApiMethod, ChatSendParams, ConversationDetail, Draft, Job, JobAck, Outbox, Preferences, ReceptionBridge, ServiceEvent, Snapshot, Supplement, SupplementAttachment, SupplementAttachmentBatch, SupplementUpload } from '../../shared/api';
 
-export type Page = 'home' | 'reception' | 'handoff' | 'customers' | 'policies' | 'settings' | 'activity' | 'products' | 'suppliers' | 'procurement';
+export type Page = 'home' | 'reception' | 'whatsapp' | 'handoff' | 'customers' | 'policies' | 'settings' | 'activity' | 'products' | 'suppliers' | 'procurement';
 type SendStatus = Job['status'] | 'requesting' | 'retry' | 'accepted' | 'rejected';
 export interface ChatSend {
   params: ChatSendParams;

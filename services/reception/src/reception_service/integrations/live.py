@@ -21,7 +21,7 @@ from .accio_native.vendor.adapters.live import SEND_ERROR_STAGES, SNAPSHOT_ERROR
 from .accio_native.vendor.adapters.tool_signals import output_has_tools
 from .accio_native.vendor.diagnostics import CODES, process_diagnostics
 
-from .reception_prompts import AUTOMATIC, MANUAL, POLISH, REQUIREMENTS
+from .reception_prompts import AUTOMATIC, MANUAL, POLISH, REQUIREMENTS, WHATSAPP
 from .generation_metadata import checked_metadata
 
 AI_INSTRUCTIONS = AUTOMATIC
@@ -280,6 +280,21 @@ class LiveIntegration:
             raise ServiceError('answer_missing', 'AI 未返回可核实结果', stage='answer')
         answer['_host_image_reads'] = image_reads
         return answer
+
+    @boundary('analysis')
+    def generate_whatsapp(self, context, request_id, *, on_call_start=None, cancel_event=None):
+        from .analysis import invalid_reply_body
+        if not isinstance(context, dict) or context.get('task_mode') != 'whatsapp_reply':
+            raise ServiceError('invalid_context', 'WhatsApp 上下文无效', stage='context')
+        if self.resolve_identity(context.get('seller_id')) != context.get('seller_id'):
+            raise ServiceError('seller_mismatch', '当前平台卖家身份已变化', stage='identity')
+        answer = self._assistance_query(WHATSAPP, context, request_id, on_call_start, cancel_event)
+        reply, sources, summary = answer.get('reply'), answer.get('reply_sources'), answer.get('wa_summary')
+        if (not isinstance(reply, str) or not reply.strip() or len(reply) > 1200 or invalid_reply_body(reply)
+                or not isinstance(sources, list) or any(not isinstance(x, str) for x in sources)
+                or not isinstance(summary, str) or len(summary) > 4000):
+            raise ServiceError('answer_non_json', 'AI 未返回有效 WhatsApp 回复', stage='answer')
+        return {'reply': reply.strip(), 'reply_sources': sources, 'wa_summary': summary.strip()}
 
     @boundary('analysis')
     def generate_manual(self, context, request_id, *, on_call_start=None, cancel_event=None, photo_inputs=None, photo_deadline=None):

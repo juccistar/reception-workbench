@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import shutil
 import sqlite3
@@ -13,6 +14,23 @@ from .workspace_lock import WorkspaceLock, reject_links
 RECEIPTS = 'live/workctl-state/chat-analysis/send-receipts'
 MANIFEST = 'manifest.json'
 PROVENANCE = '.receipt-roots.json'
+
+
+def _long_path(path):
+    """Use extended paths for deep hash-named ledgers on Windows."""
+    value = os.path.abspath(path)
+    if os.name == 'nt' and not value.startswith('\\\\?\\'):
+        value = ('\\\\?\\UNC\\' + value[2:] if value.startswith('\\\\') else '\\\\?\\' + value)
+    return Path(value)
+
+
+def _normal_path(path):
+    value = str(path)
+    if os.name == 'nt' and value.startswith('\\\\?\\UNC\\'):
+        return Path('\\\\' + value[8:])
+    if os.name == 'nt' and value.startswith('\\\\?\\'):
+        return Path(value[4:])
+    return Path(value)
 
 
 def _absolute_parts(value):
@@ -90,12 +108,13 @@ def _write_provenance(stage, roots, entries):
 
 def _hash(path):
     h = hashlib.sha256()
-    with path.open('rb') as stream:
+    with _long_path(path).open('rb') as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b''):
             h.update(block)
     return h.hexdigest()
 
 def _files(root, *, require_checkpoint=True, check_references=True, receipt_roots=()):
+    root = _long_path(root)
     files = []
     def add(path):
         reject_links(path)
@@ -107,11 +126,36 @@ def _files(root, *, require_checkpoint=True, check_references=True, receipt_root
             if require_checkpoint and wal.exists() and wal.stat().st_size:
                 raise StorageError('Backup requires databases checkpointed at clean shutdown')
         files.append(path.relative_to(root).as_posix())
+    def add_whatsapp_ledgers(base):
+        directory = base / 'whatsapp-ledgers'
+        reject_links(directory)
+        if not directory.exists():
+            return
+        if not directory.is_dir():
+            raise StorageError('Invalid WhatsApp ledger directory')
+        for seller in directory.iterdir():
+            reject_links(seller)
+            if not seller.is_dir() or not re.fullmatch(r'[0-9a-f]{64}', seller.name):
+                raise StorageError('Invalid WhatsApp ledger seller')
+            children = list(seller.iterdir())
+            if len(children) != 1 or children[0].name != 'send-ledger':
+                raise StorageError('Invalid WhatsApp ledger layout')
+            ledger = children[0]
+            reject_links(ledger)
+            if not ledger.is_dir():
+                raise StorageError('Invalid WhatsApp ledger directory')
+            for path in ledger.iterdir():
+                reject_links(path)
+                if not re.fullmatch(r'[0-9a-f]{64}\.jsonl', path.name) or not path.is_file():
+                    raise StorageError('Invalid WhatsApp ledger entry')
+                add(path)
+
     for mode in ('demo', 'live'):
         base = root / mode
         reject_links(base)
         if not base.exists():
             continue
+        add_whatsapp_ledgers(base)
         add(base / 'control.sqlite3')
         if mode == 'demo':
             add(base / 'workspace.sqlite3')
@@ -170,7 +214,7 @@ def _check_receipt_references(root, files, receipt_roots=()):
     for name in files:
         if not name.startswith('live/') or not name.endswith('.sqlite3'):
             continue
-        db = sqlite3.connect((root / name).resolve().as_uri() + '?mode=ro&immutable=1', uri=True)
+        db = sqlite3.connect(_normal_path(root / name).resolve().as_uri() + '?mode=ro&immutable=1', uri=True)
         try:
             queries = ('SELECT request FROM operations', 'SELECT result FROM operations') if name.endswith('adapters-live.sqlite3') else ('SELECT data FROM entities', 'SELECT data FROM revisions')
             for query in queries:
@@ -236,13 +280,13 @@ def backup_workspace(data_root, destination):
             preflight_workspace(root)
             roots = [*_receipt_roots(root), str(root / RECEIPTS)]
             paths = _files(root, receipt_roots=roots)
-            stage = Path(tempfile.mkdtemp(prefix='.reception-backup-', dir=target.parent))
+            stage = _long_path(tempfile.mkdtemp(prefix='.reception-backup-', dir=target.parent))
             try:
                 entries = []
                 for name in paths:
                     if name == PROVENANCE:
                         continue
-                    source, dest = root / name, stage / name
+                    source, dest = _long_path(root / name), _long_path(stage / name)
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source, dest)
                     s = source.stat()
@@ -269,6 +313,7 @@ def _unique(pairs):
     return result
 
 def _validate_archive(root):
+    root = _long_path(root)
     reject_links(root / MANIFEST)
     try:
         manifest = json.loads((root / MANIFEST).read_text(encoding='utf-8'), object_pairs_hook=_unique)
@@ -310,13 +355,13 @@ def restore_workspace(archive, destination):
     reject_links(source)
     _separate(source, target)
     manifest = _validate_archive(source)
-    stage = Path(tempfile.mkdtemp(prefix='.reception-restore-', dir=target.parent))
+    stage = _long_path(tempfile.mkdtemp(prefix='.reception-restore-', dir=target.parent))
     try:
         for entry in manifest['files']:
             name = entry['path']
             dest = stage / name
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source / name, dest)
+            shutil.copyfile(_long_path(source / name), dest)
             os.utime(dest, ns=(entry['mtime_ns'], entry['mtime_ns']))
             if name.startswith(RECEIPTS + '/') and dest.stat().st_mtime_ns != entry['mtime_ns']:
                 raise StorageError('Receipt timestamp precision could not be preserved')

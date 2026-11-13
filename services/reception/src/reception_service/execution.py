@@ -10,7 +10,7 @@ import time
 from .errors import ServiceError
 from .repository import now_ms
 
-AI_JOBS = frozenset({'generate_draft', 'manual_suggestion', 'organize_requirements', 'check_ai', 'product_lookup', 'source_product'})
+AI_JOBS = frozenset({'generate_draft', 'manual_suggestion', 'organize_requirements', 'check_ai', 'product_lookup', 'source_product', 'whatsapp_reply'})
 
 
 class BusinessQueue(queue.Queue):
@@ -71,7 +71,8 @@ class ExecutionMixin:
         with self._lock:
             own = getattr(self._execution_local, 'job_id', None)
             for job in self.repo.list('job'):
-                if (job.get('kind') not in AI_JOBS or job.get('status') not in ('queued', 'running')
+                if (job.get('kind') == 'whatsapp_reply' and reason != 'shutdown'
+                        or job.get('kind') not in AI_JOBS or job.get('status') not in ('queued', 'running')
                         or job.get('kind') == 'source_product' and reason != 'shutdown'
                         or job['job_id'] in (own, exclude_job_id)
                         or conversation_id and job.get('conversation_id') != conversation_id

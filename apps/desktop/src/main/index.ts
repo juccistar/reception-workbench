@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto';
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, safeStorage, screen, shell, type IpcMainInvokeEvent } from 'electron';
 import { productUrl, readOriginal, validateReference } from './media-host';
 import { copyProductText } from './clipboard-host';
+import { WhatsAppCoordinator, validateWhatsAppView } from './whatsapp-coordinator';
+import { WhatsAppHost } from './whatsapp/host';
 import { TranslationHost } from './translation-host';
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -124,6 +127,26 @@ let cancelUpdateRestart: (() => Promise<void>) | null = null;
 let updateHostPromise: Promise<UpdateHost> | null = null;
 const methods = new Set<string>(API_METHODS);
 let translationCoordinator: TranslationHost | null = null;
+let whatsappCoordinator: WhatsAppCoordinator | null = null;
+function whatsApp(): WhatsAppCoordinator {
+  return whatsappCoordinator ??= new WhatsAppCoordinator({
+    // Receipts must still reach the service while the window is closing.
+    invoke: (method, params) => {
+      if (!backend) return Promise.reject(new Error('业务服务尚未就绪。'));
+      return backend.invoke(method, params);
+    },
+    notify: value => { if (window && !window.isDestroyed()) window.webContents.send('reception:event', value); },
+    createHost: async onEvent => {
+      if (!window || closing || storageBusy || updateTask || backendStartPromise) throw new Error('后台正在启动、退出或管理数据，请等待完成。');
+      const snapshot = await call<Snapshot>('get_snapshot');
+      if (mode !== 'live' || !snapshot.app.account_verified || !/^[1-9]\d*$/.test(snapshot.app.seller_id)) throw new Error('请从目标商家的 Accio 授权会话启动工作台后连接 WhatsApp。');
+      if (!window || closing || storageBusy || updateTask) throw new Error('当前工作区正在关闭。');
+      const merchant = createHash('sha256').update(snapshot.app.seller_id).digest('hex');
+      const partition = 'persist:whatsapp-' + createHash('sha256').update(profileRoot + ':' + snapshot.app.seller_id).digest('hex');
+      return new WhatsAppHost({ window, partition, directory: path.join(dataRoot, mode, 'whatsapp-ledgers', merchant), onEvent });
+    },
+  });
+}
 function translations(): TranslationHost {
   return translationCoordinator ??= new TranslationHost({
     mode, dataRoot, legacyDirectory: path.join(bootstrapPaths.stateDir, 'translation-credentials', mode),
@@ -366,6 +389,21 @@ function cleanPreferences(value: Record<string,unknown>): Partial<Preferences> {
   return result;
 }
 function installIPC() {
+  ipcMain.handle('reception:whatsapp:status', event => { validSender(event); return whatsApp().getStatus(); });
+  ipcMain.handle('reception:whatsapp:connect', async event => {
+    validSender(event);
+    if (closing || storageBusy || updateTask || backendStartPromise) throw new Error('工作台正在启动或关闭，请稍后连接。');
+    return whatsApp().connect();
+  });
+  ipcMain.handle('reception:whatsapp:disconnect', async event => { validSender(event); await whatsApp().stop(); });
+  ipcMain.handle('reception:whatsapp:chats', async event => { validSender(event); return whatsApp().listChats(); });
+  ipcMain.handle('reception:whatsapp:view', (event, request: unknown) => {
+    validSender(event);
+    const [width, height] = window!.getContentSize();
+    const bounds = validateWhatsAppView(request, { width, height });
+    if (closing || storageBusy || updateTask) { whatsappCoordinator?.setView({ visible: false }); return; }
+    whatsappCoordinator?.setView(bounds);
+  });
   const mediaReady = () => {
     if (!window || window.isDestroyed() || !backend || closing || storageBusy || updateTask || backendStartPromise) throw new Error('后台正在启动、退出或管理数据。');
   };
@@ -441,6 +479,8 @@ function installIPC() {
     if (typeof method!=='string'||!methods.has(method)||method==='confirm_send') throw new Error('不允许此操作。');
     const params=parameters(input??{});
     validateChatParameters(method as ApiMethod, params);
+    if (['save_whatsapp_binding', 'set_whatsapp_reception', 'takeover_whatsapp'].includes(method) &&
+        (typeof params.expected_account_id !== 'string' || !params.expected_account_id || typeof params.expected_connection_epoch !== 'string' || !params.expected_connection_epoch)) throw new Error('WhatsApp 账号已变化，请刷新后重新操作。');
     if(method==='set_scope'||method==='save_settings')++receptionIntent;
     const intent = method==='set_reception' ? ++receptionIntent : null;
     if (mode==='live'&&method==='check_ai'&&!(await confirm('合成 AI 检测','执行一次合成 AI 检测？','会消耗一次 AI 生成，不发送客户消息或写飞书；失败不会自动重试。请先暂停接待。','开始一次检测'))) return { cancelled:true };
@@ -557,6 +597,9 @@ async function startBackend() {
     if (option('--workctl')) command.push('--workctl', option('--workctl'));
     backend = new ServiceClient(runner.executable, command, runner.cwd, runner.env);
     backend.on('event', value => {
+      if (whatsappCoordinator?.handleServiceEvent(value)) return;
+      // Host-only requests never cross the renderer bridge.
+      if (value?.event === 'whatsapp.send.requested' || value?.event === 'whatsapp.reconcile.requested') return;
       if (window && !window.isDestroyed()) window.webContents.send('reception:event', value);
       if (value?.event === 'state.changed') updateVerifiedTitle();
     });
@@ -589,7 +632,13 @@ async function stopBackendForClose(target: BrowserWindow, allowForce: boolean): 
   target.setEnabled(false);
   target.setTitle('询盘接待助手 · 正在停止后台并保存结果…');
   target.webContents.send('reception:event',{event:'backend.closing',data:{message:'正在撤销新发送并等待在途结果保存。'}});
-  const stopped=backend?.shutdown()??Promise.resolve();
+  const stopped=(async () => {
+    await Promise.all([
+      backend?.invoke('set_reception', { enabled: false, auto_send: false }),
+      whatsappCoordinator?.stop(),
+    ]);
+    await backend?.shutdown();
+  })();
   let done=false; void stopped.then(()=>{done=true;});
   while(!done) {
     let reminder: ReturnType<typeof setTimeout> | undefined;
@@ -669,7 +718,7 @@ else {
     }
     } finally { await releaseStart(); }
   }).catch(()=>{dialog.showErrorBox('工作台未能启动','请检查程序组件和本地目录权限，保留已有数据后重试。');app.exit(2);});
-  app.on('window-all-closed',()=>{translationCoordinator?.stop();if(!closing)void backend?.shutdown().finally(()=>app.quit());});
+  app.on('window-all-closed',()=>{translationCoordinator?.stop();if(!closing)void (async()=>{await whatsappCoordinator?.stop();await backend?.shutdown();})().finally(()=>app.quit());});
 }
 }
 void start().catch(() => app.exit(2));

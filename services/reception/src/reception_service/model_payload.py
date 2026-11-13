@@ -106,6 +106,10 @@ def project_model_payload(context: dict, task_mode: str | None = None) -> dict:
     if not isinstance(context, dict):
         return deepcopy(context)
     mode = task_mode or context.get('task_mode') or 'automatic'
+    if mode == 'whatsapp_reply':
+        # WhatsApp context is already a channel-specific, bounded projection.
+        # Preserve source references and optional international background.
+        return deepcopy(context)
     result = {'payload_version': PAYLOAD_VERSION, 'task_mode': mode}
     common = ('reply_target', 'knowledge', 'style', 'supplement', 'message_semantics', 'collection_rules')
     for key in common:

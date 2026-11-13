@@ -10,6 +10,10 @@
 
 原图继续保存在image_asset或supplement_attachment，普通快照只传缩略图。cached_media.py和media-host.ts通过宿主私有接口按最多256 KiB原始字节分块读取，并核对归属、版本、大小和SHA；原图限制仍为6 MiB。复制时另在内存生成带正确方向的全尺寸PNG，单份上限80 MiB、最多两份转换会话、30秒有效期，读取结束或超时释放；这些临时转换会话无需备份，也不改写业务原图。窗口的Blob URL在关闭、切换或卸载时释放。
 
+0.3.17新增独立WhatsApp实体wa_conversation、wa_message、wa_summary、wa_binding、wa_draft、wa_operation及wa_ack，归属为商家+WhatsApp账号+确切单聊标识。国际站背景只读，WhatsApp不会修改国际站会话/需求或采购。发送前持久冻结目标与正文，unknown沿原消息编号核查，ACK_PENDING不当作受理；账号、连接代次或来源变化使旧未提交任务失效，重启不恢复授权。
+
+宿主提交账本在`<demo|live>/whatsapp-ledgers/<商家SHA256>/send-ledger/<operation SHA256>.jsonl`，调用SDK前写冻结意图并同步落盘。该固定层级纳入完整备份、恢复及源哈希检查，旧备份不能丢弃既有提交/回执；同消息编号可记录更高ACK。Electron持久partition在host配置目录内，登录会话和Cookie不进入业务备份或发行物；恢复到新业务根后须重新连接账号和明确开启自动接待。Windows深层账本文件在备份I/O使用扩展长度路径，存档相对路径保持固定白名单。
+
 ## 数据目录
 
 按已核验商家选择独立profile：默认registry为`%LOCALAPPDATA%\AlibabaReceptionWorkbenchHost\merchants.json`，state保存在`profiles/<SHA256 seller>/state`。0.2.21新商家的默认业务根改为registry同级`ARWData/<registry规范路径SHA256前16位>/<sellerId>`，避免两次嵌套seller哈希形成过长SQLite日志路径；旧版已登记根、自定义目录与迁移后的根继续以profile的`state/storage.json`为准，不自动搬移。实际位置以设置页显示为准，支持自定义本机目录、完整迁移、备份和恢复。安全备份使用registry同级`ARWBackups/<相同namespace>`；无商家registry的演示环境按state路径生成独立namespace。

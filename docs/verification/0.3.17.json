@@ -1,7 +1,7 @@
 {
   "version": "0.3.17",
   "date": "2026-11-13",
-  "status": "repair-complete-whatsapp-next",
+  "status": "whatsapp-implemented-build-validation",
   "public_latest": "0.3.16",
   "repair": {
     "backend": {
@@ -44,11 +44,42 @@
     "commit": "1a81250"
   },
   "whatsapp": {
-    "status": "not_started",
+    "status": "implemented-integration-validation",
     "ui": "original-web-ui-separate-module",
     "scope": "all-one-to-one-chats",
     "alibaba_binding": "optional-context-enhancement",
-    "reverse_sync": false
+    "reverse_sync": false,
+    "sdk_version": "1.34.8",
+    "puppeteer_version": "24.38.0",
+    "targeted_tests": {
+      "backend_channel": 14,
+      "shared_execution_queue": 15,
+      "reception_prompts": 7,
+      "host_lifecycle_and_ledger": 3,
+      "host_service_coordinator": 6,
+      "renderer_page": 5,
+      "runtime_resource_closure": 1,
+      "storage_maintenance_file_before_final_demo_case": 17,
+      "additional_demo_ledger_case": 1,
+      "final_whatsapp_ledger_subset": 8,
+      "legacy_workspace_backup": 6,
+      "storage_counts_overlap": true,
+      "status": "passed"
+    },
+    "typescript": "passed",
+    "static_prompts": "matched",
+    "build": "passed",
+    "actual_native_fixture": {
+      "same_visible_dom": true,
+      "navigation_preload_and_exposed_function": true,
+      "public_page_sdk_injection_to_qr": "passed",
+      "real_account_login": false,
+      "real_reconnection": false,
+      "real_message_send": false,
+      "qr_or_credentials_recorded": false
+    },
+    "candidate_window": "pending",
+    "full_suite_run": false
   },
   "publication": {
     "status": "pending",
