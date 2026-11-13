@@ -286,6 +286,20 @@ class RequirementChangesTests(unittest.TestCase):
             self.wait(self.service.call('generate_draft', {'case_id': second, 'expected_case_revision': self.case(second)['revision']}))
         self.assertEqual(prepared, [self.owner['conversation_id']])
 
+    def test_routing_to_closed_old_case_does_not_reopen_it_or_create_a_reply(self):
+        self.seed()
+        self.message('m2', 'Also I need red caps.')
+        second = self.apply([self.create(mid='m2', name='红色帽子', excerpt='red caps')], request='caps')['reply_case_ids'][0]
+        old = self.case()
+        old['state'] = 'closed'
+        self.service.repo.put('case', old['case_id'], old)
+        self.service.integrations.generate = lambda context, request_id, **options: {
+            'action': 'ask', 'reply': 'Noted.', 'reply_sources': ['m2'], 'reply_case_refs': ['c1']}
+        result = self.wait(self.service.call('generate_draft', {'case_id': second, 'expected_case_revision': self.case(second)['revision']}))
+        self.assertEqual(self.case()['state'], 'closed')
+        self.assertNotIn('draft_id', result['result'])
+        self.assertEqual(self.service.repo.get('conversation', self.owner['conversation_id'])['case_id'], second)
+
     def test_history_tasks_are_deduplicated_per_conversation(self):
         release = threading.Event()
         started = threading.Event()

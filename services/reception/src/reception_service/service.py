@@ -2220,8 +2220,8 @@ class ReceptionService(RequirementChangesMixin, CachedMediaMixin, ProductLibrary
             stopped = latest and re.search(r'(?:stop (?:contacting|messaging)|do not contact|don.t contact|不要联系|停止联系)', latest['text'], re.I)
             if stopped or action == 'stop':
                 current['state'] = 'closed'
-            elif social_reply:
-                pass  # Preserve clarifying/waiting_quote/manual business state.
+            elif social_reply or current['state'] == 'closed':
+                pass  # Routing to an old case must never reopen a stopped case.
             elif not current['missing']:
                 current['state'] = 'waiting_quote'
             else:

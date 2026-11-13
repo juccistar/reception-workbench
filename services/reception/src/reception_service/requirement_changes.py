@@ -265,7 +265,8 @@ class RequirementChangesMixin:
         reply_ids = list(dict.fromkeys(mapping[ref] for ref in reply_refs)) if reply_refs else list(dict.fromkeys(touched))
         if not reply_ids and case is not None:
             reply_ids = [case['case_id']]
-        pointer_changed = len(reply_ids) == 1 and conversation.get('case_id') != reply_ids[0]
+        pointer_changed = (len(reply_ids) == 1 and conversation.get('case_id') != reply_ids[0]
+                           and self._require('case', reply_ids[0])['state'] != 'closed')
         if pointer_changed:
             conversation.update(case_id=reply_ids[0], revision=conversation['revision'] + 1)
             self.repo.put('conversation', conversation['conversation_id'], conversation)
