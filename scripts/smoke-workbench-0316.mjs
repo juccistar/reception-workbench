@@ -90,7 +90,7 @@ try {
  report.original=original;
  await page.getByRole('button',{name:'放大查看商品图片 1',exact:true}).click({button:'right'}); await until(async()=>await copyCount()===1,'thumbnail original copied');
  await page.getByRole('button',{name:'放大查看商品图片 1',exact:true}).click(); await until(originalLoaded,'full-size original displayed');
- await page.getByRole('button',{name:'原始尺寸',exact:true}).click(); await shot('product-original');
+ await page.getByRole('button',{name:'原始尺寸',exact:true}).click(); const frame=await page.locator('.original-image-dialog').boundingBox(), viewport=await page.locator('.original-image-viewport').boundingBox(); assert(viewport.x>=frame.x&&viewport.x+viewport.width<=frame.x+frame.width+1,'original image viewport must stay inside the card'); await shot('product-original');
  await page.locator('.original-image-viewport img').click({button:'right'}); await until(async()=>await copyCount()===2,'modal original copied');
  await page.getByRole('button',{name:'下一张商品图片',exact:true}).click(); await page.getByText('2 / 5',{exact:true}).waitFor(); await page.keyboard.press('Escape');
  const copied=await app.evaluate(()=>globalThis.__imageCopies); assert(copied.every(row=>row.width===1200&&row.height===900)); report.copied_images=copied;
@@ -112,7 +112,7 @@ try {
  const split=await page.getByRole('separator',{name:'调整采购需求与业务补充高度',exact:true}).boundingBox(); await page.mouse.move(split.x+split.width/2,split.y+split.height/2); await page.mouse.down(); await page.mouse.move(split.x+split.width/2,split.y-90,{steps:8}); await page.mouse.up(); const dragged=await page.locator('.supplement-toolbar').boundingBox(); assert(Math.abs(after.y-dragged.y)<3);
  await app.evaluate(({dialog},file)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[file]});},fixtureFile);
  await page.getByRole('button',{name:'添加附件',exact:true}).click(); await until(async()=>(await detail()).supplement.attachments.length===1,'original attachment persisted');
- await page.getByRole('button',{name:'synthetic-original.png',exact:true}).click(); await until(originalLoaded,'supplement original displayed'); await shot('supplement-original'); await page.locator('.image-dialog-backdrop').click({position:{x:8,y:8}}); assert.equal(await page.locator('.original-image-dialog').count(),0);
+ await page.locator('.attachment-preview[title="synthetic-original.png"]').click(); await until(originalLoaded,'supplement original displayed'); await shot('supplement-original'); await page.locator('.image-dialog-backdrop').click({position:{x:8,y:8}}); assert.equal(await page.locator('.original-image-dialog').count(),0);
  await shot('fixed-supplement-footer'); report.completed.push('controlled-popovers-fixed-footer-split-resize-and-centred-supplement-original');
  await invoke('check_ai'); await until(async()=>(await invoke('get_snapshot')).checks.ai.status==='demo','demo AI ready');
  await invoke('inject_demo',{conversation_id:'demo-emma',text:'I need 100 pieces'});

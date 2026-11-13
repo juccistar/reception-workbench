@@ -24,7 +24,18 @@
       "earlier_failures": "Six stale assertions used removed suggestion banners, old defaults or fixed-case read parameters; updated to current contracts and the file passed."
     }
   },
-  "source_window": {"status": "pending"},
+  "source_window": {
+    "status": "passed",
+    "report": "artifacts/verification/workbench-0316-source-b/report.json",
+    "screenshots": 8,
+    "screenshots_visually_reviewed": true,
+    "business_ipc_mocked": false,
+    "clipboard_write_sink_mocked": true,
+    "external_browser_sink_mocked": true,
+    "earlier_attempt": {"report": "artifacts/verification/workbench-0316-source-a/report.json", "status": "failed", "reason": "Driver exact accessible name did not include the attachment image alt text; switched to its stable title selector."},
+    "visual_followup": "Constrain original-size viewport to its card and adjust case selector line height; final executable must verify these refinements."
+  },
+  "development_commits": ["e309eb9"],
   "candidate": {"status": "pending"},
   "publication": {"status": "pending", "repository": "juccistar/reception-workbench-releases"},
   "actual_installer_executed": false,

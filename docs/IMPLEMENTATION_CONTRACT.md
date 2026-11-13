@@ -1,6 +1,6 @@
 # 工作台实施契约
 
-本文维护0.3.15源码的进程、接口和业务约束；紧凑布局、五图及附件输入见[发布说明](0.3.15发布说明.md)。本版已公开发布，验证范围见[记录](verification/0.3.15.json)。0.3.13的需求、摘要、产品及采购契约继续沿用，见[基础开发说明](0.3.13开发说明.md)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
+本文维护0.3.16源码的进程、接口和业务约束；需求增量、多事项及原图交互见[发布说明](0.3.16发布说明.md)，当前构建及公开状态见[记录](verification/0.3.16.json)。0.3.13的需求、摘要、产品及采购契约继续沿用，见[基础开发说明](0.3.13开发说明.md)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
 
 ## 1. 进程与协议
 
@@ -50,6 +50,22 @@ Case.requirements_format为ai-v1，requirements只允许下列13键：
 ConversationDetail.conversation_summary为{conversation_id,body,revision,updated_at}或null，独立商家及会话归属；ConversationDetail.case可为null。同会话多需求共用摘要，切换需求不换摘要，无需求仍支持聊天、补充和摘要。正常接待、人工建议经来源指纹复核后同轮保存中文摘要和有效需求；润色只处理冻结正文，不写入两者，不启动采购。
 
 删除quality_notes、quality_warnings、语义validation.warnings、assistance_requests/suggestions、旧待核实/待协助及business_progress提醒生成与投影。摘要自然说明业务上仍需核实的内容，不强制每段添加提醒。真实任务错误、连接、接管、未读、unknown、报价有效期及操作证据继续保存；移除提醒不把语义问题升级为硬性issues或自动接管。
+
+## 2B. 需求增量与多事项（0.3.16）
+
+自动及普通建议不再固定返回整份requirements/new_case。可选requirement_changes每轮最多32项，使用action=create/update、case_ref、trigger_evidence_ids及可选set_fields/clear_fields；省略或空数组保持原状，空值不能隐式清除。create须有可唯一定位的产品及买家原文，update只覆盖明确字段，clear须有撤回／更正依据。程序保存完整13键，product_url仍派生。模型不生成case_id、版本或幂等键。
+
+context.case_catalog保存同会话的冻结别名、需求、版本及各自适用资料／供货；模型投影移除真实case_id、版本、派生链接及商品展示图。reply_case_refs可单独路由回复，不要求修改需求。来源与目录版本先整体复核，多项变更在一次事务中应用；requirement_application记录应用结果，case_origin.creation_spans绑定确切原文范围以防重复新建。首次真实采购可复用空case，相同商品的独立新订单不按商品ID误合并。
+
+requirements_revision仅正式需求及有效依据变化时递增，缺失旧记录按有有效ai-v1需求为1、空壳为0读取。普通case.revision及会话版本保护继续执行；相关各事项及供货条件保存为draft.reply_case_ids/related_case_versions，预检及最终提交再次复核。手动查看事项不修改后台指针。正文更正使受影响依据失效，无关时间或附件元数据不清空文本需求。
+
+## 2C. 原图及受限宿主能力（0.3.16）
+
+各图片DTO可含image_ref，按消息／需求／产品／补充种类绑定真实归属、来源版本和SHA。getImageOriginal、showImageMenu及openProductLink为专用preload能力，main验证工作台主frame和生命周期；不接收任意文件路径、资源URL或菜单模板。
+
+宿主私有_image_original_describe/_image_original_chunk读取本地原图，每块最多256 KiB原始字节，原图继续限制6 MiB、8192单边、2000万像素。复制专用_image_copy_describe/_image_copy_chunk用PIL生成校正EXIF方向、保留透明度的全尺寸PNG，最多80 MiB、两份会话和30秒有效期；逐块复核来源，最后一块释放会话。完整内容、块序号和SHA由宿主核对，不提高普通JSON行预算。这些方法均不进入普通API_METHODS。
+
+主进程以Electron45异步ClipboardItem写入PNG，仅在明确选择固定菜单“复制图片”后执行。原图通过Uint8Array专用IPC返回，renderer以Blob URL显示并按生命周期释放；CSP仅img-src增加blob:。_product_link_for_reference根据当前商家真实case／产品取规范数字ID链接，main再次核对固定HTTPS格式后用系统浏览器打开，页面内导航和新窗口拦截继续执行。
 
 ## 2A. 业务补充附件（0.3.14）
 
