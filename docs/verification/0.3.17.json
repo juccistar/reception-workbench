@@ -1,7 +1,7 @@
 {
   "version": "0.3.17",
   "date": "2026-11-13",
-  "status": "repair-source-validation",
+  "status": "repair-complete-whatsapp-next",
   "public_latest": "0.3.16",
   "repair": {
     "backend": {
@@ -21,8 +21,27 @@
     },
     "typescript": "passed",
     "build": "passed",
-    "actual_window": "pending",
-    "full_suite_run": false
+    "actual_window": {
+      "status": "passed",
+      "report": "artifacts/verification/repairs-0317-source-a/report.json",
+      "screenshots": 4,
+      "screenshots_visually_reviewed": true,
+      "clipboard_write_sink_mocked": false,
+      "native_menu_selection_mocked": true,
+      "copied_image": {
+        "width": 640,
+        "height": 480,
+        "bytes": 10783
+      },
+      "completed": [
+        "visible-full-local-date-time-to-seconds-without-date-separators",
+        "actual-product-id-and-link-buttons-write-system-text-clipboard",
+        "full-size-original-PNG-written-to-and-read-from-system-clipboard",
+        "real-Demo-recapture-clears-old-gallery-and-invalidates-old-original-reference"
+      ]
+    },
+    "full_suite_run": false,
+    "commit": "1a81250"
   },
   "whatsapp": {
     "status": "not_started",
