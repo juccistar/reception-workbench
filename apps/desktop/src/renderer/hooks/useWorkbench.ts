@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import type { ApiMethod, ChatSendParams, ConversationDetail, Draft, Job, JobAck, Outbox, Preferences, ReceptionBridge, ServiceEvent, Snapshot, Supplement } from '../../shared/api';
+import type { ApiMethod, ChatSendParams, ConversationDetail, Draft, Job, JobAck, Outbox, Preferences, ReceptionBridge, ServiceEvent, Snapshot, Supplement, SupplementAttachment } from '../../shared/api';
 
 export type Page = 'home' | 'reception' | 'handoff' | 'customers' | 'policies' | 'settings' | 'activity' | 'products' | 'suppliers' | 'procurement';
 type SendStatus = Job['status'] | 'requesting' | 'retry' | 'accepted' | 'rejected';
@@ -73,7 +73,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const [, redraw] = useReducer((value: number) => value + 1, 0);
   // A procurement case is only context. Chat text, ownership and send attempts belong to the customer conversation.
   const editors = useRef(new Map<string, EditorState>());
-  const supplements = useRef(new Map<string, { body: string; revision: number | null; dirty: boolean; version: number; error: string; saving: Promise<boolean> | null }>());
+  const supplements = useRef(new Map<string, { body: string; revision: number | null; dirty: boolean; version: number; error: string; saving: Promise<boolean> | null; attachments: SupplementAttachment[]; attachmentBusy: boolean }>());
   const caseOwners = useRef(new Map<string, string>());
   const dirtyForms = useRef(new Set<string>());
   const setFormDirty = useCallback((id: string, dirty: boolean) => { if (dirty) dirtyForms.current.add(id); else dirtyForms.current.delete(id); }, []);
@@ -146,8 +146,8 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     for (const item of result.cases) caseOwners.current.set(item.case_id, key);
     const note = result.supplement;
     const oldNote = supplements.current.get(key);
-    if (!oldNote) supplements.current.set(key, { body: note?.body ?? '', revision: note?.revision ?? null, dirty: false, version: 0, error: '', saving: null });
-    else if (!oldNote.dirty && !oldNote.saving && note && (note.revision ?? -1) >= (oldNote.revision ?? -1)) { oldNote.body = note.body; oldNote.revision = note.revision; }
+    if (!oldNote) supplements.current.set(key, { body: note?.body ?? '', revision: note?.revision ?? null, dirty: false, version: 0, error: '', saving: null, attachments: note?.attachments ?? [], attachmentBusy: false });
+    else if (!oldNote.dirty && !oldNote.saving && !oldNote.attachmentBusy && note && (note.revision ?? -1) >= (oldNote.revision ?? -1)) { oldNote.body = note.body; oldNote.revision = note.revision; oldNote.attachments = note.attachments ?? []; }
     const incoming = result.chat_draft;
     let current = editors.current.get(key);
     if (!current) { current = createEditor(incoming); editors.current.set(key, current); }
@@ -320,6 +320,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const saveSupplement = useCallback(async (conversationId: string): Promise<boolean> => {
     const entry = supplements.current.get(conversationId);
     if (!entry) return true;
+    if (entry.attachmentBusy) return false;
     if (entry.saving) { if (!(await entry.saving)) return false; return entry.dirty ? saveSupplement(conversationId) : true; }
     if (!entry.dirty) return true;
     if (!bridge || !connectedRef.current || closingRef.current) { entry.error = '服务未连接，补充内容尚未保存。'; redraw(); return false; }
@@ -336,6 +337,22 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     if (!(await operation)) return false;
     return entry.dirty ? saveSupplement(conversationId) : true;
   }, [bridge]);
+  const changeSupplementAttachment = useCallback(async (conversationId: string, attachmentId?: string) => {
+    const entry = supplements.current.get(conversationId);
+    if (!entry || !bridge || entry.attachmentBusy || !(await saveSupplement(conversationId)) || entry.attachmentBusy) return;
+    entry.attachmentBusy = true; entry.error = ''; redraw();
+    try {
+      const saved = attachmentId
+        ? await bridge.invoke<Supplement>('remove_supplement_attachment', { conversation_id: conversationId, attachment_id: attachmentId })
+        : await bridge.chooseSupplementAttachment?.(conversationId);
+      if (saved) {
+        if (saved.conversation_id !== conversationId) throw new Error('附件结果与当前客户不匹配。');
+        entry.revision = saved.revision;
+        entry.attachments = saved.attachments ?? [];
+      }
+    } catch (failure) { entry.error = errorText(failure); }
+    finally { entry.attachmentBusy = false; if (mounted.current) redraw(); }
+  }, [bridge, saveSupplement]);
   const editSupplement = useCallback((body: string) => {
     const entry = supplements.current.get(selectionRef.current.conversationId);
     if (!entry || closingRef.current) return;
@@ -343,10 +360,10 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   }, []);
   const supplement = supplements.current.get(selection.conversationId);
   useEffect(() => {
-    if (!supplement?.dirty || supplement.saving || supplement.error) return;
+    if (!supplement?.dirty || supplement.saving || supplement.attachmentBusy || supplement.error) return;
     const timer = setTimeout(() => void saveSupplement(selection.conversationId), 800);
     return () => clearTimeout(timer);
-  }, [supplement?.body, supplement?.dirty, supplement?.saving, supplement?.error, selection.conversationId, saveSupplement]);
+  }, [supplement?.body, supplement?.dirty, supplement?.saving, supplement?.attachmentBusy, supplement?.error, selection.conversationId, saveSupplement]);
 
   useEffect(() => {
     const saveForClose = (event: Event) => {
@@ -354,7 +371,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
       if (typeof finish !== 'function') return;
       void (async () => {
         if (dirtyForms.current.size) { finish(false); return; }
-        for (const [conversationId, entry] of supplements.current) if ((entry.dirty || entry.saving) && !(await saveSupplement(conversationId))) { finish(false); return; }
+        for (const [conversationId, entry] of supplements.current) if (entry.attachmentBusy || ((entry.dirty || entry.saving) && !(await saveSupplement(conversationId)))) { finish(false); return; }
         for (const [conversationId, entry] of editors.current) if ((entry.dirty || entry.saving) && !(await saveDraft(conversationId))) { finish(false); return; }
         finish(!dirtyForms.current.size && ![...editors.current.values()].some(entry => entry.dirty || entry.saving));
       })().catch(() => finish(false));
@@ -579,7 +596,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
 
   useEffect(() => {
     const protect = (event: BeforeUnloadEvent) => {
-      if (dirtyForms.current.size || [...supplements.current.values()].some(entry => entry.dirty || entry.saving) || [...editors.current.values()].some(entry => entry.dirty || entry.saving)) { event.preventDefault(); event.returnValue = ''; }
+      if (dirtyForms.current.size || [...supplements.current.values()].some(entry => entry.dirty || entry.saving || entry.attachmentBusy) || [...editors.current.values()].some(entry => entry.dirty || entry.saving)) { event.preventDefault(); event.returnValue = ''; }
     };
     window.addEventListener('beforeunload', protect);
     return () => window.removeEventListener('beforeunload', protect);
@@ -591,7 +608,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const sendIssue = chatBlocker(selection.conversationId, editor);
   const generationIssue = generationBlocker(snapshot, detail);
 
-  return { snapshot, connected, closing, loading, error, notice, setError, setNotice, page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, jobs, pending, generationRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, saveDraft, flush, adoptSuggestion, beginManualEdit, scrollPositions,
+  return { snapshot, connected, closing, loading, error, notice, setError, setNotice, page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, jobs, pending, generationRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, saveDraft, flush, adoptSuggestion, beginManualEdit, scrollPositions,
     aiReady, aiReceptionReady, sendIssue, generationIssue, reconcileOperation,
     unknownOperations: snapshot?.outbox.filter(item => isSendOperation(item) && item.status === 'unknown' && (item.conversation_id === selection.conversationId || caseOwners.current.get(item.case_id) === selection.conversationId)) ?? [],
     canSave: connected && !closing && !!editor?.dirty && !sendUnsettled(editor.send),

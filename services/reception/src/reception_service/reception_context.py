@@ -72,6 +72,11 @@ def add_image_references(context):
             body = '[图片 ' + alias + ']' if body.strip() == '[image]' else body + '\n[图片 ' + alias + ']'
         view.append({'message_id': message['message_id'], 'role': message['role'],
                      'timestamp_ms': message.get('timestamp_ms'), 'text': body})
+    for ref in context.get('supplement_image_refs', []):
+        manifest.append({'alias': 'p' + str(len(manifest) + 1), 'image_id': ref['image_id'],
+                         'attachment_id': ref['attachment_id'], 'origin': 'business_supplement',
+                         'role': 'seller', 'sender_id': ref['seller_id'], 'image_sha256': ref['image_sha256'],
+                         'availability': 'ready_for_read'})
     context.update(image_manifest=manifest, message_view=view, image_transport='read_compat' if manifest else 'none')
     return context
 
@@ -95,6 +100,11 @@ def shared_context(repo, owner, case, *, task_mode, continuation=None, settings=
               'supplement': supplement_context(repo, owner['conversation_id']),
               'conversation_summary': repo.get('conversation_summary', owner['conversation_id']),
               'photo_context': direct_photo_context(repo, [m for m in historical + recent if m['message_id'] in source_ids])}
+    result['supplement_image_refs'] = [
+        {'origin': 'business_supplement', 'attachment_id': row['id'], 'image_id': row['id'],
+         'image_sha256': row['sha256'], 'seller_id': owner['seller_id'], 'buyer_id': owner['buyer_id'],
+         'conversation_id': owner['conversation_id'], 'supplement_revision': result['supplement']['revision']}
+        for row in result['supplement']['attachments'] if row['media_type'].startswith('image/')]
     latest = next((m for m in reversed(recent) if m['role'] == 'buyer'), None)
     result['reply_target'] = {'source_message_id': latest['message_id'] if latest else None}
     return add_image_references(result)

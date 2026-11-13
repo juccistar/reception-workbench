@@ -411,6 +411,16 @@ class MessagePhotosMixin:
                         or state.get('sha256') != ref['image_sha256'] or asset.get('sha256') != ref['image_sha256']):
                     raise ServiceError('source_changed', '图片内容已变化，请重新生成')
                 result.append({'message': copy.deepcopy(message), 'asset': copy.deepcopy(asset)})
+            for ref in context.get('supplement_image_refs', []):
+                item = self.repo.get('supplement_attachment', ref['attachment_id'])
+                note = self._supplement(ref['conversation_id'])
+                if (not item or item.get('origin') != 'business_supplement'
+                        or any(item.get(k) != ref.get(k) for k in ('seller_id', 'buyer_id', 'conversation_id'))
+                        or item.get('sha256') != ref.get('image_sha256')
+                        or note.get('revision') != ref.get('supplement_revision')):
+                    raise ServiceError('source_changed', '业务补充图片已变化，请重新生成')
+                result.append({'attachment': copy.deepcopy(item), 'asset': {
+                    'sha256': item['sha256'], 'mime': item['media_type'], 'original_b64': item['original_b64']}})
         return result
 
     def _observe_draft_photos(self, case, job_id, epoch, facade, prior_drafts, automatic):

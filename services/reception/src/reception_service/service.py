@@ -48,7 +48,7 @@ FAST = frozenset({'get_snapshot', 'get_conversation', 'get_messages', 'get_messa
                   'set_requirement_media_cover', 'set_product_image_source', 'load_requirement_media', 'get_context', 'list_jobs',
                   'list_outbox', 'save_draft', 'save_policy', 'list_builtin_policies', 'adopt_builtin_policy', 'save_settings', 'set_scope',
                   'set_reception', 'takeover', 'begin_manual_edit', 'save_chat_draft', 'prepare_send', 'inject_demo', 'mark_messages_read',
-                  'save_conversation_supplement',
+                  'save_conversation_supplement', 'upload_supplement_attachment', 'remove_supplement_attachment',
                   'generate_manual_suggestion', 'get_translations', 'request_translations',
                   'get_translation_info', 'get_translation_config', 'save_translation_settings',
                   'configure_translation_credential', 'validate_translation_settings',

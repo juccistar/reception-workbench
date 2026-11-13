@@ -2,7 +2,7 @@ import { webcrypto } from 'node:crypto';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/renderer/App';
-import type { ApiMethod, Case, ConversationDetail, ConversationSummary, Draft, Job, JobAck, Preferences, ReceptionBridge, SendConfirmation, ServiceEvent, Snapshot } from '../src/shared/api';
+import type { ApiMethod, Case, ConversationDetail, ConversationSummary, Draft, Job, JobAck, Preferences, ReceptionBridge, SendConfirmation, ServiceEvent, Snapshot, Supplement } from '../src/shared/api';
 import { validateChatParameters } from '../src/shared/chat-protocol';
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -103,6 +103,7 @@ class FakeBridge implements ReceptionBridge {
   async getPreferences() { return clone(this.preferences); }
   async savePreferences(value: Partial<Preferences>) { this.preferences = { ...this.preferences, ...value }; return clone(this.preferences); }
   async chooseWorkctl() { return null; }
+  async chooseSupplementAttachment(_conversationId: string): Promise<Supplement | null> { return null; }
   emit(event: ServiceEvent) { for (const listener of this.listeners) listener(event); }
 }
 
@@ -240,6 +241,40 @@ describe('mounted requirement workspace', () => {
 });
 
 describe('manual suggestion and supplement', () => {
+  it('keeps an attachment with its original customer when selection changes', async () => {
+    const bridge = new FakeBridge();
+    const pending = deferred<Supplement | null>();
+    vi.spyOn(bridge, 'chooseSupplementAttachment').mockReturnValue(pending.promise);
+    await openApp(bridge);
+    fireEvent.click(screen.getByRole('button', { name: '添加附件' }));
+    await waitFor(() => expect(bridge.chooseSupplementAttachment).toHaveBeenCalledWith('emma'));
+    fireEvent.click(screen.getByRole('button', { name: /Sofia.*Do you have this mug in white/s }));
+    await screen.findByRole('main', { name: 'Sofia 的客户接待' });
+    const saved: Supplement = { conversation_id: 'emma', body: '', revision: 1, updated_at: 1,
+      attachments: [{ id: 'a1', name: 'emma-file.txt', media_type: 'text/plain', size: 5, sha256: 'hash', status: 'ready', origin: 'business_supplement' }] };
+    bridge.details.emma.supplement = saved;
+    await act(async () => pending.resolve(saved));
+    expect(screen.queryByText(/emma-file.txt/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Emma.*Could you make a sample/s }));
+    await screen.findByRole('main', { name: 'Emma 的客户接待' });
+    expect(await screen.findByText(/emma-file.txt/)).toBeInTheDocument();
+  });
+  it('keeps new note edits while the selected customer attachment is being added', async () => {
+    const bridge = new FakeBridge();
+    const pending = deferred<Supplement | null>();
+    const choose = vi.spyOn(bridge, 'chooseSupplementAttachment').mockReturnValue(pending.promise);
+    await openApp(bridge);
+    fireEvent.click(screen.getByRole('button', { name: '添加附件' }));
+    await waitFor(() => expect(choose).toHaveBeenCalledWith('emma'));
+    fireEvent.change(screen.getByRole('textbox', { name: '业务补充内容' }), { target: { value: '正在输入的新正文' } });
+    const saved: Supplement = { conversation_id: 'emma', body: '', revision: 1, updated_at: 1,
+      attachments: [{ id: 'a1', name: 'note.txt', media_type: 'text/plain', size: 5, sha256: 'hash', status: 'ready', origin: 'business_supplement', text_preview: 'hello' }] };
+    bridge.details.emma.supplement = saved;
+    await act(async () => pending.resolve(saved));
+    expect(screen.getByText(/note.txt/)).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: '业务补充内容' })).toHaveValue('正在输入的新正文');
+    await waitFor(() => expect(calls(bridge, 'save_conversation_supplement').some(call => call.params.body === '正在输入的新正文' && call.params.expected_revision === 1)).toBe(true), { timeout: 3000 });
+  });
   it('validates the frozen polish source at the desktop bridge', () => {
     const valid = { conversation_id: 'emma', case_id: null, client_request_id: 'polish-1',
       input_body: '14.5 USD each, shipping excluded', input_revision: 2, input_hash: 'a'.repeat(64) };

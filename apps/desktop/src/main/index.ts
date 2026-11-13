@@ -2,7 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, safeStorage, scre
 import { TranslationHost } from './translation-host';
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdir, readFile, writeFile, rename, lstat } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, lstat, open } from 'node:fs/promises';
 import { isWorkbenchPage } from './trusted-page';
 import { API_METHODS, type Mode, type Preferences, type Snapshot, type SendConfirmation } from '../shared/api';
 import { ServiceClient, BackendError } from './service-client';
@@ -438,6 +438,31 @@ function installIPC() {
     const accepted=await confirm(mode==='demo'?'演示发送':'确认发送',`${mode==='demo'?'本地模拟发送给':'发送给'} ${prepared.customer_name}`,`商家尾号：${prepared.seller_suffix}\n来源消息：${prepared.source_message_id}\n\n${prepared.body}\n\n${mode==='demo'?'仅合成演示，不操作真实客户。':'仅提交本条已确认正文；提交前仍会复核账号、最新消息、版本和本次授权。不会因此开启自动发送。'}`,mode==='demo'?'确认本地模拟':'确认并发送');
     if (!accepted) return null;
     return call('confirm_send',{confirmation_id:prepared.confirmation_id});
+  });
+  ipcMain.handle('reception:choose-supplement-attachment', async (event, conversationId: unknown) => {
+    validSender(event);
+    if (!window || typeof conversationId !== 'string' || !conversationId || conversationId.length > 500) throw new Error('客户会话无效。');
+    const selected = await dialog.showOpenDialog(window, { title: '选择业务补充附件', properties: ['openFile'],
+      filters: [{ name: '图片、PDF 和 UTF-8 文本', extensions: ['png', 'jpg', 'jpeg', 'webp', 'pdf', 'txt', 'md', 'csv'] }] });
+    if (selected.canceled || !selected.filePaths[0]) return null;
+    let file: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      file = await open(selected.filePaths[0], 'r');
+      const stat = await file.stat();
+      if (!stat.isFile() || stat.size < 1 || stat.size > 6 * 1024 * 1024) throw new Error('size');
+      const bytes = Buffer.alloc(stat.size + 1);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const part = await file.read(bytes, offset, bytes.length - offset, offset);
+        if (!part.bytesRead) break;
+        offset += part.bytesRead;
+      }
+      if (offset !== stat.size) throw new Error('changed');
+      return await call('upload_supplement_attachment', { conversation_id: conversationId, name: path.basename(selected.filePaths[0]), content_b64: bytes.subarray(0, offset).toString('base64') });
+    } catch (error) {
+      if (error instanceof BackendError) throw error;
+      throw new Error('附件读取失败，请确认文件可访问且大小不超过 6 MiB。');
+    } finally { await file?.close().catch(() => {}); }
   });
   ipcMain.handle('reception:choose-workctl',async event=>{
     validSender(event); if (!window) return null;

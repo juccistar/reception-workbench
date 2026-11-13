@@ -197,8 +197,10 @@ def direct_photo_context(repo, messages):
 def with_direct_photo_reads(context, reads):
     result = dict(context)
     photo = dict(context.get('photo_context') or {})
+    reads = reads if isinstance(reads, list) else []
+    result['supplement_image_reads'] = [row for row in context.get('supplement_image_refs', []) if row in reads]
     if photo.get('mode') == 'direct':
-        photo['read_images'] = reads if isinstance(reads, list) else []
+        photo['read_images'] = reads
         result['photo_context'] = scoped_photo_context(
             context.get('historical_evidence', []) + context.get('recent_messages', []), photo)
     return result

@@ -1,0 +1,16 @@
+{
+  "version": "0.3.14",
+  "date": "2026-11-13",
+  "status": "in-development",
+  "published": false,
+  "latest_public_version": "0.3.13",
+  "scope": ["Restore effective reception business rules while retaining the current Chinese requirement contract", "Conversation-owned merchant business supplement attachments in automatic suggestions and polish"],
+  "prompt_version": "reception-0.3.14",
+  "prompt_regression": {"status": "passed", "tests": 6, "report": "artifacts/verification/reception-0.3.14/prompt-regression.json", "real_ai_calls": 0},
+  "attachments": {"status": "implementation-and-targeted-verification-in-progress"},
+  "full_suite_run": false,
+  "installed": false,
+  "real_business_data_migrated": false,
+  "default_entry_promoted": false,
+  "limitations": ["Offline request and prompt retention checks do not establish live model semantic quality", "Supplier inquiry and quote collection remain blocked", "Not yet packaged or published"]
+}

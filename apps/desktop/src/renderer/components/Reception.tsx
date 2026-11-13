@@ -45,7 +45,11 @@ export function Requirements({ model, collapse, locate }: { model: Workbench; br
 
 export function SupplementPanel({ model }: { model: Workbench }) {
   const note = model.supplement;
-  return <section className="supplement-panel" aria-label="业务补充"><h2>业务补充</h2><p>用于当前客户的自动接待及回复建议，修改后自动保存。</p><textarea aria-label="业务补充内容" disabled={!model.detail} value={note?.body ?? ''} onChange={event => model.editSupplement(event.target.value)} placeholder="例如报价、交期或其他补充信息" /><small role="status">{note?.error ? `保存失败：${note.error}` : note?.saving ? '正在保存' : note?.dirty ? '等待保存' : '已保存'}</small>{note?.error && <button type="button" onClick={() => void model.saveSupplement(model.selection.conversationId)}>重试保存</button>}</section>;
+  return <section className="supplement-panel" aria-label="业务补充"><h2>业务补充</h2><p>用于当前客户的自动接待、回复建议和润色，修改后自动保存。</p><textarea aria-label="业务补充内容" disabled={!model.detail} value={note?.body ?? ''} onChange={event => model.editSupplement(event.target.value)} placeholder="例如报价、交期或其他补充信息" />
+    <small>附件支持 PNG、JPEG、WebP、PDF、UTF-8 的 TXT、MD、CSV；最多 5 个，单个不超过 6 MiB，合计不超过 20 MiB。PDF 最多 10 页；每个文本提取不超过 16000 字符，文本预览显示前 500 字符，不支持扫描件识别。预览不表示 AI 已读取。</small>
+    <button type="button" disabled={!model.detail || note?.attachmentBusy || !model.changeSupplementAttachment} onClick={() => void model.changeSupplementAttachment(model.selection.conversationId)}>添加附件</button>
+    {!!note?.attachments.length && <ul>{note.attachments.map(item => <li key={item.id}>{item.preview_data_url && <img src={item.preview_data_url} alt={`${item.name} 预览`} width={64} height={64} style={{ objectFit: 'contain' }} />} <span>{item.name}（{(item.size / 1024 / 1024).toFixed(2)} MiB）</span>{item.error && <span role="alert">{item.error}</span>}{item.text_preview && <details><summary>查看提取文字</summary><pre>{item.text_preview}</pre></details>} <button type="button" disabled={note.attachmentBusy} onClick={() => void model.changeSupplementAttachment(model.selection.conversationId, item.id)}>移除</button></li>)}</ul>}
+    <small role="status">{note?.error ? `操作失败：${note.error}` : note?.attachmentBusy ? '正在处理附件' : note?.saving ? '正在保存' : note?.dirty ? '等待保存' : '已保存'}</small>{note?.error && <button type="button" onClick={() => void model.saveSupplement(model.selection.conversationId)}>重试保存</button>}</section>;
 }
 
 export function Conversation({ model, bridge, openList, openDetails, registerLocate }: { model: Workbench; bridge?: ReceptionBridge; openList: () => void; openDetails: () => void; registerLocate: (locate: (id: string) => void) => void }) {

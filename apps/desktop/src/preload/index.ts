@@ -17,6 +17,7 @@ const bridge: ReceptionBridge = {
   savePreferences: partial => ipcRenderer.invoke('reception:preferences:save', partial),
   confirmSend: confirmation => ipcRenderer.invoke('reception:confirm-send', { draft_id: confirmation.draft_id, revision: confirmation.revision }),
   chooseWorkctl: () => ipcRenderer.invoke('reception:choose-workctl'),
+  chooseSupplementAttachment: conversationId => ipcRenderer.invoke('reception:choose-supplement-attachment', conversationId),
   getStorageInfo: () => ipcRenderer.invoke('reception:storage:get'),
   chooseStorageDirectory: purpose => ipcRenderer.invoke('reception:storage:choose', purpose),
   openStorageDirectory: which => ipcRenderer.invoke('reception:storage:open', which),

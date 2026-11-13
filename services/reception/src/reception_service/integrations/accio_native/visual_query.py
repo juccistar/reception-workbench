@@ -362,13 +362,18 @@ class VisualQueryRunner:
                         or any(not isinstance(row, dict) for row in manifest)):
                     raise ValueError
                 for row, path, sha in zip(manifest, image, image_sha256):
+                    source_key = 'attachment_id' if row.get('origin') == 'business_supplement' else 'message_id'
                     if (row.get('file_path') != str(path) or row.get('image_sha256') != sha
                             or row.get('role') not in ('buyer', 'seller')
+                            or source_key == 'attachment_id' and (row.get('role') != 'seller' or 'message_id' in row)
+                            or source_key == 'message_id' and row.get('origin') is not None
                             or any(not isinstance(row.get(key), str) or not row[key]
-                                   for key in ('alias', 'image_id', 'message_id', 'sender_id'))):
+                                   for key in ('alias', 'image_id', source_key, 'sender_id'))):
                         raise ValueError
                 if any(len({row[key] for row in manifest}) != len(manifest)
-                       for key in ('alias', 'image_id', 'message_id', 'file_path')):
+                       for key in ('alias', 'image_id', 'file_path')):
+                    raise ValueError
+                if len({(row.get('origin', 'chat'), row.get('attachment_id', row.get('message_id'))) for row in manifest}) != len(manifest):
                     raise ValueError
             elif str(image) not in prompt:
                 raise ValueError

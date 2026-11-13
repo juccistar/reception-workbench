@@ -20,7 +20,8 @@ from .reception_prompts import IMAGE_COMPAT
 
 def query_business_images(native, agent_id, workspace_identity, context, photo_inputs, instructions,
                           *, on_call_start=None, cancel_event=None, diagnostics=None, photo_deadline=None):
-    refs = (context.get('photo_context') or {}).get('direct_images', [])
+    refs = ((context.get('photo_context') or {}).get('direct_images', [])
+            + context.get('supplement_image_refs', []))
     if (not isinstance(photo_inputs, (list, tuple)) or not photo_inputs
             or len(refs) != len(photo_inputs) or not isinstance(workspace_identity, dict)
             or workspace_identity.get('agent_id') != agent_id):
@@ -50,7 +51,17 @@ def query_business_images(native, agent_id, workspace_identity, context, photo_i
         _directory(folder)
         for ref, item in zip(refs, photo_inputs):
             message, asset = item.get('message'), item.get('asset')
-            if (not isinstance(message, dict) or not isinstance(asset, dict)
+            attachment = item.get('attachment')
+            if ref.get('origin') == 'business_supplement':
+                if (not isinstance(attachment, dict) or not isinstance(asset, dict)
+                        or attachment.get('origin') != 'business_supplement'
+                        or attachment.get('id') != ref.get('attachment_id')
+                        or ref.get('image_id') != attachment.get('id')
+                        or any(attachment.get(k) != ref.get(k) for k in ('seller_id', 'buyer_id', 'conversation_id'))
+                        or attachment.get('sha256') != ref.get('image_sha256')
+                        or asset.get('sha256') != ref.get('image_sha256')):
+                    raise ValueError('Attachment source mismatch')
+            elif (not isinstance(message, dict) or not isinstance(asset, dict)
                     or any(ref.get(k) != message.get(k) for k in ('seller_id', 'buyer_id', 'conversation_id', 'message_id'))
                     or ref.get('source_version') != photo_version(message)
                     or message.get('role') not in ('buyer', 'seller')
@@ -81,9 +92,14 @@ def query_business_images(native, agent_id, workspace_identity, context, photo_i
                 stream.write(content)
             staged.append((image, checked['sha256'], len(content)))
             alias = next((row['alias'] for row in context.get('image_manifest', []) if row.get('image_id') == ref['image_id']), 'p' + str(len(manifest) + 1))
-            manifest.append({'alias': alias, 'image_id': ref['image_id'], 'message_id': ref['message_id'], 'role': message['role'],
-                             'sender_id': message['seller_id'] if message['role'] == 'seller' else message['buyer_id'],
-                             'file_path': str(image), 'image_sha256': checked['sha256']})
+            if ref.get('origin') == 'business_supplement':
+                manifest.append({'alias': alias, 'image_id': ref['image_id'], 'attachment_id': ref['attachment_id'],
+                                 'origin': 'business_supplement', 'role': 'seller', 'sender_id': ref['seller_id'],
+                                 'file_path': str(image), 'image_sha256': checked['sha256']})
+            else:
+                manifest.append({'alias': alias, 'image_id': ref['image_id'], 'message_id': ref['message_id'], 'role': message['role'],
+                                 'sender_id': message['seller_id'] if message['role'] == 'seller' else message['buyer_id'],
+                                 'file_path': str(image), 'image_sha256': checked['sha256']})
         image_rules = '\n' + IMAGE_COMPAT + '\nimage_inputs = '
         prompt = model_request(instructions, context, image_rules + json.dumps(manifest, ensure_ascii=False))
         if cancel_event is not None and cancel_event.is_set():

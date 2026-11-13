@@ -115,9 +115,11 @@ def main():
         for line in sys.stdin:
             request_id = None
             try:
-                if len(line) > 2_000_000:
+                if len(line) > 8_400_000:
                     raise ServiceError('request_too_large', '请求超过大小限制', stage='protocol')
                 request = json.loads(line)
+                if len(line) > 2_000_000 and (not isinstance(request, dict) or request.get('method') != 'upload_supplement_attachment'):
+                    raise ServiceError('request_too_large', '请求超过大小限制', stage='protocol')
                 if not isinstance(request, dict) or set(request) - {'id', 'method', 'params'}:
                     raise ServiceError('invalid_request', '请求结构无效', stage='protocol')
                 request_id = request.get('id')

@@ -161,6 +161,8 @@ def validate_analysis(raw, context):
     allowed = {m['message_id'] for m in messages} | set(supplement_sources(context))
     allowed.update(row.get('policy_id') for row in knowledge_rows(context))
     allowed.update(direct_photo_sources(context.get('photo_context') or {}))
+    allowed.update(row['image_id'] for row in context.get('supplement_image_reads', [])
+                   if row.get('origin') == 'business_supplement')
     supplier = context.get('supplier_context') or {}
     if supplier.get('usable') is True and supplier.get('customer_wording') and isinstance(supplier.get('source_id'), str):
         allowed.add(supplier['source_id'])

@@ -12,6 +12,7 @@ from .photos import with_direct_photo_reads
 from .integrations.generation_metadata import checked_metadata
 from .requirement_media import get_product_source_images
 from .repository import encoded, new_id, now_ms
+from .supplement_attachments import parse_attachment, attachment_rows, public_attachment, MAX_TOTAL, MAX_COUNT
 
 
 def _strip_product_display(context):
@@ -29,8 +30,44 @@ def _strip_product_display(context):
 
 class ConversationAssistanceMixin:
     def _supplement(self, cid):
-        return self.repo.get('conversation_supplement', cid) or {
+        note = self.repo.get('conversation_supplement', cid) or {
             'conversation_id': cid, 'body': '', 'revision': None, 'updated_at': None}
+        return {**note, 'attachments': [public_attachment(row) for row in attachment_rows(self.repo, cid)]}
+
+    def upload_supplement_attachment(self, conversation_id, name, content_b64):
+        item, original = parse_attachment(name, content_b64)
+        with self._lock, self.repo.transaction():
+            owner = self._chat_owner(conversation_id)
+            rows = attachment_rows(self.repo, conversation_id)
+            if len(rows) >= MAX_COUNT or sum(row['size'] for row in rows) + item['size'] > MAX_TOTAL:
+                raise ServiceError('attachment_limit', '最多 5 个附件，合计不超过 20 MiB')
+            previous = self._supplement(conversation_id)
+            item.update(conversation_id=conversation_id, seller_id=owner['seller_id'],
+                        buyer_id=owner['buyer_id'], original_b64=original)
+            self.repo.put('supplement_attachment', item['id'], item)
+            self.repo.put('conversation_supplement', conversation_id, {
+                'conversation_id': conversation_id, 'body': previous['body'],
+                'revision': (previous['revision'] or 0) + 1, 'updated_at': now_ms()})
+            self._invalidate(conversation_id)
+            result = self._supplement(conversation_id)
+        self._changed(conversation_id)
+        return result
+
+    def remove_supplement_attachment(self, conversation_id, attachment_id):
+        with self._lock, self.repo.transaction():
+            owner = self._chat_owner(conversation_id)
+            item = self.repo.get('supplement_attachment', attachment_id)
+            if not item or item.get('conversation_id') != conversation_id or item.get('seller_id') != owner['seller_id']:
+                raise ServiceError('invalid_attachment', '附件不存在或不属于当前客户')
+            previous = self._supplement(conversation_id)
+            self.repo.db.execute('DELETE FROM entities WHERE kind=? AND id=?', ('supplement_attachment', attachment_id))
+            self.repo.put('conversation_supplement', conversation_id, {
+                'conversation_id': conversation_id, 'body': previous['body'],
+                'revision': (previous['revision'] or 0) + 1, 'updated_at': now_ms()})
+            self._invalidate(conversation_id)
+            result = self._supplement(conversation_id)
+        self._changed(conversation_id)
+        return result
 
     def save_conversation_supplement(self, conversation_id, body, expected_revision, client_mutation_id):
         self._chat_body(body)
@@ -86,7 +123,7 @@ class ConversationAssistanceMixin:
                 'revision': result['revision'], 'updated_at': result['updated_at']})
             self._invalidate(conversation_id)
         self._changed(conversation_id)
-        return result
+        return self._supplement(conversation_id)
 
     def _manual_context(self, cid, case_id, input_body=None, input_revision=None):
         conversation = self._chat_owner(cid)
@@ -217,7 +254,8 @@ class ConversationAssistanceMixin:
             if before != after:
                 return {'_job_status': 'stale', 'message': '建议依据已变化，请重新生成'}
             context, fingerprint = refreshed, refreshed_fingerprint
-            photo_inputs = [] if unsent else self._direct_photo_inputs(context)
+            photo_inputs = ([] if unsent and not context.get('supplement_image_refs')
+                            else self._direct_photo_inputs(context))
         def started():
             with self._lock, self.repo.transaction():
                 guard()

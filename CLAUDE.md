@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 源码在独立私有仓库 `juccistar/reception-workbench` 维护，默认分支为 `main`。安装包与客户端更新继续使用公开仓库 `juccistar/reception-workbench-releases`；旧 Qt 工程及导出分支仅是历史来源，运行时不导入旧工程。仓库、应用标识、数据命名空间与固定签名公钥的约定见 [PROJECT.md](docs/PROJECT.md)。
 
-常用资料：[开发说明](docs/DEVELOPMENT.md)、[现行规则](docs/CURRENT_RULES.md)、[实施契约](docs/IMPLEMENTATION_CONTRACT.md)、[架构](docs/项目开发/02-架构文档.md)。当前源码及最新公开发行均为0.3.13，中文需求、独立会话摘要、新接待布局、程序商品链接与参考图、产品/供应商及持久采购任务的范围见[发布说明](docs/0.3.13发布说明.md)、[开发说明](docs/0.3.13开发说明.md)与[验证记录](docs/verification/0.3.13.json)。本版已打包并发布到原公开更新仓库，最终EXE窗口及固定更新签名已核对；0.3.12及更早版本保留历史记录。未执行真实安装、默认入口晋级或业务数据迁移，不以公开版本推断本机已升级。自动定向询价和报价回收仍blocked，其他未完成能力见[ROADMAP](docs/ROADMAP.md)，Demo和合成回归不替代真实平台、图搜或供应商询价验收。
+常用资料：[开发说明](docs/DEVELOPMENT.md)、[现行规则](docs/CURRENT_RULES.md)、[实施契约](docs/IMPLEMENTATION_CONTRACT.md)、[架构](docs/项目开发/02-架构文档.md)。当前源码正在进行0.3.14提示词及业务补充附件修复，最新公开发行仍为0.3.13；本轮状态见[0.3.14说明](docs/0.3.14发布说明.md)与[验证记录](docs/verification/0.3.14.json)。0.3.13的中文需求、独立会话摘要、新接待布局、程序商品链接与参考图、产品/供应商及持久采购任务的范围见[发布说明](docs/0.3.13发布说明.md)、[开发说明](docs/0.3.13开发说明.md)与[验证记录](docs/verification/0.3.13.json)。本版已打包并发布到原公开更新仓库，最终EXE窗口及固定更新签名已核对；0.3.12及更早版本保留历史记录。未执行真实安装、默认入口晋级或业务数据迁移，不以公开版本推断本机已升级。自动定向询价和报价回收仍blocked，其他未完成能力见[ROADMAP](docs/ROADMAP.md)，Demo和合成回归不替代真实平台、图搜或供应商询价验收。
 
 ## 新版本构建后的提交
 

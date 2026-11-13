@@ -30,7 +30,7 @@ const prompts = {
   LEGACY_OBSERVATION: block('## 10. P08：'),
 };
 const output = ['"""Reviewed, shared generation prompts. Regenerate with scripts/sync-reception-prompts.mjs."""',
-  'PROMPT_VERSION = "reception-0.3.13"',
+  'PROMPT_VERSION = "reception-0.3.14"',
   ...Object.entries(prompts).map(([name, value]) => `${name} = ${JSON.stringify(value)}`),
   'AUTOMATIC = COMMON + "\\n" + AUTOMATIC_TASK + "\\ncontext =\\n"',
   'MANUAL = COMMON + "\\n" + MANUAL_TASK + "\\ncontext =\\n"',
@@ -38,5 +38,11 @@ const output = ['"""Reviewed, shared generation prompts. Regenerate with scripts
   'REQUIREMENTS = COMMON + "\\n" + REQUIREMENTS_TASK + "\\ncontext =\\n"',
   '',
 ].join('\n');
-await writeFile(path.join(root, 'services/reception/src/reception_service/integrations/reception_prompts.py'), output, 'utf8');
-console.log(JSON.stringify({ status: 'generated', prompts: Object.keys(prompts), version: 'reception-0.3.13' }));
+const target = path.join(root, 'services/reception/src/reception_service/integrations/reception_prompts.py');
+const check = process.argv.includes('--check');
+if (check) {
+  if (await readFile(target, 'utf8') !== output) throw new Error('Reviewed prompts and generated constants differ; regenerate before building.');
+} else {
+  await writeFile(target, output, 'utf8');
+}
+console.log(JSON.stringify({ status: check ? 'matched' : 'generated', prompts: Object.keys(prompts), version: 'reception-0.3.14' }));

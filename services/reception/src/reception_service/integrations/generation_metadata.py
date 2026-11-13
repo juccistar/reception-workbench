@@ -36,6 +36,8 @@ def checked_metadata(raw, context, *, manual=False):
     public_ids = {row.get('policy_id') for row in context.get('knowledge', []) if row.get('public') is True}
     public_ids.update(supplement_sources(context))
     public_ids.update(direct_photo_sources(context.get('photo_context') or {}))
+    public_ids.update(row['image_id'] for row in context.get('supplement_image_reads', [])
+                      if row.get('origin') == 'business_supplement')
     supplier = context.get('supplier_context') or {}
     if supplier.get('usable') is True and supplier.get('customer_wording') and isinstance(supplier.get('source_id'), str):
         public_ids.add(supplier['source_id'])

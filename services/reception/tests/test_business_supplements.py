@@ -48,9 +48,10 @@ class BusinessSupplementTests(unittest.TestCase):
         note = context['supplement']
         self.assertEqual(note['body'], 'Price is 14.5 per piece, shipping not included.')
         self.assertTrue(note['source_id'].startswith('business_note_'))
-        codes = {row['code'] for row in validate_reply(note['body'], [note['source_id']], context)['warnings']}
-        self.assertNotIn('number_unverified', codes)
-        self.assertNotIn('sources_missing', codes)
+        validation = validate_reply(note['body'], [note['source_id']], context)
+        self.assertTrue(validation['ready'])
+        self.assertEqual(validation['sources'], [note['source_id']])
+        self.assertNotIn('warnings', validation)
         self.assertEqual(before, s.repo.get('conversation', self.cid))
         self.assertNotIn('public', note)
 

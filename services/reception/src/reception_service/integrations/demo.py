@@ -237,7 +237,8 @@ class DemoIntegration:
     def _direct_image_reads(cls, context, photo_inputs):
         from ..photos import photo_version
         refs = (context.get('photo_context') or {}).get('direct_images', [])
-        if len(refs) != len(photo_inputs or []):
+        supplement_refs = context.get('supplement_image_refs', [])
+        if len(refs) + len(supplement_refs) != len(photo_inputs or []):
             raise ServiceError('source_changed', '演示图片未绑定当前请求', stage='context')
         for ref, item in zip(refs, photo_inputs or []):
             message, asset = item['message'], item['asset']
@@ -249,6 +250,12 @@ class DemoIntegration:
                     or asset.get('sha256') != expected['sha256'] or ref['image_sha256'] != expected['sha256']
                     or asset.get('original_b64') != expected['original_b64']):
                 raise ServiceError('source_changed', '演示图片不匹配', stage='context')
+        # Demo does not inspect merchant-supplied images or claim a read.
+        for ref, item in zip(supplement_refs, (photo_inputs or [])[len(refs):]):
+            attachment, asset = item.get('attachment', {}), item.get('asset', {})
+            if (attachment.get('id') != ref.get('attachment_id') or attachment.get('origin') != 'business_supplement'
+                    or asset.get('sha256') != ref.get('image_sha256')):
+                raise ServiceError('source_changed', '业务补充图片不匹配', stage='context')
         return refs
 
     def read_product_display(self, seller_id, product_id, request_id, *, cancel_event=None):

@@ -172,6 +172,16 @@ class BusinessImageTests(unittest.TestCase):
         binding = {'version': 1, 'source': 'default-generated', 'rootPath': str(self.root),
                    'rootRevision': 0, 'state': 'ready'}
         fixture = self
+        raw = BytesIO()
+        Image.new('RGB', (8, 8), 'red').save(raw, 'PNG')
+        asset = decode_image(raw.getvalue(), 'image/png')
+        ref = {'origin': 'business_supplement', 'attachment_id': 'attachment-1', 'image_id': 'attachment-1',
+               'seller_id': '123', 'buyer_id': 'buyer', 'conversation_id': 'cid',
+               'image_sha256': asset['sha256'], 'supplement_revision': 1}
+        self.context['supplement_image_refs'] = [ref]
+        self.inputs.append({'attachment': {'id': 'attachment-1', 'origin': 'business_supplement',
+                            'seller_id': '123', 'buyer_id': 'buyer', 'conversation_id': 'cid', 'sha256': asset['sha256']},
+                            'asset': asset})
 
         class FakeProcess:
             returncode = None
@@ -179,6 +189,10 @@ class BusinessImageTests(unittest.TestCase):
                 self.name = args[args.index('--conversation-name') + 1]
             def communicate(self, input=None, timeout=None):
                 manifest = json.loads(input.rsplit('\nimage_inputs = ', 1)[1])
+                fixture.assertEqual(manifest[-1]['origin'], 'business_supplement')
+                fixture.assertEqual(manifest[-1]['attachment_id'], 'attachment-1')
+                fixture.assertNotIn('message_id', manifest[-1])
+                fixture.assertEqual(manifest[-1]['role'], 'seller')
                 paths = [Path(row['file_path']) for row in manifest]
                 if __import__('os').name == 'nt':
                     fixture.assertNotIn(str(paths[0]), input)
@@ -207,7 +221,14 @@ class BusinessImageTests(unittest.TestCase):
              patch.object(lock, 'release_native_child'):
             result = query_business_images(self.native, 'agent', self.identity, self.context, self.inputs, 'Context = ')
         self.assertEqual(result['request_id'], 'req')
-        self.assertEqual(len(result['verified_image_reads']), 2)
+        self.assertEqual(len(result['verified_image_reads']), 3)
+        self.assertEqual(result['verified_image_reads'][-1], ref)
+        self.inputs[-1]['attachment']['buyer_id'] = 'foreign-buyer'
+        with patch('reception_service.integrations.business_images.request_workspace', return_value=binding), \
+             patch('reception_service.integrations.business_images.VisualQueryRunner') as runner, \
+             self.assertRaises(ServiceError):
+            query_business_images(self.native, 'agent', self.identity, self.context, self.inputs, 'Context = ')
+        runner.return_value.run_many.assert_not_called()
 
     def test_preparation_budget_and_timeout_are_explicit(self):
         self.native.settings = {'image_batch_mib': 1, 'image_prepare_seconds': 1}

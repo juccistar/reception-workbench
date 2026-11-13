@@ -74,7 +74,7 @@ def model_request(instructions, context, suffix=''):
         raise ServiceError('context_too_long', '完整请求超出单次预算，未截断证据', stage='context')
     return request
 
-PAYLOAD_VERSION = 'reception-payload-0.3.13'
+PAYLOAD_VERSION = 'reception-payload-0.3.14'
 
 
 def _pick(row, keys):
@@ -116,7 +116,7 @@ def project_model_payload(context: dict, task_mode: str | None = None) -> dict:
             result[key] = [_pick(row, ('source_id', 'title', 'content', 'product_scope', 'valid_until'))
                            for row in result[key] if isinstance(row, dict)]
     if isinstance(result.get('supplement'), dict):
-        result['supplement'] = _pick(result['supplement'], ('source_id', 'body'))
+        result['supplement'] = _pick(result['supplement'], ('source_id', 'body', 'attachments'))
     rows = context.get('message_view')
     if not isinstance(rows, list):
         rows = context.get('historical_evidence', []) + context.get('recent_messages', [])
@@ -155,14 +155,20 @@ def project_model_payload(context: dict, task_mode: str | None = None) -> dict:
                                                 if key != 'product_url'})
         if isinstance(context.get('conversation_summary'), dict):
             result['conversation_summary'] = context['conversation_summary'].get('body', '')
-        manifest = context.get('image_manifest')
-        if isinstance(manifest, list) and manifest:
-            result['image_manifest'] = [_pick(row, ('alias', 'image_id', 'message_id', 'role'))
-                                        for row in manifest if isinstance(row, dict)]
-            result['image_transport'] = context.get('image_transport', 'none')
     elif isinstance(context.get('unsent_reply'), dict):
         result['unsent_reply'] = _pick(context['unsent_reply'], ('body',))
+    manifest = context.get('image_manifest')
+    if isinstance(manifest, list) and manifest:
+        result['image_manifest'] = [_pick(row, ('alias', 'image_id', 'message_id', 'attachment_id', 'origin', 'role'))
+                                    for row in manifest if isinstance(row, dict)]
+        result['image_transport'] = context.get('image_transport', 'none')
     projected = _model_safe(result)
+    if isinstance(result.get('supplement'), dict):
+        # Merchant-provided attachment text is business data, not product-card metadata.
+        projected['supplement'] = deepcopy(result['supplement'])
+    if 'image_manifest' in result:
+        projected['image_manifest'] = deepcopy(result['image_manifest'])
+        projected['image_transport'] = result['image_transport']
     for original, row in zip(timeline, projected['message_view']):
         if isinstance(original.get('text'), str):
             row['text'] = original['text']
