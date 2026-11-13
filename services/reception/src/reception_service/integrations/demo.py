@@ -45,7 +45,7 @@ def natural_demo_analysis(context):
         result.update(action='ask', reply=demo_social_reply(latest['text'], intent),
                       summary=case.get('summary', ''), missing=list(case.get('missing') or []),
                       reply_sources=[latest['message_id']])
-        return validate_analysis(result, context)
+        return validate_analysis({key: value for key, value in result.items() if key != 'new_case'}, context)
     photo_rows = ((context.get('photo_context') or {}).get('observations') or []) + ((context.get('photo_context') or {}).get('read_images') or [])
     photo = next((row for row in photo_rows if row.get('message_id') == latest['message_id']), None)
     if photo and latest['text'].strip() == '[image]':
@@ -53,7 +53,7 @@ def natural_demo_analysis(context):
                       reply='Thanks for the photo. The image appears to show a green tote bag. Is this the design you have in mind?',
                       summary=case.get('summary', ''), missing=list(case.get('missing') or []),
                       reply_sources=[latest['message_id'], photo.get('observation_id') or photo['image_id']])
-        return validate_analysis(result, context)
+        return validate_analysis({key: value for key, value in result.items() if key != 'new_case'}, context)
     buyers = [row for row in messages if row['role'] == 'buyer']
     boundary = re.compile(r'new (?:order|inquiry)|another (?:order|product)|separate order|新(?:采购|订单|需求)|另(?:一|外).*采购', re.I)
     boundaries = [index for index, row in enumerate(buyers) if boundary.search(row['text'])]
@@ -127,7 +127,7 @@ def natural_demo_analysis(context):
                   missing=missing, reply_sources=list(dict.fromkeys([latest['message_id'],
                       *(mid for fact in facts.values() for mid in fact['evidence_ids']),
                       *([note['source_id']] if note.get('body') and note.get('source_id') else [])])))
-    return validate_analysis(result, context)
+    return validate_analysis({key: value for key, value in result.items() if key != 'new_case'}, context)
 
 
 class DemoIntegration:
@@ -286,9 +286,7 @@ class DemoIntegration:
         latest = next((m for m in reversed(context.get('recent_messages', [])) if m.get('role') == 'buyer'), None)
         if latest:
             result['conversation_summary'] = '客户提出了沟通事项。'
-            if latest.get('text') == 'I need 100 pieces':
-                result['requirements'] = {'quantity': {'value': '100件', 'evidence_ids': [latest['message_id']],
-                    'source_excerpts': {latest['message_id']: '100 pieces'}}}
+            self._demo_quantity_change(result, context, latest)
         result['verified_image_reads'] = refs
         return result
 
@@ -296,7 +294,7 @@ class DemoIntegration:
         if cancel_event is not None and cancel_event.is_set():
             raise ServiceError('cancelled', '请求已取消', stage='analysis')
         result = self.generate(context, request_id, on_call_start=on_call_start, photo_inputs=photo_inputs)
-        return {key: result[key] for key in ('facts', 'category_label', 'requirement_items', 'summary') if key in result}
+        return {key: result[key] for key in ('requirement_changes', 'reply_case_refs', 'conversation_summary') if key in result}
 
     def generate_manual(self, context, request_id, *, on_call_start=None, cancel_event=None, photo_inputs=None):
         self.resolve_identity(context.get('seller_id'))
@@ -324,10 +322,23 @@ class DemoIntegration:
         if not unsent and buyer:
             result['conversation_summary'] = '客户提出了沟通事项。'
             message = next((m for m in reversed(messages) if m.get('role') == 'buyer'), None)
-            if message and buyer == 'I need 100 pieces':
-                result['requirements'] = {'quantity': {'value': '100件', 'evidence_ids': [message['message_id']],
-                    'source_excerpts': {message['message_id']: '100 pieces'}}}
+            if message:
+                self._demo_quantity_change(result, context, message)
         return result
+
+    @staticmethod
+    def _demo_quantity_change(result, context, message):
+        if message.get('text') != 'I need 100 pieces':
+            return
+        reference = context.get('selected_case_ref') or context.get('current_case_ref')
+        target = next((row for row in context.get('case_catalog', []) if row['case_ref'] == reference), None)
+        if not target or (target.get('requirements', {}).get('quantity') or {}).get('value') == '100件':
+            return
+        result['requirement_changes'] = [{'action': 'update', 'case_ref': reference,
+            'trigger_evidence_ids': [message['message_id']],
+            'set_fields': {'quantity': {'value': '100件', 'evidence_ids': [message['message_id']],
+                'source_excerpts': {message['message_id']: '100 pieces'}}}}]
+        result['reply_case_refs'] = [reference]
 
     def translate(self, items, request_id, *, on_call_start=None, cancel_event=None):
         if not isinstance(request_id, str) or not request_id.strip() or not isinstance(items, list) or not items:

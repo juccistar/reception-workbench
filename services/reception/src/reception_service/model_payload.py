@@ -74,7 +74,7 @@ def model_request(instructions, context, suffix=''):
         raise ServiceError('context_too_long', '完整请求超出单次预算，未截断证据', stage='context')
     return request
 
-PAYLOAD_VERSION = 'reception-payload-0.3.15'
+PAYLOAD_VERSION = 'reception-payload-0.3.16'
 
 
 def _pick(row, keys):
@@ -155,6 +155,18 @@ def project_model_payload(context: dict, task_mode: str | None = None) -> dict:
                                                 if key != 'product_url'})
         if isinstance(context.get('conversation_summary'), dict):
             result['conversation_summary'] = context['conversation_summary'].get('body', '')
+        if 'case_catalog' in context:
+            result['case_catalog'] = []
+            for entry in context['case_catalog']:
+                row = _pick(entry, ('case_ref', 'state', 'procurement_key'))
+                row['requirements'] = _semantic({key: value for key, value in entry['requirements'].items() if key != 'product_url'})
+                for key in ('supplier_context', 'product_context'):
+                    if key in entry:
+                        row[key] = _without_product_links_or_images(entry[key])
+                for key in ('knowledge', 'guidance', 'style'):
+                    row[key] = [_pick(item, ('source_id', 'title', 'content', 'product_scope', 'valid_until')) for item in entry.get(key, [])]
+                result['case_catalog'].append(row)
+            result.update(_pick(context, ('current_case_ref', 'selected_case_ref')))
     elif isinstance(context.get('unsent_reply'), dict):
         result['unsent_reply'] = _pick(context['unsent_reply'], ('body',))
     manifest = context.get('image_manifest')
@@ -163,6 +175,12 @@ def project_model_payload(context: dict, task_mode: str | None = None) -> dict:
                                     for row in manifest if isinstance(row, dict)]
         result['image_transport'] = context.get('image_transport', 'none')
     projected = _model_safe(result)
+    # These are our typed requirement records, not platform card metadata.
+    # Preserve their product_id/media IDs after removing the derived URL above.
+    if mode != 'polish':
+        for key in ('requirements', 'case_catalog'):
+            if key in result:
+                projected[key] = deepcopy(result[key])
     if isinstance(result.get('supplement'), dict):
         # Merchant-provided attachment text is business data, not product-card metadata.
         projected['supplement'] = deepcopy(result['supplement'])

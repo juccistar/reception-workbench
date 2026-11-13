@@ -302,8 +302,11 @@ class LiveIntegration:
             metadata.pop('assistance_suggestions', None)
         metadata.pop('quality_notes', None)
         metadata.pop('assistance_suggestions', None)
+        if not context.get('unsent_reply'):
+            from ..requirement_changes import validate_changes
+            validate_changes(answer, checked_context)
         return {'reply': reply.strip(), 'verified_image_reads': image_reads, **metadata,
-                **({key: answer[key] for key in ('requirements', 'conversation_summary') if key in answer}
+                **({key: answer[key] for key in ('requirement_changes', 'reply_case_refs', 'conversation_summary') if key in answer}
                    if not context.get('unsent_reply') else {})}
 
     @boundary('analysis')
@@ -321,8 +324,9 @@ class LiveIntegration:
             payload.pop('message_view', None)
         answer = self._assistance_query(REQUIREMENTS, payload, request_id, on_call_start, cancel_event,
                                         photo_inputs=photo_inputs, photo_deadline=photo_deadline)
-        return {key: answer.get(key, default) for key, default in
-                (('facts', {}), ('category_label', ''), ('requirement_items', []), ('summary', ''), ('product_ref', None))}
+        from ..requirement_changes import validate_changes
+        validate_changes(answer, context)
+        return {key: answer[key] for key in ('requirement_changes', 'reply_case_refs', 'conversation_summary') if key in answer}
 
     @boundary('analysis')
     def translate(self, items, request_id, *, on_call_start=None, cancel_event=None):

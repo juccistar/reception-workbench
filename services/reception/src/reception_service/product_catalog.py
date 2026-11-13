@@ -56,6 +56,8 @@ def project_case(repo, case):
     from .product_library import _key
     from .product_presentation import project_main_image
     result = copy.deepcopy(case)
+    from .requirement_changes import requirement_revision
+    result['requirements_revision'] = requirement_revision(case)
     derive_product_link(result)
     pid = ((result.get('requirements') or {}).get('product_id') or {}).get('value')
     platform = product_kind(pid)

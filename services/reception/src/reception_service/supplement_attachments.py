@@ -122,6 +122,10 @@ def attachment_rows(repo, conversation_id):
 def public_attachment(row, *, preview=True):
     fields = ('id', 'name', 'media_type', 'size', 'sha256', 'status', 'origin', 'created_at', 'pages', 'error')
     result = {key: row[key] for key in fields if key in row}
+    if (row.get('status') == 'ready' and row.get('media_type', '').startswith('image/')
+            and row.get('conversation_id') and row.get('id') and row.get('sha256')):
+        result['image_ref'] = {'kind': 'supplement', 'conversation_id': row['conversation_id'],
+                               'attachment_id': row['id'], 'sha256': row['sha256']}
     if preview and row.get('preview_data_url'):
         result['preview_data_url'] = row['preview_data_url']
     if preview and isinstance(row.get('text'), str):

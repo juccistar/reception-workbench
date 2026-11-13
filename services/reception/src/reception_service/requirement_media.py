@@ -164,6 +164,8 @@ class RequirementMediaMixin:
                         preview = asset.get('preview_data_url')
                         if asset.get('sha256') == state.get('sha256') and isinstance(preview, str) and preview.startswith(('data:image/png;base64,', 'data:image/jpeg;base64,')) and len(preview) <= 1_400_000:
                             item['data_url'] = preview
+                            item['image_ref'] = {'kind': 'requirement', 'case_id': case_id, 'media_id': item['media_id'],
+                                                 'source_version': version, 'sha256': asset['sha256']}
                         else:
                             item['status'] = 'failed'
                     items.append(item)

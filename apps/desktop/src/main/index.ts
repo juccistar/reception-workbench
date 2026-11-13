@@ -1,4 +1,5 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, safeStorage, screen, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, safeStorage, screen, shell, type IpcMainInvokeEvent } from 'electron';
+import { productUrl, readOriginal, validateReference } from './media-host';
 import { TranslationHost } from './translation-host';
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -364,6 +365,32 @@ function cleanPreferences(value: Record<string,unknown>): Partial<Preferences> {
   return result;
 }
 function installIPC() {
+  const mediaReady = () => {
+    if (!window || window.isDestroyed() || !backend || closing || storageBusy || updateTask || backendStartPromise) throw new Error('后台正在启动、退出或管理数据。');
+  };
+  ipcMain.handle('reception:image:original', async (event, reference: unknown) => {
+    validSender(event); mediaReady();
+    return readOriginal(call, reference, mediaReady);
+  });
+  ipcMain.handle('reception:image:menu', async (event, reference: unknown) => {
+    validSender(event); mediaReady(); validateReference(reference);
+    const target = window!;
+    const selected = await new Promise<boolean>(resolve => {
+      let chosen = false;
+      const menu = Menu.buildFromTemplate([{ label: '复制图片', click: () => { chosen = true; } }]);
+      menu.popup({ window: target, callback: () => resolve(chosen) });
+    });
+    if (!selected) return 'cancelled';
+    const image = await readOriginal(call, reference, mediaReady, true);
+    mediaReady();
+    await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(image.bytes)], { type: 'image/png' }) })]);
+    return 'copied';
+  });
+  ipcMain.handle('reception:product:open', async (event, reference: unknown) => {
+    validSender(event); mediaReady();
+    const url = await productUrl(call, reference, mediaReady);
+    await shell.openExternal(url);
+  });
   ipcMain.handle('reception:translation:get', event => { validSender(event); return translations().get(); });
   ipcMain.handle('reception:translation:save', (event, input: unknown) => {
     validSender(event);

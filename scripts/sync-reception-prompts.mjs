@@ -20,6 +20,7 @@ const block = marker => {
 const prompts = {
   COMMON: block('## 3. P01：'),
   AUTOMATIC_TASK: block('## 4. P02：'),
+  REQUIREMENT_CHANGE_RULES: block('## 4A. P02-A：'),
   MANUAL_TASK: block('## 5. P03：'),
   POLISH_TASK: block('## 6. P04：'),
   REQUIREMENTS_TASK: block('## 11A. REQUIREMENTS：'),
@@ -30,12 +31,12 @@ const prompts = {
   LEGACY_OBSERVATION: block('## 10. P08：'),
 };
 const output = ['"""Reviewed, shared generation prompts. Regenerate with scripts/sync-reception-prompts.mjs."""',
-  'PROMPT_VERSION = "reception-0.3.15"',
+  'PROMPT_VERSION = "reception-0.3.16"',
   ...Object.entries(prompts).map(([name, value]) => `${name} = ${JSON.stringify(value)}`),
-  'AUTOMATIC = COMMON + "\\n" + AUTOMATIC_TASK + "\\ncontext =\\n"',
-  'MANUAL = COMMON + "\\n" + MANUAL_TASK + "\\ncontext =\\n"',
+  'AUTOMATIC = COMMON + "\\n" + AUTOMATIC_TASK + "\\n" + REQUIREMENT_CHANGE_RULES + "\\ncontext =\\n"',
+  'MANUAL = COMMON + "\\n" + MANUAL_TASK + "\\n" + REQUIREMENT_CHANGE_RULES + "\\ncontext =\\n"',
   'POLISH = COMMON + "\\n" + POLISH_TASK + "\\ncontext =\\n"',
-  'REQUIREMENTS = COMMON + "\\n" + REQUIREMENTS_TASK + "\\ncontext =\\n"',
+  'REQUIREMENTS = COMMON + "\\n" + REQUIREMENTS_TASK + "\\n" + REQUIREMENT_CHANGE_RULES + "\\ncontext =\\n"',
   '',
 ].join('\n');
 const target = path.join(root, 'services/reception/src/reception_service/integrations/reception_prompts.py');
@@ -45,4 +46,4 @@ if (check) {
 } else {
   await writeFile(target, output, 'utf8');
 }
-console.log(JSON.stringify({ status: check ? 'matched' : 'generated', prompts: Object.keys(prompts), version: 'reception-0.3.15' }));
+console.log(JSON.stringify({ status: check ? 'matched' : 'generated', prompts: Object.keys(prompts), version: 'reception-0.3.16' }));

@@ -139,6 +139,7 @@ class ConversationAssistanceMixin:
             context.update(self._product_context_for_case(case))
         if input_body is not None:
             context['unsent_reply'] = {'body': input_body, 'revision': input_revision}
+        self._with_case_catalog_context(context)
         model_json(context)
         semantic = _strip_product_display(copy.deepcopy(context))
         # Follow-up projection is derived from these same sources and may be
@@ -287,18 +288,20 @@ class ConversationAssistanceMixin:
             if (self._closing or not input_current or current != fingerprint
                     or self.repo.get('manual_latest', cid, {}).get('job_id') != job_id):
                 return {'_job_status': 'stale', 'message': '依据或最新请求已变化，建议未发布'}
+            suggestion_case_id = context['case_id']
             if not unsent:
                 current_case = self._require('case', context['case_id']) if context.get('case_id') else None
                 checked_context = with_direct_photo_reads(context, output.get('verified_image_reads', []))
-                changed = self._save_ai_conversation_state(self._require('conversation', cid), current_case, output, checked_context)
-                if changed:
-                    current_case.update(revision=current_case['revision'] + 1, updated_at=now_ms())
-                    self.repo.put('case', current_case['case_id'], current_case, history=True)
-                    self._sync_requirement_product(current_case)
+                conversation = self._require('conversation', cid)
+                applied = self._apply_requirement_output(conversation, current_case, output, checked_context, job_id)
+                self._save_ai_conversation_state(conversation, None, output, checked_context)
+                if applied['changed_case_ids'] or applied['pointer_changed']:
                     self._invalidate(cid)
-                _, fingerprint = self._manual_context(cid, context['case_id'])
+                if len(applied['reply_case_ids']) == 1:
+                    suggestion_case_id = applied['reply_case_ids'][0]
+                _, fingerprint = self._manual_context(cid, suggestion_case_id)
             suggestion = {'suggestion_id': new_id('suggestion'), 'conversation_id': cid,
-                          'case_id': context['case_id'], 'body': body, 'request_id': params['request_id'],
+                          'case_id': suggestion_case_id, 'body': body, 'request_id': params['request_id'],
                           'mode': 'polish' if unsent else 'draft',
                           'input_revision': unsent['revision'] if unsent else None,
                           'input_hash': params['input_hash'],

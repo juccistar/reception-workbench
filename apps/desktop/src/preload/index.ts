@@ -6,6 +6,9 @@ function checkConversation(value: unknown): asserts value is string {
   if (typeof value !== 'string' || !value || value.length > 500) throw new Error('客户会话无效。');
 }
 const bridge: ReceptionBridge = {
+  getImageOriginal: reference => ipcRenderer.invoke('reception:image:original', reference),
+  showImageMenu: reference => ipcRenderer.invoke('reception:image:menu', reference),
+  openProductLink: reference => ipcRenderer.invoke('reception:product:open', reference),
   invoke: (method, params = {}) => {
     if (!allowed.has(method) || method === 'confirm_send') return Promise.reject(new Error('不允许此界面操作。'));
     try { validateChatParameters(method, params); } catch (error) { return Promise.reject(error); }

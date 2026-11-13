@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { MessageImages } from '../src/renderer/components/MessageImages';
 import { App } from '../src/renderer/App';
 import type { MessageImage, ReceptionBridge } from '../src/shared/api';
 import { createReplyActivityFixture } from './fixtures/replyActivity';
@@ -148,4 +149,19 @@ describe('消息图片', () => {
     await waitFor(() => expect(fixture.imageCalls.filter(call => call.method === 'load_message_image')).toHaveLength(4));
     expect(fixture.imageCalls.filter(call => call.method === 'load_message_image').map(call => call.params.message_id).sort()).toEqual(['photo-1', 'photo-2', 'photo-3', 'photo-4']);
   });
+});
+
+it('按原图资产去重，并以真实引用在同一消息的图片间导航', async () => {
+  const refs = ['a', 'b', 'a'].map((sha256, index) => ({ kind: 'message' as const, conversation_id: 'c', message_id: 'm', source_version: 'v' + index, sha256 }));
+  const getImageOriginal = vi.fn().mockRejectedValue(new Error('synthetic'));
+  const bridge = { invoke: vi.fn(async (_method, params) => { const index = Number(String(params.source_version).slice(1)); return { status: 'ready', source_version: 'v' + index, message: '', data_url: preview, image_ref: refs[index] }; }), getImageOriginal } as unknown as ReceptionBridge;
+  render(<MessageImages attachments={refs.map((ref, index) => ({ kind: 'image', attachment_id: String(index), source_version: ref.source_version }))} conversationId="c" messageId="m" role="buyer" autoLoadIndices={[]} revision={0} bridge={bridge} />);
+  const cards = await screen.findAllByRole('button', { name: '放大查看客户发送的照片' });
+  await waitFor(() => expect(cards).toHaveLength(3));
+  fireEvent.click(cards[2]);
+  expect(await screen.findByText('1 / 2')).toBeInTheDocument();
+  expect(getImageOriginal).toHaveBeenCalledWith(refs[0]);
+  fireEvent.keyDown(document, { key: 'ArrowRight' });
+  await waitFor(() => expect(getImageOriginal).toHaveBeenCalledWith(refs[1]));
+  expect(screen.getByText('2 / 2')).toBeInTheDocument();
 });

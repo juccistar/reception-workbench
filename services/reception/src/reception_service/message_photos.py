@@ -71,7 +71,9 @@ class MessagePhotosMixin:
                     return {**result, 'status': 'failed', 'vision_status': 'unavailable', 'message': '本地图片内容缺失，可重试'}
                 # Original bytes and resource URLs never cross the renderer boundary.
                 result.update(data_url=asset['preview_data_url'], width=asset['width'],
-                              height=asset['height'], sha256=asset['sha256'])
+                              height=asset['height'], sha256=asset['sha256'],
+                              image_ref={'kind': 'message', 'conversation_id': conversation_id, 'message_id': message_id,
+                                         'source_version': source_version, 'sha256': asset['sha256']})
                 record = self.repo.get('photo_observation', encoded([conversation_id, message_id]), {})
                 observation = valid_photo_observation(message, record, asset['sha256'])
                 if observation:
@@ -209,7 +211,15 @@ class MessagePhotosMixin:
             case = self.repo.get('case', job_case_id, {}) if job_case_id else {}
             if any(case.get(key) != original_conversation.get(key) for key in ('seller_id', 'buyer_id', 'conversation_id')):
                 case = {}
-            candidates = copy.deepcopy(get_product_source_images(self.repo, case, original_messages))
+            cases = [c for c in self.repo.list('case', conversation_id=cid)
+                     if all(c.get(key) == original_conversation.get(key) for key in ('seller_id', 'buyer_id', 'conversation_id'))]
+            def selected_images(rows):
+                selected = {}
+                for candidate_case in cases:
+                    for candidate in get_product_source_images(self.repo, candidate_case, rows):
+                        selected[candidate['message_id']] = candidate
+                return list(selected.values())
+            candidates = copy.deepcopy(selected_images(original_messages))
             seconds = self.settings.get('image_prepare_seconds', 60)
             seconds = seconds if type(seconds) is int and 1 <= seconds <= 600 else 60
             batch_mib = self.settings.get('image_batch_mib', 64)
@@ -221,7 +231,7 @@ class MessagePhotosMixin:
                                      key=lambda message: self._photo_state(message).get('status') != 'loading')
             from .model_payload import _safe_text
             def message_basis(rows):
-                selected = get_product_source_images(self.repo, case, rows)
+                selected = selected_images(rows)
                 return ([(m.get('message_id'), m.get('role'), _safe_text(m.get('text') or ''), m.get('timestamp_ms'))
                          for m in rows], [(m['message_id'], photo_version(m)) for m in selected])
             original_basis = message_basis(original_messages)
@@ -232,6 +242,8 @@ class MessagePhotosMixin:
             if (epoch != self._epoch or self._closing
                     or any(conversation.get(key) != original_conversation.get(key) for key in
                            ('seller_id', 'buyer_id', 'case_id', 'revision', 'human_owned'))
+                    or [c for c in self.repo.list('case', conversation_id=cid)
+                        if all(c.get(key) == original_conversation.get(key) for key in ('seller_id', 'buyer_id', 'conversation_id'))] != cases
                     or message_basis(self.repo.list('message', conversation_id=cid)) != original_basis
                     or self.repo.get('chat_draft', cid) != original_chat
                     or self._supplement(cid) != original_note):

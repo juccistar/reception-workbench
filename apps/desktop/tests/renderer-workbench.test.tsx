@@ -239,8 +239,8 @@ describe('mounted requirement workspace', () => {
     const main = await screen.findByRole('button', { name: '放大查看商品图片 1' });
     expect(screen.getByText('商品图片')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '放大查看产品图片' })).toBeInTheDocument();
-    expect(screen.queryByText('https://www.alibaba.com/product-detail/123.html')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '复制产品链接' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'https://www.alibaba.com/product-detail/123.html' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '在浏览器打开产品链接' })).toBeInTheDocument();
     expect(bridge.invoke).toHaveBeenCalledWith('get_product_main_image', { local_product_id: 'product-123' });
     fireEvent.click(main); expect(screen.getByRole('dialog', { name: '商品图片' })).toBeInTheDocument();
     fireEvent.keyDown(document, { key: 'Escape' }); expect(main).toHaveFocus();
@@ -722,13 +722,13 @@ describe('conversation chat and automatic reception', () => {
     expect(sendButton()).toBeEnabled();
   });
 
-  it('shows suggestion warnings and separates internal guidance from public wording', async () => {
+  it('keeps retired suggestion warnings and internal guidance out of the pending reply', async () => {
     const bridge = new FakeBridge();
     bridge.snapshot.policies = [{ policy_id: 'rule', kind: 'policy', title: '内部接待规则', content: '绝不可公开的内部原因', customer_wording: '可以公开的说明', internal_notes: '仅人工备注', usage: 'internal_guidance', enabled: true, product_scope: [], confirmed: true, public: false, revision: 2, updated_at: 1, valid_until: null }];
     bridge.details.emma.draft = { ...bridge.details.emma.draft!, applied_policies: [{ source_id: 'rule:internal', title: '内部接待规则', revision: 2, usage: 'internal_guidance' }] } as Draft;
     bridge.details.emma.manual_suggestion = { suggestion_id: 's1', conversation_id: 'emma', case_id: 'case-emma', body: '建议正文', request_id: 'r', context_fingerprint: 'f', status: 'ready', updated_at: 1, quality_notes: [{ code: 'q', message: '请核对表述' }], assistance_suggestions: [{ kind: 'verify', detail: '核实交期', fact_keys: [], source_message_ids: [] }], applied_policies: [{ source_id: 'rule:internal', title: '内部接待规则', revision: 2, usage: 'internal_guidance' }] };
     await openApp(bridge);
-    fireEvent.click(screen.getByRole('button', { name: '查看建议' }));
+    await screen.findByText('建议正文');
     expect(screen.queryByText('请核对表述')).not.toBeInTheDocument();
     expect(screen.queryByText('核实交期')).not.toBeInTheDocument();
     expect(screen.queryByText('建议人工协助（尚未创建任务）')).not.toBeInTheDocument();
@@ -743,19 +743,17 @@ describe('conversation chat and automatic reception', () => {
     const bridge = new FakeBridge(); bridge.details.emma.chat_draft = null;
     bridge.details.emma.manual_suggestion = { suggestion_id: 's1', conversation_id: 'emma', case_id: 'case-emma', body: 'Separate AI suggestion', request_id: 'r1', context_fingerprint: 'test', status: 'ready', updated_at: Date.now() };
     await openApp(bridge);
-    fireEvent.click(screen.getByRole('button', { name: '查看建议' }));
-    expect(screen.getByText('Separate AI suggestion')).toBeInTheDocument();
+    await screen.findByText('Separate AI suggestion');
     expect(textarea()).toHaveValue(''); expect(calls(bridge, 'begin_manual_edit')).toHaveLength(0);
     fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
     expect(calls(bridge, 'begin_manual_edit')).toHaveLength(1);
     await waitFor(() => expect(sendButton()).toBeEnabled());
     fireEvent.change(textarea(), { target: { value: 'A carefully edited human answer' } });
-    bridge.details.emma.manual_suggestion = { ...bridge.details.emma.manual_suggestion!, body: 'A late AI suggestion' };
+    bridge.details.emma.manual_suggestion = { ...bridge.details.emma.manual_suggestion!, suggestion_id: 's2', body: 'A late AI suggestion' };
     act(() => bridge.emit({ event: 'state.changed', data: {} }));
     await waitFor(() => expect(calls(bridge, 'get_conversation').length).toBeGreaterThan(1));
     expect(textarea()).toHaveValue('A carefully edited human answer');
-    fireEvent.click(screen.getByRole('button', { name: '查看建议' }));
-    expect(screen.getByText('A late AI suggestion')).toBeInTheDocument();
+    await screen.findByText('A late AI suggestion');
     expect(calls(bridge, 'save_draft')).toHaveLength(0);
   });
 
@@ -837,10 +835,10 @@ describe('message sync summaries and explicit empty-history refresh', () => {
     expect(calls(bridge, 'get_conversation').map(call => call.params)).toEqual([{ conversation_id: 'emma', case_id: 'case-emma' }]);
     fireEvent.click(screen.getByRole('button', { name: /Emma.*Could you make a sample/s }));
     await waitFor(() => expect(calls(bridge, 'get_conversation')).toHaveLength(2));
-    expect(calls(bridge, 'get_conversation')[1].params).toEqual({ conversation_id: 'emma', case_id: 'case-emma', refresh_empty: true });
+    expect(calls(bridge, 'get_conversation')[1].params).toEqual({ conversation_id: 'emma', refresh_empty: true });
     fireEvent.click(screen.getByRole('button', { name: /Sofia.*Do you have this mug in white/s }));
     await screen.findByRole('main', { name: 'Sofia 的客户接待' });
-    expect(calls(bridge, 'get_conversation')[2].params).toEqual({ conversation_id: 'sofia', case_id: 'case-sofia', refresh_empty: true });
+    expect(calls(bridge, 'get_conversation')[2].params).toEqual({ conversation_id: 'sofia', refresh_empty: true });
     expect(calls(bridge, 'begin_manual_edit')).toHaveLength(0);
     expect(calls(bridge, 'takeover')).toHaveLength(0);
     noLegacySend(bridge);
@@ -915,7 +913,7 @@ describe('editing safeguards and existing workspace layout', () => {
     expect(saves[0].params.expected_revision).toBeNull(); expect(saves[1].params.expected_revision).toBe(1);
     expect(saves[1].params.body).toBe('First manual text plus newer input');
     expect(saves[1].params.client_mutation_id).not.toBe(saves[0].params.client_mutation_id);
-    await screen.findByText('人工编辑 · 已保存');
+    await waitFor(() => expect(document.querySelector('.composer .save-state')).toHaveTextContent('已保存'));
   });
 
   it('keeps the current customer and edited body when a switch-time save fails', async () => {
@@ -1197,10 +1195,10 @@ describe('merchant card and adjustable reception layout', () => {
       await waitFor(() => expect(bridge.preferences.requirements_ratio).toBeCloseTo(364 / 600));
       fireEvent.doubleClick(screen.getByRole('separator', { name: '调整采购需求与业务补充高度' }));
       fireEvent.doubleClick(screen.getByRole('separator', { name: '调整右侧栏宽度' }));
-      await waitFor(() => expect(bridge.preferences).toMatchObject({ details_width: 320, requirements_ratio: 0.55 }));
+      await waitFor(() => expect(bridge.preferences).toMatchObject({ details_width: 360, requirements_ratio: 0.68 }));
       act(() => { window.innerWidth = 900; window.dispatchEvent(new Event('resize')); });
       expect(screen.queryByRole('separator', { name: '调整右侧栏宽度' })).not.toBeInTheDocument();
-      expect(bridge.preferences).toMatchObject({ details_width: 320, requirements_ratio: 0.55 });
+      expect(bridge.preferences).toMatchObject({ details_width: 360, requirements_ratio: 0.68 });
     } finally { height.mockRestore(); }
   });
 
@@ -1219,7 +1217,7 @@ describe('merchant card and adjustable reception layout', () => {
       await openApp(bridge);
       const side = screen.getByRole('separator', { name: '调整右侧栏宽度' });
       const vertical = screen.getByRole('separator', { name: '调整采购需求与业务补充高度' });
-      await waitFor(() => expect(side).toHaveAttribute('aria-valuenow', '556'));
+      await waitFor(() => expect(side).toHaveAttribute('aria-valuenow', '596'));
       expect(vertical).toHaveAttribute('aria-valuenow', '126');
       expect(bridge.preferences).toMatchObject({ details_width: 600, requirements_ratio: 0.8 });
       expect(notifyResize).toBeTypeOf('function');
@@ -1231,4 +1229,47 @@ describe('merchant card and adjustable reception layout', () => {
       expect(bridge.preferences).toMatchObject({ details_width: 600, requirements_ratio: 0.8 });
     } finally { height.mockRestore(); vi.unstubAllGlobals(); }
   });
+});
+
+
+describe('0.3.16 conversation controls', () => {
+  it('follows the current case until the user pins an older case', async () => {
+    const bridge = new FakeBridge();
+    const original = bridge.details.emma.case!;
+    const other = { ...original, case_id: 'case-other', requirements_format: 'ai-v1' as const, requirements: { product: { value: '帽子', evidence_ids: [] } } };
+    original.requirements_format = 'ai-v1'; original.requirements = { product: { value: '眼镜', evidence_ids: [] } };
+    bridge.details.emma.cases = [original, other];
+    bridge.detailHandler = async params => { const detail = clone(bridge.details[String(params.conversation_id)]); detail.case = detail.cases.find(item => item.case_id === (params.case_id || detail.conversation.case_id)) ?? null; return detail; };
+    await openApp(bridge);
+    bridge.details.emma.conversation.case_id = other.case_id;
+    act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '当前采购事项' })).toHaveValue('case-other'));
+    fireEvent.change(screen.getByRole('combobox', { name: '当前采购事项' }), { target: { value: original.case_id } });
+    await waitFor(() => expect(screen.getByRole('combobox', { name: '当前采购事项' })).toHaveValue(original.case_id));
+    act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
+    await waitFor(() => expect(calls(bridge, 'get_conversation').at(-1)?.params.case_id).toBe(original.case_id));
+    expect(screen.getByRole('combobox', { name: '当前采购事项' })).toHaveValue(original.case_id);
+  });
+  it('submits history directly and blocks repeated clicks while the task is active', async () => {
+    const bridge = new FakeBridge(); await openApp(bridge);
+    const button = screen.getByRole('button', { name: '补全当前客户历史' });
+    fireEvent.click(button); fireEvent.click(button);
+    await waitFor(() => expect(calls(bridge, 'fill_history')).toHaveLength(1));
+    expect(button).toBeDisabled();
+  });
+  it('closes information popovers on outside clicks, Escape and customer changes, retaining the summary icon', async () => {
+    const bridge = new FakeBridge(); bridge.details.emma.conversation_summary = { conversation_id: 'emma', body: '会话摘要', revision: 1, updated_at: 1 };
+    await openApp(bridge);
+    expect(screen.getByLabelText('会话摘要').querySelector('.lucide-book-open')).not.toBeNull();
+    const status = screen.getByLabelText('查看会话状态'); const help = screen.getByRole('button', { name: '附件格式与限制' });
+    fireEvent.click(status); expect(screen.getByLabelText('此客户接待状态')).toBeVisible();
+    fireEvent.pointerDown(help); fireEvent.click(help); expect(screen.queryByLabelText('此客户接待状态')).not.toBeVisible();
+    expect(help).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.keyDown(document, { key: 'Escape' }); expect(help).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(help); fireEvent.pointerDown(document.body); expect(help).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(help); fireEvent.click(screen.getByRole('button', { name: /Sofia.*Do you have this mug in white/s }));
+    await screen.findByRole('main', { name: 'Sofia 的客户接待' }); expect(screen.getByRole('button', { name: '附件格式与限制' })).toHaveAttribute('aria-expanded', 'false');
+    expect(document.querySelector('.supplement-scroll + .supplement-toolbar')).not.toBeNull();
+  });
+
 });

@@ -1,0 +1,38 @@
+{
+  "version": "0.3.16",
+  "date": "2026-11-13",
+  "status": "targeted-validation",
+  "layout": "A-compact-three-column",
+  "targeted_validation": {
+    "full_suite_run": false,
+    "typescript": "passed",
+    "backend": {
+      "requirement_changes_and_multi_case": 15,
+      "prompt_actual_requests": 7,
+      "business_supplements": 5,
+      "original_media_chunks_copy_orientation": 6,
+      "product_gallery_and_preview_budget": 10,
+      "product_library_and_supplier_binding": 16,
+      "total_distinct_cases": 59,
+      "status": "passed"
+    },
+    "desktop": {
+      "media_host_original_dialog_message_images_product_pages": 23,
+      "renderer_workbench_file": 91,
+      "total_distinct_cases": 114,
+      "status": "passed",
+      "earlier_failures": "Six stale assertions used removed suggestion banners, old defaults or fixed-case read parameters; updated to current contracts and the file passed."
+    }
+  },
+  "source_window": {"status": "pending"},
+  "candidate": {"status": "pending"},
+  "publication": {"status": "pending", "repository": "juccistar/reception-workbench-releases"},
+  "actual_installer_executed": false,
+  "installed_application_replaced": false,
+  "default_entry_promoted": false,
+  "production_data_migrated": false,
+  "source_pushed": false,
+  "real_ai_calls": 0,
+  "real_customer_sends": 0,
+  "production_data_accessed": false
+}

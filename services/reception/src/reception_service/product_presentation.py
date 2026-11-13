@@ -64,6 +64,9 @@ def project_main_image(repo, product, *, include_preview=False):
             image_state = 'unavailable'
         item = {'status': image_state}
         if asset:
+            if image_state == 'ready' and asset.get('sha256') == image.get('asset_sha256'):
+                item['image_ref'] = {'kind': 'product', 'local_product_id': identifier,
+                                     'sha256': asset['sha256'], 'version': row.get('updated_at', 0)}
             for key in ('width', 'height'):
                 if isinstance(asset.get(key), int):
                     item[key] = asset[key]
@@ -77,7 +80,7 @@ def project_main_image(repo, product, *, include_preview=False):
     result['images'] = projected
     first = next((image for image in projected if image['status'] == 'ready'), None)
     if first:
-        for key in ('width', 'height'):
+        for key in ('width', 'height', 'image_ref'):
             if key in first:
                 result[key] = first[key]
         if include_preview and first.get('data_url'):

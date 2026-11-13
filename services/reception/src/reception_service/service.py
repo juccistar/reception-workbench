@@ -21,6 +21,8 @@ from .integrations.live import LiveIntegration, SNAPSHOT_ERROR_MESSAGES
 from .continuity import ContinuityMixin, text_hash
 from .manual_chat import ManualChatMixin
 from .conversation_assistance import ConversationAssistanceMixin
+from .requirement_changes import RequirementChangesMixin, requirement_revision
+from .cached_media import CachedMediaMixin
 from .business_supplement import supplement_fingerprint
 from . import policy_library
 from .integrations.generation_metadata import applied_policy_summaries, checked_metadata
@@ -56,7 +58,8 @@ FAST = frozenset({'get_snapshot', 'get_conversation', 'get_messages', 'get_messa
                   'list_products', 'get_product', 'get_product_main_image', 'list_suppliers', 'get_supplier', 'save_supplier', 'save_product_offer',
                   'select_supplier_offer', 'bind_requirement_product', 'set_product_default_offer', 'get_procurement_settings',
                   'save_procurement_settings', 'set_procurement_enabled', 'list_procurement_tasks', 'request_procurement',
-                  'reconcile_procurement', 'shutdown'})
+                  'reconcile_procurement', '_image_original_describe', '_image_original_chunk',
+                  '_image_copy_describe', '_image_copy_chunk', '_product_link_for_reference', 'shutdown'})
 DEFAULT_SETTINGS = {'workctl_path': '', 'poll_seconds': 30, 'probe_seconds': 2, 'merge_seconds': 1,
                     'required_fields': ['product', 'quantity', 'specifications', 'destination'],
                     'image_batch_mib': 64, 'image_prepare_seconds': 60, 'image_parallelism': 2,
@@ -86,7 +89,7 @@ def coverage():
             'next_cursor': None, 'message': '尚未读取历史消息'}
 
 
-class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixin, ProcurementMixin, ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
+class ReceptionService(RequirementChangesMixin, CachedMediaMixin, ProductLibraryMixin, RequirementMediaMixin, ExecutionMixin, ProcurementMixin, ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
     def __init__(self, data_root: Path, mode='demo', seller_id='', emit=None):
         if mode not in ('demo', 'live'):
             raise ServiceError('invalid_mode', '运行模式无效')
@@ -515,7 +518,10 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
             context = build_context(self.repo, case, self.settings, self._budget(),
                                     continuation=self._generation_continuation(case))
             context.update(self._product_context_for_case(case))
+            self._with_case_catalog_context(context)
+            from .model_payload import model_json
             from .reception_context import semantic_fingerprint
+            model_json(context)
             context['fingerprint'] = semantic_fingerprint(context)
             return context
 
@@ -616,7 +622,14 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
             message_changes = []
             changed = False
             new_buyer = False
-            edited_ids = set()
+            edited_ids, image_edited_ids = set(), set()
+            def image_source(message):
+                from .photos import has_photo
+                if not has_photo(message):
+                    return None
+                return {'text': message['text'], 'role': message['role'],
+                        'images': [row for row in message.get('attachments', [])
+                                   if isinstance(row, dict) and row.get('kind') == 'image']}
             for raw in messages:
                 if (raw.get('seller_id') != self.seller_id or raw.get('buyer_id') != buyer
                         or raw.get('conversation_id') != cid or not isinstance(raw.get('message_id'), str) or not raw['message_id']
@@ -634,12 +647,24 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
                     message_changes.append(msg)
                     if old is None:
                         new_messages.append(msg)
+                    semantic_edit = False
                     if old is not None:
-                        edited_ids.add(msg['message_id'])
+                        if old.get('text') != msg['text'] or old.get('role') != msg['role']:
+                            edited_ids.add(msg['message_id'])
+                            semantic_edit = True
+                        if image_source(old) != image_source(msg):
+                            image_edited_ids.add(msg['message_id'])
+                            semantic_edit = True
+                        elif image_source(msg) is not None:
+                            from .photos import photo_version
+                            cached = self.repo.get('message_image', key)
+                            if cached and cached.get('status') == 'ready' and cached.get('source_version') == photo_version(old):
+                                cached['source_version'] = photo_version(msg)
+                                self.repo.put('message_image', key, cached)
                     self.repo.put('message', key, msg, history=True)
                     changed = True
-                    if msg['role'] == 'buyer' and (old is not None or conversation['last_timestamp'] is None
-                                                  or stamp is None or stamp >= conversation['last_timestamp']):
+                    if msg['role'] == 'buyer' and (semantic_edit or old is None and (conversation['last_timestamp'] is None
+                                                  or stamp is None or stamp >= conversation['last_timestamp'])):
                         new_buyer = True
             # Every raw version above is validated and retained in history, but
             # reading eligibility follows the final version of each ID in a batch.
@@ -669,15 +694,18 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
                     elif not conversation['human_owned'] and case['state'] not in ('closed', 'waiting_quote'):
                         case['state'] = 'clarifying'
                     self.repo.put('case', case['case_id'], case, history=True)
-                if edited_ids:
+                if edited_ids or image_edited_ids:
                     for affected in self.repo.list('case', conversation_id=cid):
                         requirements = affected.get('requirements') or {}
                         invalid = [key for key, row in requirements.items() if isinstance(row, dict)
-                                   and edited_ids.intersection(row.get('evidence_ids') or [])]
+                                   and (edited_ids | (image_edited_ids if key == 'product_images' else set())).intersection(row.get('evidence_ids') or [])]
                         if invalid:
+                            affected['requirements_revision'] = requirement_revision(affected) + 1
                             for key in invalid:
                                 requirements[key] = {'value': [] if key == 'product_images' else None, 'evidence_ids': []}
                             if 'product_id' in invalid:
+                                from .product_identity import derive_product_link
+                                derive_product_link(affected)
                                 self.repo.db.execute("DELETE FROM entities WHERE kind='requirement_product_binding' AND id=?", (affected['case_id'],))
                             affected.update(revision=affected['revision'] + 1, updated_at=now_ms())
                             self.repo.put('case', affected['case_id'], affected, history=True)
@@ -1024,8 +1052,9 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
             raise ServiceError('contact_stopped', '当前客户已停止联系')
         if not manual and (conversation['human_owned'] or case['state'] == 'human_owned'):
             raise ServiceError('human_owned', '当前客户由人工接管，不能自动发送')
-        if draft['source_case_revision'] != case['revision'] or draft['source_conversation_revision'] != conversation['revision']:
-            raise ServiceError('stale_draft', '需求或新消息已变化，请重新生成或编辑')
+        if (draft['source_case_revision'] != case['revision'] or draft['source_conversation_revision'] != conversation['revision']
+                or not self._related_cases_current(draft)):
+            raise ServiceError('stale_draft', '需求、相关供货条件或新消息已变化，请重新生成或编辑')
         context = with_direct_photo_reads(self.get_context(case['case_id']), draft.get('photo_read_images', []))
         if (draft.get('supplement_fingerprint') != supplement_fingerprint(context)
                 and (draft.get('supplement_fingerprint') is not None or context['supplement'].get('body'))):
@@ -1280,7 +1309,7 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
                 cid = case['conversation_id']
             if cid:
                 self._require('conversation', cid)
-            if self.mode == 'live' and kind == 'sync_messages' and cid:
+            if cid and (kind == 'fill_history' or self.mode == 'live' and kind == 'sync_messages'):
                 existing = next((j for j in self.repo.list('job', conversation_id=cid)
                                  if j['kind'] == kind and j['status'] in ('queued', 'running')), None)
                 if existing:
@@ -2014,7 +2043,7 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
         return {'message': '演示 AI 检查完成' if self.mode == 'demo' else 'AI 检查完成'}
 
     def _save_ai_conversation_state(self, conversation, case, output, context):
-        from .context import validated_requirements, REQUIREMENT_FIELDS
+        # Requirements are applied atomically by the explicit change handler.
         summary = output.get('conversation_summary')
         if isinstance(summary, str) and summary.strip() and len(summary) <= 10000:
             prior = self.repo.get('conversation_summary', conversation['conversation_id']) or {}
@@ -2023,14 +2052,6 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
                 'buyer_id': conversation['buyer_id'], 'body': summary.strip(),
                 'revision': prior.get('revision', 0) + 1, 'updated_at': now_ms(),
                 'source_fingerprint': context.get('fingerprint')}, history=True)
-        if case is not None:
-            requirements = validated_requirements(output.get('requirements'), context)
-            if requirements:
-                defaults = {key: {'value': [] if key == 'product_images' else None, 'evidence_ids': []}
-                            for key in REQUIREMENT_FIELDS}
-                case['requirements'] = {**defaults, **case.get('requirements', {}), **requirements}
-                case['requirements_format'] = 'ai-v1'
-                return True
         return False
 
     def _validate_ai_output(self, output, context):
@@ -2039,8 +2060,8 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
                 or not isinstance(output.get('question_keys', []), list)
                 or not isinstance(output.get('conflicts', []), list)):
             raise ServiceError('invalid_ai_output', 'AI 返回的业务结构无效', stage='validation')
-        from .context import validated_requirements
-        output['requirements'] = validated_requirements(output.get('requirements'), context)
+        from .requirement_changes import validate_changes
+        validate_changes(output, context)
         facts = {}
         validation = validate_reply(output['reply'], output.get('reply_sources', []), context)
         if not validation['ready'] and output.get('action') not in ('stop', 'skip', 'no_reply'):
@@ -2159,7 +2180,7 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
             # A social turn must not invent a new purchase or rewrite a handoff.
             # Keep the AI's natural reply; constrain only procurement side effects.
             facts = {}
-            output = dict(output, facts={}, question_keys=[], new_case=False,
+            output = dict(output, facts={}, question_keys=[], requirement_changes=[], reply_case_refs=[],
                           procurement_key=case['procurement_key'])
         with self._lock, self.repo.transaction():
             current = self._require('case', case['case_id'])
@@ -2182,13 +2203,13 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
                 self.repo.put('ai_result', job_id, {'case_id': case['case_id'], 'reply': output['reply'],
                                                   'context_fingerprint': context['fingerprint'], 'status': 'stale'}, history=True)
                 return {'_job_status': 'stale', 'message': '依据、权限或人工编辑已变化；旧建议已保留但未覆盖当前草稿'}
-            if output.get('new_case'):
-                current = self._new_case(conversation, str(output.get('procurement_key', '')),
-                                         source_message_id=self._latest_buyer(conversation['conversation_id'])['message_id'])
-                conversation['case_id'] = current['case_id']
-                self.repo.put('conversation', conversation['conversation_id'], conversation)
-            source_messages = {message['message_id']: message for message in self._messages(current['conversation_id'])}
-            requirements_changed = self._save_ai_conversation_state(current_conversation, None if social_reply else current, output, context)
+            applied = self._apply_requirement_output(current_conversation, current, output, context, job_id)
+            if len(applied['reply_case_ids']) == 1:
+                current = self._require('case', applied['reply_case_ids'][0])
+            else:
+                current = self._require('case', current['case_id'])
+            current_conversation = self._require('conversation', current['conversation_id'])
+            self._save_ai_conversation_state(current_conversation, None, output, context)
             current['missing'] = missing_fields_for_case(current['facts'], self.settings, current)
             current['procurement_key'] = str(output.get('procurement_key') or current['procurement_key'])
             action = {'human': 'needs_human', 'skip': 'no_reply', 'ask': 'reply', 'wait_quote': 'reply'}.get(output.get('action'), output.get('action', 'reply'))
@@ -2204,8 +2225,6 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
                 current['state'] = 'clarifying'
             current.update(revision=current['revision'] + 1, updated_at=now_ms())
             self.repo.put('case', current['case_id'], current, history=True)
-            if requirements_changed:
-                self._sync_requirement_product(current)
             self._invalidate(current['conversation_id'])
             if not social_reply or current['facts'] or current['state'] == 'waiting_quote':
                 self._queue_outbox(current)
@@ -2218,6 +2237,8 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
             draft = self._draft(current, output['reply'], output.get('reply_sources', []), new_context,
                                 'demo' if self.mode == 'demo' else 'ai')
             draft['question_keys'] = [key for key in output.get('question_keys', []) if key in FIELDS]
+            draft['reply_case_ids'] = applied['reply_case_ids']
+            draft['related_case_versions'] = self._related_case_versions(applied['reply_case_ids'])
             draft['social_reply'] = social_reply
             if new_context.get('continuation'):
                 draft['continuation'] = copy.deepcopy(new_context['continuation'])
@@ -2399,6 +2420,7 @@ class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixi
                 photo_current = (expected_photo == photo_fingerprint(context) if expected_photo is not None
                                  else not context['photo_context']['events'])
                 return (photo_current and current.get('photo_fingerprint') == expected_photo
+                        and self._related_cases_current(current)
                         and current.get('supplement_fingerprint') == draft.get('supplement_fingerprint')
                         and (draft.get('supplement_fingerprint') == supplement_fingerprint(context)
                              or draft.get('supplement_fingerprint') is None and not context['supplement'].get('body'))

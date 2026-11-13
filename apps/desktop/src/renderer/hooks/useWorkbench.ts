@@ -70,6 +70,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const jobsRef = useRef<Job[]>([]);
   const [pending, setPending] = useState<string[]>([]);
   const [generationRequests, setGenerationRequests] = useState<{ job_id: string; conversation_id: string; case_id: string }[]>([]);
+  const [historyRequests, setHistoryRequests] = useState<{ job_id: string; conversation_id: string }[]>([]);
   const [, redraw] = useReducer((value: number) => value + 1, 0);
   // A procurement case is only context. Chat text, ownership and send attempts belong to the customer conversation.
   const editors = useRef(new Map<string, EditorState>());
@@ -81,6 +82,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const saves = useRef(new Map<string, Promise<boolean>>());
   const manualRequests = useRef(new Map<string, Promise<boolean>>());
   const selectionRef = useRef(selection);
+  const pinnedCase = useRef<string | null>(null);
   const detailRef = useRef(detail);
   const connectedRef = useRef(false);
   const snapshotRef = useRef(snapshot);
@@ -137,6 +139,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     }
     jobsRef.current = [...combined.values()].sort((a, b) => b.created_at - a.created_at);
     setGenerationRequests(previous => previous.filter(request => !combined.has(request.job_id)));
+    setHistoryRequests(previous => previous.filter(request => !combined.has(request.job_id)));
     setJobs(jobsRef.current);
     syncSends();
   }, [syncSends]);
@@ -183,6 +186,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
 
   const loadDetail = useCallback(async (conversationId: string, caseId = '', quiet = false, refreshEmpty = false) => {
     if (!bridge || !conversationId || closingRef.current) return false;
+    if (quiet && selectionRef.current.conversationId === conversationId) caseId = pinnedCase.current ?? '';
     const sequence = ++detailSequence.current;
     if (!quiet) { setDetailLoading(true); setDetailError(''); }
     try {
@@ -442,8 +446,12 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
 
   const selectConversation = useCallback(async (conversationId: string, caseId: string | null = '') => {
     caseId ??= '';
+    // A manual choice of an older case pins the view; choosing the current case resumes following.
+    const sameConversation = selectionRef.current.conversationId === conversationId;
+    if (sameConversation && caseId) pinnedCase.current = caseId === detailRef.current?.conversation.case_id ? null : caseId;
+    if (!sameConversation) { pinnedCase.current = null; caseId = ''; }
     // Only an explicit customer selection may retry empty history; passive detail refreshes stay local.
-    if (selectionRef.current.conversationId === conversationId && (!caseId || selectionRef.current.caseId === caseId)) {
+    if (sameConversation && (!caseId || selectionRef.current.caseId === caseId)) {
       setPage('reception'); return loadDetail(conversationId, selectionRef.current.caseId, true, true);
     }
     if (!canLeaveForms() || !(await flush())) return false;
@@ -476,6 +484,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     if (ack?.cancelled) { setNotice('已取消本次操作。'); return null; }
     if (!ack?.job_id) throw new Error('服务未返回任务编号，不能确认任务已创建。');
     setNotice('任务已提交，处理结果会在运行记录中更新。');
+    if (method === 'fill_history' && !jobsRef.current.some(job => job.job_id === ack.job_id)) setHistoryRequests(previous => [...previous, { job_id: ack.job_id, conversation_id: String(params.conversation_id ?? '') }]);
     if ((method === 'generate_draft' || method === 'generate_manual_suggestion') && !jobsRef.current.some(job => job.job_id === ack.job_id)) {
       const caseId = String(params.case_id ?? '');
       const conversationId = method === 'generate_manual_suggestion' ? String(params.conversation_id ?? '') : caseOwners.current.get(caseId);
@@ -657,7 +666,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const sendIssue = chatBlocker(selection.conversationId, editor);
   const generationIssue = generationBlocker(snapshot, detail);
 
-  return { snapshot, connected, closing, loading, error, notice, setError, setNotice, page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
+  return { bridge, snapshot, connected, closing, loading, error, notice, setError, setNotice, page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, historyRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
     aiReady, aiReceptionReady, sendIssue, generationIssue, reconcileOperation,
     unknownOperations: snapshot?.outbox.filter(item => isSendOperation(item) && item.status === 'unknown' && (item.conversation_id === selection.conversationId || caseOwners.current.get(item.case_id) === selection.conversationId)) ?? [],
     canSave: connected && !closing && !!editor?.dirty && !sendUnsettled(editor.send),

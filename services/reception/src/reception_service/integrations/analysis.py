@@ -89,7 +89,8 @@ def knowledge_rows(context):
     if not isinstance(rows, list):
         fail('invalid_context', '知识资料格式无效', 'context')
     case = context['case']
-    product = (case.get('facts', {}).get('product', {}).get('value') or '').casefold()
+    product = ((case.get('requirements') or {}).get('product', {}).get('value')
+               or case.get('facts', {}).get('product', {}).get('value') or '').casefold()
     procurement = str(case.get('procurement_key') or '').casefold()
     allowed = []
     for row in rows:
@@ -159,17 +160,22 @@ def validate_analysis(raw, context):
     sources = raw.get('reply_sources', [])
     sources = sources if isinstance(sources, list) and all(isinstance(s, str) for s in sources) else []
     allowed = {m['message_id'] for m in messages} | set(supplement_sources(context))
-    allowed.update(row.get('policy_id') for row in knowledge_rows(context))
+    from ..requirement_changes import reply_scopes
+    scopes = reply_scopes(raw, context)
+    for scope in scopes:
+        allowed.update(row.get('policy_id') or row.get('source_id') for row in knowledge_rows(dict(scope, case=scope.get('case') or scope)))
     allowed.update(direct_photo_sources(context.get('photo_context') or {}))
     allowed.update(row['image_id'] for row in context.get('supplement_image_reads', [])
                    if row.get('origin') == 'business_supplement')
-    supplier = context.get('supplier_context') or {}
-    if supplier.get('usable') is True and supplier.get('customer_wording') and isinstance(supplier.get('source_id'), str):
-        allowed.add(supplier['source_id'])
-    from ..context import validated_requirements
+    for scope in scopes:
+        supplier = scope.get('supplier_context') or {}
+        if supplier.get('usable') is True and supplier.get('customer_wording') and isinstance(supplier.get('source_id'), str):
+            allowed.add(supplier['source_id'])
+    from ..requirement_changes import validate_changes
+    validate_changes(raw, context)
     return {'action': raw['action'], 'reply': raw['reply'],
             'reply_sources': [source for source in _conversation_sources(raw['reply'], sources, recent) if source in allowed],
-            'requirements': validated_requirements(raw.get('requirements'), context),
+            **{key: raw[key] for key in ('requirement_changes', 'reply_case_refs') if key in raw},
             'conversation_summary': raw.get('conversation_summary') if isinstance(raw.get('conversation_summary'), str) else None,
-            'facts': {}, 'question_keys': [], 'missing': [], 'conflicts': [], 'repairs': [], 'new_case': raw.get('new_case') is True,
+            'facts': {}, 'question_keys': [], 'missing': [], 'conflicts': [], 'repairs': [],
             'procurement_key': context['case'].get('procurement_key') or 'main'}

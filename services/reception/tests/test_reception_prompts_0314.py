@@ -60,7 +60,7 @@ class ReceptionPromptRequestTests(unittest.TestCase):
 
     def answer(self):
         return {'action': 'ask', 'reply': 'Could you confirm the product?', 'reply_sources': ['buyer-1'],
-                'requirements': {}, 'conversation_summary': '客户询问100件报价，并明确不需要样品。', 'new_case': False}
+                'conversation_summary': '客户询问100件报价，并明确不需要样品。'}
 
     def decode(self):
         instruction, body = self.requests[-1].rsplit('\ncontext =\n', 1)
@@ -78,7 +78,7 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         for irrelevant in ('商品主图仅供展示和找货', '另一客户的数量、预算', '未入清单的展示图',
                            '【兼容图片输入】', '【本轮图片附件与聊天记录】'):
             self.assertNotIn(irrelevant, instruction)
-        self.assertEqual(prompts.PROMPT_VERSION, 'reception-0.3.15')
+        self.assertEqual(prompts.PROMPT_VERSION, 'reception-0.3.16')
 
     def test_automatic_live_request_carries_restored_rules_and_current_contract(self):
         context = self.context()
@@ -132,7 +132,10 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         self.assertEqual(payload['task_mode'], 'manual_suggestion')
         self.assertIn('不发送、不接管、不修改输入框', instruction)
         self.assertIn('最近相关买家消息的语言', instruction)
-        self.assertIn('requirements', result)
+        self.assertNotIn('requirements', result)
+        self.assertNotIn('requirement_changes', result)
+        self.assertIn('未变化时省略requirement_changes', instruction)
+        self.assertIn('case_catalog', instruction)
         self.assertNotIn('action', result)
         self.assertEqual(len(self.requests), 1)
 
@@ -153,7 +156,24 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         self.assertIn('否定关系', instruction)
         self.assertIn('不主动新增样品、报价、寄送', instruction)
         self.assertIn('不静默改价', instruction)
+        self.assertNotIn('【需求变更与归属】', instruction)
+        self.assertNotIn('requirement_changes', result)
         self.assertEqual(len(self.requests), 1)
+
+    def test_live_change_contract_accepts_target_alias_and_preserves_unchanged_omission(self):
+        context = self.context()
+        context['case_catalog'] = [{'case_ref': 'c1', 'case_id': 'synthetic-case', 'revision': 1,
+                                    'requirements': {}, 'state': 'clarifying'}]
+        self.answer = lambda: {'action': 'ask', 'reply': 'Noted.', 'reply_sources': ['buyer-1'],
+            'reply_case_refs': ['c1'], 'requirement_changes': [{'action': 'update', 'case_ref': 'c1',
+                'trigger_evidence_ids': ['buyer-1'], 'set_fields': {'quantity': {'value': '100件',
+                    'evidence_ids': ['buyer-1'], 'source_excerpts': {'buyer-1': '100 pieces'}}}}]}
+        result = self.live.generate(context, 'explicit-change')
+        self.assertEqual(result['requirement_changes'][0]['case_ref'], 'c1')
+        self.assertEqual(result['reply_case_refs'], ['c1'])
+        _, payload = self.decode()
+        self.assertEqual(payload['case_catalog'][0]['case_ref'], 'c1')
+        self.assertNotIn('case_id', payload['case_catalog'][0])
 
     def test_requirements_prompt_keeps_grounding_without_retired_output_fields(self):
         context = self.context()

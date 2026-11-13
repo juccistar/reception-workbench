@@ -86,9 +86,14 @@ def shared_context(repo, owner, case, *, task_mode, continuation=None, settings=
            if all(m.get(key) == owner.get(key) for key in ('seller_id', 'buyer_id', 'conversation_id'))]
     messages = sorted((with_photo_notice(m) for m in raw), key=lambda m: (m.get('timestamp_ms') or -1, m['message_id']))
     from .requirement_media import get_product_source_images
-    sources = get_product_source_images(repo, case, raw) if case and task_mode != 'polish' else []
+    from .requirement_changes import case_catalog
+    catalogue = case_catalog(repo, owner) if task_mode != 'polish' else []
+    sources = []
+    for entry in catalogue:
+        candidate = repo.get('case', entry['case_id'])
+        sources.extend(get_product_source_images(repo, candidate, raw))
     source_ids = {m['message_id'] for m in sources}
-    recent, historical = dialogue_window(messages, case or {}, continuation, source_ids)
+    recent, historical = dialogue_window(messages, {'selected': case or {}, 'catalogue': catalogue}, continuation, source_ids)
     policies = select_policy_inputs(repo.list('policy'), case or {'facts': {}, 'procurement_key': ''})
     knowledge = policies['knowledge']
     result = {'prompt_version': PROMPT_VERSION, 'task_mode': task_mode,
@@ -107,6 +112,11 @@ def shared_context(repo, owner, case, *, task_mode, continuation=None, settings=
         for row in result['supplement']['attachments'] if row['media_type'].startswith('image/')]
     latest = next((m for m in reversed(recent) if m['role'] == 'buyer'), None)
     result['reply_target'] = {'source_message_id': latest['message_id'] if latest else None}
+    if task_mode != 'polish':
+        conversation = repo.get('conversation', owner['conversation_id']) or {}
+        result['case_catalog'] = catalogue
+        result['current_case_ref'] = next((row['case_ref'] for row in catalogue if row['case_id'] == conversation.get('case_id')), None)
+        result['selected_case_ref'] = next((row['case_ref'] for row in catalogue if case and row['case_id'] == case.get('case_id')), None)
     return add_image_references(result)
 
 
