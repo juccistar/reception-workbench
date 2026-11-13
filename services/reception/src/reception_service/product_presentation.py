@@ -25,11 +25,31 @@ def project_main_image(repo, product, *, include_preview=False):
         result['primary_verified'] = row['primary_verified']
     if row.get('selection_rule') == 'lowest_image_index':
         result['selection_rule'] = row['selection_rule']
-    asset = repo.get('image_asset', row.get('asset_sha256')) if row.get('asset_sha256') else None
-    if state == 'ready' and asset:
-        result.update(width=asset.get('width'), height=asset.get('height'))
-        if include_preview and isinstance(asset.get('preview_data_url'), str):
-            result['data_url'] = asset['preview_data_url']
+    images = row.get('images')
+    if not isinstance(images, list):
+        images = [{'status': 'ready', 'asset_sha256': row['asset_sha256']} ] if row.get('asset_sha256') else []
+    projected = []
+    for image in images[:5]:
+        asset = repo.get('image_asset', image.get('asset_sha256')) if image.get('asset_sha256') else None
+        image_state = image.get('status', 'unavailable')
+        if image_state == 'ready' and not asset:
+            image_state = 'unavailable'
+        item = {'status': image_state}
+        if asset:
+            for key in ('width', 'height'):
+                if isinstance(asset.get(key), int):
+                    item[key] = asset[key]
+            if include_preview and isinstance(asset.get('preview_data_url'), str):
+                item['data_url'] = asset['preview_data_url']
+        projected.append(item)
+    result['images'] = projected
+    first = next((image for image in projected if image['status'] == 'ready'), None)
+    if first:
+        for key in ('width', 'height'):
+            if key in first:
+                result[key] = first[key]
+        if include_preview and first.get('data_url'):
+            result['data_url'] = first['data_url']
     elif state == 'ready':
         result.update(status='unavailable', message='本地主图缓存暂不可用')
     return result
@@ -68,13 +88,18 @@ class ProductPresentationMixin:
             for product in self._library_rows('library_product'):
                 self._main_image_record(product)
                 record = self.repo.get('product_main_image', product['local_product_id'])
-                if record['status'] != 'not_loaded':
+                legacy_ready = (record.get('status') == 'ready' and record.get('asset_sha256')
+                                and not record.get('image_group_version')
+                                and record.get('seller_id') == product.get('seller_id')
+                                and record.get('product_id') == product.get('product_id'))
+                if record['status'] != 'not_loaded' and not legacy_ready:
                     continue
                 if len(self._product_main_image_active) >= 2 or not self._requirement_media_slots.acquire(blocking=False):
                     break
                 identifier, stamp = product['local_product_id'], now_ms()
                 job_id = new_id('main_image')
-                record.update(status='loading', job_id=job_id, updated_at=stamp, message='正在读取商品主图')
+                record.update(status='loading', job_id=job_id, updated_at=stamp, message='正在读取商品主图',
+                              image_group_version=1)
                 job = {'job_id': job_id, 'kind': 'load_product_main_image', 'conversation_id': None, 'case_id': None,
                        'status': 'queued', 'stage': 'product_metadata', 'message': '正在读取商品主图',
                        'automatic': False, 'created_at': stamp, 'started_at': None, 'completed_at': None}
@@ -108,14 +133,23 @@ class ProductPresentationMixin:
             result = facade.read_product_display(self.seller_id, product['product_id'], job_id, cancel_event=self._stop)
             if not isinstance(result, dict) or result.get('product_id') != product['product_id']:
                 raise ServiceError('product_image_identity_mismatch', '商品主图返回的商品编号不符')
-            source_url = result.get('main_image_url')
-            asset = None
-            if source_url:
-                _image_url(source_url)
-                if self._closing or self._stop.is_set():
-                    raise ServiceError('cancelled', '商品主图读取已停止')
-                # Demo stays local even if a fixture supplies a URL.
-                asset = fetch_image(source_url) if self.mode == 'live' else None
+            rows = result.get('images')
+            if not isinstance(rows, list):
+                rows = [{'url': result['main_image_url'], 'image_index': 0}] if result.get('main_image_url') else []
+            downloaded = []
+            for entry in rows[:5]:
+                source_url = entry.get('url') if isinstance(entry, dict) else None
+                try:
+                    _image_url(source_url)
+                    if self._closing or self._stop.is_set():
+                        raise ServiceError('cancelled', '商品主图读取已停止')
+                    # Demo stays local even if a fixture supplies a URL.
+                    asset = fetch_image(source_url) if self.mode == 'live' else None
+                except Exception:
+                    if self._closing or self._stop.is_set():
+                        raise
+                    asset = None
+                downloaded.append((entry, source_url, asset))
             with self._lock, repo.transaction():
                 record = repo.get('product_main_image', identifier) or {}
                 if self.repo is not repo or record.get('job_id') != job_id:
@@ -125,21 +159,33 @@ class ProductPresentationMixin:
                     record.update(status='unknown', message='主图读取未完成；不会重复查询', updated_at=now_ms())
                     job_state = 'cancelled'
                 else:
-                    if asset:
-                        repo.put('image_asset', asset['sha256'], asset)
+                    images = []
+                    for entry, url, asset in downloaded:
+                        if asset:
+                            repo.put('image_asset', asset['sha256'], asset)
+                        images.append({'status': 'ready' if asset else 'failed',
+                                       'image_index': entry.get('image_index') if isinstance(entry, dict) else None,
+                                       'asset_sha256': asset['sha256'] if asset else None,
+                                       'source_url': url if asset else None})
+                    first = next((image for image in images if image['status'] == 'ready'), None)
+                    # A failed backfill must not discard a previously cached image.
+                    if not first and record.get('asset_sha256') and repo.get('image_asset', record['asset_sha256']):
+                        first = {'status': 'ready', 'asset_sha256': record['asset_sha256'],
+                                 'source_url': record.get('source_url')}
+                        images.insert(0, first)
                     reference_message = ('平台图组首图，仅供展示和找货参考'
                                          if result.get('selection_rule') == 'lowest_image_index' else '')
-                    record.update(status='ready' if asset else 'unavailable',
-                        message=reference_message if asset else '商品查询未提供可用主图',
-                        asset_sha256=asset['sha256'] if asset else None,
-                        source_url=source_url if asset else None,
-                        source=result.get('source'), result_sha256=result.get('result_sha256'),
+                    record.update(status='ready' if first else 'unavailable',
+                        message=reference_message if first else '商品查询未提供可用主图',
+                        asset_sha256=first['asset_sha256'] if first else None,
+                        source_url=first.get('source_url') if first else None,
+                        images=images[:5], source=result.get('source'), result_sha256=result.get('result_sha256'),
                         selection_rule=result.get('selection_rule'), primary_verified=result.get('primary_verified'),
                         product_binding=result.get('product_binding'), updated_at=now_ms())
                     job_state = 'succeeded'
                 repo.put('product_main_image', identifier, record, history=True)
                 job = repo.get('job', job_id)
-                job.update(status=job_state, message='商品主图已缓存' if asset and not cancelled else record['message'], completed_at=now_ms())
+                job.update(status=job_state, message='商品主图已缓存' if record.get('status') == 'ready' and not cancelled else record['message'], completed_at=now_ms())
                 repo.put('job', job_id, job, history=True)
             self._emit('job.updated', job)
             self._changed()
@@ -147,7 +193,8 @@ class ProductPresentationMixin:
             with self._lock, repo.transaction():
                 record = repo.get('product_main_image', identifier) or {}
                 if self.repo is repo and record.get('job_id') == job_id:
-                    record.update(status='unknown' if self._stop.is_set() else 'failed',
+                    record.update(status=('unknown' if self._stop.is_set() else
+                                          'ready' if record.get('asset_sha256') and repo.get('image_asset', record['asset_sha256']) else 'failed'),
                                   message='商品主图读取失败，客户图片及接待不受影响',
                                   error_code=getattr(exc, 'code', 'product_image_read_failed'), updated_at=now_ms())
                     repo.put('product_main_image', identifier, record, history=True)
@@ -171,6 +218,9 @@ class ProductPresentationMixin:
 
     def _source_main_image_url(self, local_product_id):
         record = self.repo.get('product_main_image', local_product_id) or {}
-        if record.get('seller_id') == self.seller_id and record.get('status') == 'ready':
+        product = self.repo.get('library_product', local_product_id) or {}
+        if (record.get('seller_id') == self.seller_id and product.get('seller_id') == self.seller_id
+                and record.get('product_id') == product.get('product_id') and record.get('status') == 'ready'
+                and record.get('asset_sha256') and self.repo.get('image_asset', record['asset_sha256'])):
             return record.get('source_url')
         return None

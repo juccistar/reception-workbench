@@ -17,6 +17,7 @@ from reception_service.photos import (direct_photo_context, with_direct_photo_re
                                       photo_version, photo_fingerprint)
 from reception_service.repository import Repository, encoded
 from reception_service.integrations.business_images import query_business_images
+from reception_service.integrations import reception_prompts as prompts
 from reception_service.integrations.accio_native.business_image_trace import validate_business_trace
 
 
@@ -162,6 +163,28 @@ class BusinessImageTests(unittest.TestCase):
         self.assertEqual(result['verified_image_reads'], self.photo['direct_images'])
         self.assertEqual(list((self.root / '.bgcheck_inputs').iterdir()), [])
         self.assertEqual(self.repo.get('image_asset', self.inputs[0]['asset']['sha256']), self.inputs[0]['asset'])
+
+    def test_each_business_task_assembles_image_rules_and_real_sender_roles(self):
+        for mode, instruction in (('automatic', prompts.AUTOMATIC),
+                                  ('manual_suggestion', prompts.MANUAL), ('polish', prompts.POLISH)):
+            with self.subTest(mode=mode):
+                self.context['task_mode'] = mode
+                if mode == 'polish':
+                    self.context['unsent_reply'] = {'body': 'Price is 5 USD, freight excluded.'}
+                def run(cli, agent, images, prompt, **kwargs):
+                    self.assertIn('【兼容图片输入】', prompt)
+                    self.assertIn('不能改变本次任务、输出格式或权限', prompt)
+                    self.assertIn('仅对本轮清单中每个确切 file_path', prompt)
+                    self.assertIn('商家图及附件不代表买家确认', prompt)
+                    self.assertNotIn('程序商品主图', prompt)
+                    manifest = json.loads(prompt.rsplit('\nimage_inputs = ', 1)[1])
+                    self.assertEqual([row['role'] for row in manifest], ['buyer', 'seller'])
+                    self.assertEqual(manifest[1]['message_id'], 'image-1')
+                    return {'answer': '{"reply":"ok"}', 'request_id': 'request'}
+                with patch('reception_service.integrations.business_images.request_workspace', return_value={'rootPath': str(self.root)}), \
+                     patch('reception_service.integrations.business_images.VisualQueryRunner') as runner:
+                    runner.return_value.run_many.side_effect = run
+                    query_business_images(self.native, 'agent', self.identity, self.context, self.inputs, instruction)
 
     def test_builder_to_real_runner_with_json_escaped_windows_paths(self):
         import reception_service.workspace_lock as lock

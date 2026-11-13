@@ -9,10 +9,11 @@ const host = vi.hoisted(() => ({
   invoke: vi.fn(async () => ({ job_id: 'synthetic-chat-job' })),
   showMessageBox: vi.fn(async () => ({ response: 1 })),
   ipcInvoke: vi.fn(async () => ({ job_id: 'synthetic-chat-job' })),
-  translationSave: vi.fn(), translationGet: vi.fn(),
+  translationSave: vi.fn(), translationGet: vi.fn(), clipboardRead: vi.fn(async (): Promise<any[]> => []),
   exposed: undefined as ReceptionBridge | undefined,
   window: undefined as any,
 }));
+vi.mock('../src/main/supplement-host', async original => ({ ...await original<typeof import('../src/main/supplement-host')>(), windowsClipboardPaths: vi.fn(async () => []) }));
 vi.mock('../src/main/translation-host', () => ({ TranslationHost: class {
   start = vi.fn(async () => {}); stop = vi.fn(); get = host.translationGet; save = host.translationSave;
 } }));
@@ -45,7 +46,7 @@ vi.mock('electron', () => ({
     on = vi.fn(); once = vi.fn(); isDestroyed = () => false; setTitle = vi.fn();
     async loadFile(file: string) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
   },
-  clipboard: { writeText: vi.fn() }, shell: { openPath: vi.fn(async () => '') },
+  clipboard: { writeText: vi.fn(), read: host.clipboardRead }, shell: { openPath: vi.fn(async () => '') },
   dialog: { showMessageBox: host.showMessageBox, showErrorBox: vi.fn() },
   ipcMain: { handle: (name: string, handler: (...args: any[]) => any) => host.handlers.set(name, handler) },
   Menu: { buildFromTemplate: vi.fn(), setApplicationMenu: vi.fn() },
@@ -162,6 +163,24 @@ describe('native chat IPC boundary', () => {
     await expect(host.handlers.get('reception:invoke')!(validEvent(), 'copyAccioLaunchInstructions', {})).rejects.toThrow('不允许');
   });
 
+  it('guards attachment IPC and forwards only bounded byte uploads', async () => {
+    const bridge = host.exposed!; host.ipcInvoke.mockClear();
+    await bridge.uploadSupplementAttachments!('synthetic-customer', [{ name: 'a.txt', content_b64: 'YQ==' }]);
+    expect(host.ipcInvoke).toHaveBeenCalledWith('reception:upload-supplement-attachments', 'synthetic-customer', [{ name: 'a.txt', content_b64: 'YQ==' }]);
+    host.ipcInvoke.mockClear();
+    await expect(bridge.uploadSupplementAttachments!('synthetic-customer', Array(6).fill({ name: 'a', content_b64: 'YQ==' }))).rejects.toThrow();
+    expect(host.ipcInvoke).not.toHaveBeenCalled();
+    await expect(host.handlers.get('reception:upload-supplement-attachments')!({ sender: {}, senderFrame: {} }, 'synthetic-customer', [])).rejects.toThrow();
+    await expect(host.handlers.get('reception:paste-supplement-attachments')!({ sender: {}, senderFrame: {} }, 'synthetic-customer')).rejects.toThrow();
+  });
+
+  it('uploads a synthetic clipboard screenshot only on an explicit paste request', async () => {
+    host.clipboardRead.mockResolvedValueOnce([{ types: ['image/png'], getType: async () => new Blob(['synthetic'], { type: 'image/png' }) }]);
+    host.invoke.mockClear();
+    await host.handlers.get('reception:paste-supplement-attachments')!(validEvent(), 'synthetic-customer');
+    expect(host.invoke).toHaveBeenCalledWith('upload_supplement_attachment', { conversation_id: 'synthetic-customer', name: '剪贴板图片.png', content_b64: 'c3ludGhldGlj' });
+  });
+
   it('keeps the frozen preload bridge narrow and validates versions before IPC', async () => {
     const bridge = host.exposed!; host.ipcInvoke.mockClear();
     expect(Object.isFrozen(bridge)).toBe(true);
@@ -172,6 +191,6 @@ describe('native chat IPC boundary', () => {
     await expect(bridge.invoke('shell' as any, {})).rejects.toThrow('不允许');
     await expect(bridge.invoke('confirm_send', {})).rejects.toThrow('不允许');
     expect(host.ipcInvoke).not.toHaveBeenCalled();
-    expect(Object.keys(bridge).sort()).toEqual(['chooseWorkctl', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate', 'getTranslationSettings', 'saveTranslationSettings', 'checkTranslationProvider', 'clearTranslationCache'].sort());
+    expect(Object.keys(bridge).sort()).toEqual(['chooseWorkctl', 'chooseSupplementAttachment', 'chooseSupplementAttachments', 'uploadSupplementAttachments', 'pasteSupplementAttachments', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate', 'getTranslationSettings', 'saveTranslationSettings', 'checkTranslationProvider', 'clearTranslationCache'].sort());
   });
 });

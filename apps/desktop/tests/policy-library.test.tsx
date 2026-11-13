@@ -1,12 +1,16 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PoliciesPage } from '../src/renderer/components/PolicyLibrary';
+import { validateChatParameters } from '../src/shared/chat-protocol';
 import type { Workbench } from '../src/renderer/hooks/useWorkbench';
 
 const builtin = { template_id: 'T01', template_version: 2, kind: 'product', category: 'product', title: '产品模板', content: '产品：[待填写]', usage: 'customer_reference', is_template: true, product_scope: [], adopted_policy_id: null, enabled: false, available_update: false };
 const old = { policy_id: 'p1', kind: 'policy', title: '旧资料', content: '原有正文', product_scope: [], confirmed: true, public: false, revision: 3, updated_at: 0, valid_until: null };
 function setup(policies: unknown[] = [], catalog: unknown[] = [builtin]) {
-  const invoke = vi.fn(async (method: string, params: Record<string, unknown>) => method === 'list_builtin_policies' ? { items: catalog } : { ...old, ...params, policy_id: 'p1', revision: 4 });
+  const invoke = vi.fn(async (method: string, params: Record<string, unknown>) => {
+    if (method === 'save_policy') validateChatParameters('save_policy', params);
+    return method === 'list_builtin_policies' ? { items: catalog } : { ...old, ...params, policy_id: 'p1', revision: 4 };
+  });
   const model = { connected: true, snapshot: { policies }, invoke, action: async (_key: string, fn: () => Promise<unknown>) => fn(), busy: () => false, setFormDirty: vi.fn(), refreshSnapshot: vi.fn(async () => {}) } as unknown as Workbench;
   render(<PoliciesPage model={model} />);
   return { model, invoke };

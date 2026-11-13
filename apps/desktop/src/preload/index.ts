@@ -2,6 +2,9 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { API_METHODS, type ReceptionBridge, type ServiceEvent } from '../shared/api';
 import { validateChatParameters } from '../shared/chat-protocol';
 const allowed = new Set<string>(API_METHODS);
+function checkConversation(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || !value || value.length > 500) throw new Error('客户会话无效。');
+}
 const bridge: ReceptionBridge = {
   invoke: (method, params = {}) => {
     if (!allowed.has(method) || method === 'confirm_send') return Promise.reject(new Error('不允许此界面操作。'));
@@ -18,6 +21,19 @@ const bridge: ReceptionBridge = {
   confirmSend: confirmation => ipcRenderer.invoke('reception:confirm-send', { draft_id: confirmation.draft_id, revision: confirmation.revision }),
   chooseWorkctl: () => ipcRenderer.invoke('reception:choose-workctl'),
   chooseSupplementAttachment: conversationId => ipcRenderer.invoke('reception:choose-supplement-attachment', conversationId),
+  chooseSupplementAttachments: conversationId => {
+    checkConversation(conversationId);
+    return ipcRenderer.invoke('reception:choose-supplement-attachments', conversationId);
+  },
+  uploadSupplementAttachments: (conversationId, files) => {
+    checkConversation(conversationId);
+    if (!Array.isArray(files) || files.length > 5 || files.some(file => !file || typeof file.name !== 'string' || file.name.length > 255 || typeof file.content_b64 !== 'string' || file.content_b64.length > 8 * 1024 * 1024)) return Promise.reject(new Error('附件参数或大小无效。'));
+    return ipcRenderer.invoke('reception:upload-supplement-attachments', conversationId, files);
+  },
+  pasteSupplementAttachments: conversationId => {
+    checkConversation(conversationId);
+    return ipcRenderer.invoke('reception:paste-supplement-attachments', conversationId);
+  },
   getStorageInfo: () => ipcRenderer.invoke('reception:storage:get'),
   chooseStorageDirectory: purpose => ipcRenderer.invoke('reception:storage:choose', purpose),
   openStorageDirectory: which => ipcRenderer.invoke('reception:storage:open', which),

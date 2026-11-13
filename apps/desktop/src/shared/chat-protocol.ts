@@ -77,11 +77,11 @@ export function validateChatParameters(method: ApiMethod, params: Record<string,
     return;
   }
   if (['list_builtin_policies', 'adopt_builtin_policy', 'save_policy'].includes(method)) {
-    const fail = () => { throw new Error('资料或协助操作参数无效。'); };
+    const fail = () => { throw new Error('资料操作参数无效，请检查资料内容和设置。'); };
     const id = (value: unknown) => typeof value === 'string' && !!value.trim() && value.length <= 256;
     const optionalRevision = params.expected_revision === undefined || typeof params.expected_revision === 'number' && Number.isSafeInteger(params.expected_revision) && params.expected_revision >= 1;
     if (method === 'list_builtin_policies') { if (Object.keys(params).length) fail(); return; }
-    const allowed = method === 'adopt_builtin_policy' ? ['template_id', 'content', 'product_scope', 'enabled', 'confirmed', 'expected_revision', 'update'] : ['policy_id', 'kind', 'title', 'content', 'product_scope', 'confirmed', 'public', 'expected_revision', 'valid_until', 'category', 'enabled', 'usage', 'customer_wording', 'internal_notes'];
+    const allowed = method === 'adopt_builtin_policy' ? ['template_id', 'content', 'product_scope', 'enabled', 'confirmed', 'expected_revision', 'update'] : ['policy_id', 'kind', 'title', 'content', 'product_scope', 'confirmed', 'public', 'expected_revision', 'valid_until', 'category', 'enabled', 'usage', 'customer_wording', 'internal_notes', 'priority'];
     if (Object.keys(params).some(key => !allowed.includes(key)) || !optionalRevision) fail();
     if (method === 'adopt_builtin_policy' ? !id(params.template_id) : !['policy', 'product'].includes(String(params.kind)) || !id(params.title) || typeof params.public !== 'boolean' || typeof params.confirmed !== 'boolean') fail();
     if (params.content !== undefined && (typeof params.content !== 'string' || !params.content.trim() || params.content.length > 50000)) fail();
@@ -91,6 +91,7 @@ export function validateChatParameters(method: ApiMethod, params: Record<string,
     for (const key of ['customer_wording', 'internal_notes']) if (params[key] !== undefined && (typeof params[key] !== 'string' || (params[key] as string).length > 50000)) fail();
     if (params.usage !== undefined && !['human_only', 'internal_guidance', 'customer_reference'].includes(String(params.usage)) || params.category !== undefined && !['product', 'business', 'reception', 'style'].includes(String(params.category))) fail();
     if (params.valid_until !== undefined && params.valid_until !== null && !(typeof params.valid_until === 'number' && Number.isSafeInteger(params.valid_until) && params.valid_until >= 0)) fail();
+    if (params.priority !== undefined && (typeof params.priority !== 'number' || !Number.isSafeInteger(params.priority) || params.priority < 0 || params.priority > 100)) fail();
     return;
   }
   if (method === 'set_case_category' || method === 'create_procurement_case') {

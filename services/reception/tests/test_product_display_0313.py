@@ -32,7 +32,7 @@ class ProductDisplayTests(unittest.TestCase):
         self.native.process.run.side_effect = process
         result = read_product_display(self.native, '123', '456', 'request')
         expected_hash = hashlib.sha256(json.dumps(reply, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
-        self.assertEqual(result, {'product_id': '456', 'main_image_url': None,
+        self.assertEqual(result, {'product_id': '456', 'main_image_url': None, 'images': [],
                                   'source': 'no_image', 'result_sha256': expected_hash,
                                   'product_binding': 'request_parameters', 'primary_verified': False, 'selection_rule': None})
         self.native._identity.assert_called_once_with('123')
@@ -58,6 +58,15 @@ class ProductDisplayTests(unittest.TestCase):
         self.assertEqual(result['product_binding'], 'request_parameters')
         self.assertFalse(result['primary_verified'])
         self.assertEqual(result['selection_rule'], 'lowest_image_index')
+
+    def test_image_group_is_sorted_deduplicated_and_limited(self):
+        images = [{'imageIndex': i, 'originalImageUrl': f'https://sc04.alicdn.com/{i if i != 3 else 1}.jpg'}
+                  for i in reversed(range(8))]
+        self.native.process.run.return_value = {'success': True, 'data': json.dumps({'basicInfo': {'images': images}})}
+        result = read_product_display(self.native, '123', '456', 'request')
+        self.assertEqual([image['image_index'] for image in result['images']], [0, 1, 2, 4, 5])
+        self.assertEqual(len({image['url'] for image in result['images']}), 5)
+        self.native.process.run.assert_called_once()
 
     def test_empty_and_ambiguous_component_handling(self):
         cases = [([], 'no_image'),

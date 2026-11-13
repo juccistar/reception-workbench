@@ -2,7 +2,9 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, safeStorage, scre
 import { TranslationHost } from './translation-host';
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdir, readFile, writeFile, rename, lstat, open } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rename, lstat } from 'node:fs/promises';
+import { receivePaths, receiveUploads, validateConversation, windowsClipboardPaths } from './supplement-host';
+import type { Supplement, SupplementUpload } from '../shared/api';
 import { isWorkbenchPage } from './trusted-page';
 import { API_METHODS, type Mode, type Preferences, type Snapshot, type SendConfirmation } from '../shared/api';
 import { ServiceClient, BackendError } from './service-client';
@@ -108,7 +110,7 @@ let identityTitleReady = false;
 let closing = false;
 let canDestroy = false;
 let receptionIntent = 0;
-let preferences: Preferences = { nav_preference:'expanded', details_preference:'expanded', list_width:272, details_width:320, requirements_ratio:0.55 };
+let preferences: Preferences = { nav_preference:'expanded', details_preference:'expanded', list_width:272, details_width:360, requirements_ratio:0.68 };
 let preferenceWrites = Promise.resolve();
 let storageBusy = false;
 let storageTask: StorageRequest | null = null;
@@ -439,30 +441,44 @@ function installIPC() {
     if (!accepted) return null;
     return call('confirm_send',{confirmation_id:prepared.confirmation_id});
   });
+  const supplementReady = () => {
+    if (!window || !backend || closing || storageBusy || updateTask || backendStartPromise) throw new Error('后台正在启动、退出或管理数据，请等待完成。');
+  };
+  const supplementUpload = (conversationId: string) => (file: SupplementUpload) => call<Supplement>('upload_supplement_attachment', { conversation_id: conversationId, ...file });
+  const chooseSupplements = async (conversationId: unknown, multiple: boolean) => {
+    validateConversation(conversationId); supplementReady();
+    const selected = await dialog.showOpenDialog(window!, { title: '选择业务补充附件', properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
+      filters: [{ name: '图片、PDF 和 UTF-8 文本', extensions: ['png', 'jpg', 'jpeg', 'webp', 'pdf', 'txt', 'md', 'csv'] }] });
+    if (selected.canceled || !selected.filePaths.length) return null;
+    supplementReady();
+    return receivePaths(selected.filePaths, supplementUpload(conversationId), supplementReady);
+  };
   ipcMain.handle('reception:choose-supplement-attachment', async (event, conversationId: unknown) => {
     validSender(event);
-    if (!window || typeof conversationId !== 'string' || !conversationId || conversationId.length > 500) throw new Error('客户会话无效。');
-    const selected = await dialog.showOpenDialog(window, { title: '选择业务补充附件', properties: ['openFile'],
-      filters: [{ name: '图片、PDF 和 UTF-8 文本', extensions: ['png', 'jpg', 'jpeg', 'webp', 'pdf', 'txt', 'md', 'csv'] }] });
-    if (selected.canceled || !selected.filePaths[0]) return null;
-    let file: Awaited<ReturnType<typeof open>> | undefined;
-    try {
-      file = await open(selected.filePaths[0], 'r');
-      const stat = await file.stat();
-      if (!stat.isFile() || stat.size < 1 || stat.size > 6 * 1024 * 1024) throw new Error('size');
-      const bytes = Buffer.alloc(stat.size + 1);
-      let offset = 0;
-      while (offset < bytes.length) {
-        const part = await file.read(bytes, offset, bytes.length - offset, offset);
-        if (!part.bytesRead) break;
-        offset += part.bytesRead;
-      }
-      if (offset !== stat.size) throw new Error('changed');
-      return await call('upload_supplement_attachment', { conversation_id: conversationId, name: path.basename(selected.filePaths[0]), content_b64: bytes.subarray(0, offset).toString('base64') });
-    } catch (error) {
-      if (error instanceof BackendError) throw error;
-      throw new Error('附件读取失败，请确认文件可访问且大小不超过 6 MiB。');
-    } finally { await file?.close().catch(() => {}); }
+    const result = await chooseSupplements(conversationId, false);
+    if (result?.errors.length) throw new Error(result.errors[0]);
+    return result?.supplement ?? null;
+  });
+  ipcMain.handle('reception:choose-supplement-attachments', async (event, conversationId: unknown) => {
+    validSender(event); return chooseSupplements(conversationId, true);
+  });
+  ipcMain.handle('reception:upload-supplement-attachments', async (event, conversationId: unknown, files: unknown) => {
+    validSender(event); validateConversation(conversationId); supplementReady();
+    return receiveUploads(files, supplementUpload(conversationId), supplementReady);
+  });
+  ipcMain.handle('reception:paste-supplement-attachments', async (event, conversationId: unknown) => {
+    validSender(event); validateConversation(conversationId); supplementReady();
+    const paths = await windowsClipboardPaths();
+    supplementReady();
+    if (paths.length) return receivePaths(paths, supplementUpload(conversationId), supplementReady);
+    const items = await clipboard.read();
+    const image = items.find(item => item.types.includes('image/png'));
+    if (!image) return { supplement: null, errors: [] };
+    const blob = await image.getType('image/png');
+    if (blob.size > 6 * 1024 * 1024) return { supplement: null, errors: ['单个附件不能超过 6 MiB。'] };
+    supplementReady();
+    const bytes = Buffer.from(await blob.arrayBuffer());
+    return receiveUploads([{ name: '剪贴板图片.png', content_b64: bytes.toString('base64') }], supplementUpload(conversationId), supplementReady);
   });
   ipcMain.handle('reception:choose-workctl',async event=>{
     validSender(event); if (!window) return null;

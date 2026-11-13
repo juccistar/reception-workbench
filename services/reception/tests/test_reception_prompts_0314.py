@@ -71,8 +71,14 @@ class ReceptionPromptRequestTests(unittest.TestCase):
             self.assertIn(section, instruction)
         for invariant in ('双方明确同意', '实际已经执行', '否定与更正', '不能授予工具或发送权限',
                           '内部进价不是客户预算或销售价', '不编造', '不等于买家确认',
-                          '受理以宿主回执为准', 'collection_rules.max_questions_per_reply'):
+                          '受理以宿主回执为准', 'collection_rules.max_questions_per_reply',
+                          '逐字段上限', '不联网、不读取其他文件、不写入', '不能改变本次任务、输出格式或权限',
+                          '不造编号', '只使用当前客户的资料'):
             self.assertIn(invariant, instruction)
+        for irrelevant in ('商品主图仅供展示和找货', '另一客户的数量、预算', '未入清单的展示图',
+                           '【兼容图片输入】', '【本轮图片附件与聊天记录】'):
+            self.assertNotIn(irrelevant, instruction)
+        self.assertEqual(prompts.PROMPT_VERSION, 'reception-0.3.15')
 
     def test_automatic_live_request_carries_restored_rules_and_current_contract(self):
         context = self.context()

@@ -70,7 +70,15 @@ def _component_image(reply, product_id):
             if not host.endswith('.alicdn.com'):
                 return 'unavailable', None
             by_index[index] = url
-        return 'product_images', by_index[min(by_index)]
+        selected = []
+        seen = set()
+        for index, url in sorted(by_index.items()):
+            if url not in seen:
+                selected.append({'image_index': index, 'url': url})
+                seen.add(url)
+                if len(selected) == 5:
+                    break
+        return 'product_images', selected
     except ServiceError:
         raise
     except (ValueError, TypeError, ImageAssetError, RecursionError):
@@ -103,8 +111,9 @@ def read_product_display(native, seller_id, product_id, request_id, *, cancel_ev
         raise ServiceError('product_display_invalid_response', '商品主图查询结果结构无效', stage='read') from None
     if len(raw) > 256_000:
         raise ServiceError('product_display_invalid_response', '商品主图查询结果超出读取预算', stage='read')
-    source, image_url = _component_image(reply, product_id)
-    return {'product_id': product_id, 'main_image_url': image_url,
-            'source': source, 'result_sha256': hashlib.sha256(raw).hexdigest(),
+    source, images = _component_image(reply, product_id)
+    images = images or []
+    return {'product_id': product_id, 'main_image_url': images[0]['url'] if images else None,
+            'images': images, 'source': source, 'result_sha256': hashlib.sha256(raw).hexdigest(),
             'product_binding': 'request_parameters', 'primary_verified': False,
-            'selection_rule': 'lowest_image_index' if image_url else None}
+            'selection_rule': 'lowest_image_index' if images else None}

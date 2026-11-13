@@ -71,7 +71,7 @@ class FakeBridge implements ReceptionBridge {
     }
     if (method === 'get_translations') return { items: (params.items as { kind: string; source_id: string; field?: string }[]).map(item => ({ ...item, status: 'ready', text: null, error: null })) } as T;
     if (method === 'save_conversation_supplement') { const id = String(params.conversation_id); const result = { conversation_id: id, body: String(params.body), revision: Number(params.expected_revision ?? 0) + 1, updated_at: Date.now() }; this.details[id].supplement = result; return clone(result) as T; }
-    if (method === 'generate_manual_suggestion') { const id = String(params.conversation_id); this.details[id].manual_suggestion = { suggestion_id: 'suggestion', conversation_id: id, case_id: params.case_id as string | null, body: 'New suggested reply', request_id: String(params.client_request_id), context_fingerprint: 'test', status: 'ready', updated_at: Date.now() }; return { job_id: 'manual-job' } as T; }
+    if (method === 'generate_manual_suggestion') { const id = String(params.conversation_id); const jobId = 'manual-job-' + String(params.client_request_id); this.details[id].manual_suggestion = { suggestion_id: 'suggestion-' + String(params.client_request_id), conversation_id: id, case_id: params.case_id as string | null, body: 'New suggested reply', request_id: String(params.client_request_id), context_fingerprint: 'test', status: 'ready', updated_at: Date.now() }; this.snapshot.jobs.push({ job_id: jobId, kind: 'manual_suggestion', conversation_id: id, case_id: params.case_id as string | null, status: 'succeeded', stage: 'completed', message: '合成建议已完成', created_at: Date.now(), started_at: Date.now(), completed_at: Date.now() }); return { job_id: jobId } as T; }
     if (method === 'list_jobs') return clone(this.snapshot.jobs) as T;
     if (method === 'list_outbox') return clone(this.snapshot.outbox) as T;
     if (method === 'begin_manual_edit') return (this.beginHandler ? await this.beginHandler(params) : this.own(String(params.conversation_id))) as T;
@@ -122,7 +122,84 @@ const exposeMessagesInViewport = () => vi.spyOn(HTMLElement.prototype, 'getBound
 const edit = async (body: string) => { fireEvent.change(textarea(), { target: { value: body } }); await waitFor(() => expect(sendButton()).toBeEnabled()); };
 const noLegacySend = (bridge: FakeBridge) => { expect(bridge.confirmSend).not.toHaveBeenCalled(); expect(bridge.calls.some(call => ['prepare_send', 'confirm_send', 'save_draft', 'preview_send', 'check_ai', 'generate_draft'].includes(call.method))).toBe(false); };
 
-beforeEach(() => { Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1500 }); });
+beforeEach(() => { localStorage.clear(); Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1500 }); });
+
+describe('0.3.15 compact workspace', () => {
+  const ready = (bridge: FakeBridge, id = 'pending-0315') => {
+    bridge.details.emma.manual_suggestion = { suggestion_id: id, conversation_id: 'emma', case_id: 'case-emma', body: 'A synthetic reply for review.', request_id: id, context_fingerprint: 'synthetic', status: 'ready', updated_at: 1 };
+  };
+  it('shows pending suggestions directly and removes duplicate composer and metadata rows', async () => {
+    const bridge = new FakeBridge(); ready(bridge); await openApp(bridge);
+    expect(screen.getByRole('region', { name: '待处理回复建议' })).toHaveTextContent('A synthetic reply for review.');
+    expect(screen.queryByRole('button', { name: '查看建议' })).not.toBeInTheDocument();
+    expect(screen.queryByText('回复客户', { exact: true })).not.toBeInTheDocument();
+    expect(document.querySelector('.history-bar, .translation-toggle, .suggestion-banner, .composer-source')).toBeNull();
+    expect(screen.getByRole('checkbox', { name: '自动中文翻译' })).toBeInTheDocument();
+    expect(calls(bridge, 'send_chat')).toHaveLength(0);
+  });
+  it('adopts once without sending and does not reopen the handled suggestion on customer return', async () => {
+    const bridge = new FakeBridge(); ready(bridge); await openApp(bridge);
+    fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
+    expect(textarea()).toHaveValue('A synthetic reply for review.');
+    expect(screen.queryByRole('region', { name: '待处理回复建议' })).not.toBeInTheDocument();
+    await waitFor(() => expect(calls(bridge, 'begin_manual_edit')).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: /Sofia.*Do you have this mug in white/s }));
+    await screen.findByRole('main', { name: 'Sofia 的客户接待' });
+    fireEvent.click(screen.getByRole('button', { name: /Emma.*Could you make a sample/s }));
+    await screen.findByRole('main', { name: 'Emma 的客户接待' });
+    expect(screen.queryByRole('region', { name: '待处理回复建议' })).not.toBeInTheDocument();
+    expect(calls(bridge, 'send_chat')).toHaveLength(0);
+  });
+  it('keeps dismissal across remount and shows a newly generated suggestion', async () => {
+    const bridge = new FakeBridge(); ready(bridge);
+    const view = render(<App bridge={bridge} />); await screen.findByRole('textbox', { name: '回复正文' });
+    const original = (textarea() as HTMLTextAreaElement).value;
+    fireEvent.click(screen.getByRole('button', { name: '弃用' })); view.unmount();
+    await openApp(bridge);
+    expect(screen.queryByRole('region', { name: '待处理回复建议' })).not.toBeInTheDocument();
+    ready(bridge, 'new-pending-0315'); act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
+    await screen.findByRole('region', { name: '待处理回复建议' });
+    expect(textarea()).toHaveValue(original);
+    expect(calls(bridge, 'begin_manual_edit')).toHaveLength(0);
+  });
+  it('shows five local gallery images during legacy completion and supports switching', async () => {
+    const bridge = new FakeBridge(); const current = bridge.details.emma.case!;
+    current.requirements_format = 'ai-v1'; current.requirements = { product_id: { value: '123', evidence_ids: [] } };
+    current.product_main_image = { status: 'loading', local_product_id: 'p', updated_at: 1 }; bridge.details.emma.cases[0] = clone(current);
+    const original = bridge.invoke.bind(bridge);
+    bridge.invoke = vi.fn(async (method, params = {}) => method === 'get_product_main_image' ? { status: 'loading', message: '不展示的后台说明', images: [0,1,2,3,4].map(() => ({status:'ready',data_url:'data:image/png;base64,AAAA'})) } as never : original(method, params));
+    await openApp(bridge);
+    await screen.findByRole('button', { name: '放大查看商品图片 5' });
+    expect(document.querySelectorAll('.product-image-gallery img')).toHaveLength(5);
+    expect(screen.queryByText('不展示的后台说明')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '放大查看商品图片 1' }));
+    fireEvent.click(screen.getByRole('button', { name: '下一张商品图片' }));
+    expect(screen.getByRole('dialog', { name: '商品图片' })).toHaveTextContent('2 / 5');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: '商品图片' })).not.toBeInTheDocument();
+  });
+  it('uploads paste and drop files through the restricted bridge while ordinary text keeps normal paste', async () => {
+    const bridge = new FakeBridge();
+    const upload = vi.fn(async (conversationId: string, files: { name: string; content_b64: string }[]) => {
+      const previous = bridge.details[conversationId].supplement;
+      const supplement = { conversation_id: conversationId, body: previous?.body ?? '', revision: (previous?.revision ?? 0) + 1, updated_at: 1, attachments: [...previous?.attachments ?? [], ...files.map((file, index) => ({id:file.name+index,name:file.name,media_type:'text/plain',size:5,sha256:'hash',status:'ready',origin:'business_supplement' as const}))] };
+      bridge.details[conversationId].supplement = supplement;
+      return { supplement, errors: [] };
+    });
+    const nativePaste = vi.fn(async () => ({ supplement: null, errors: [] }));
+    Object.assign(bridge, { uploadSupplementAttachments: upload, pasteSupplementAttachments: nativePaste });
+    await openApp(bridge); const note = screen.getByRole('textbox', { name: '业务补充内容' });
+    fireEvent.paste(note, { clipboardData: { files: [new File(['hello'], 'pasted.txt', {type:'text/plain'})], getData: () => '' } });
+    await screen.findByText('pasted.txt');
+    expect(upload.mock.calls[0][0]).toBe('emma'); expect(upload.mock.calls[0][1][0]).toMatchObject({name:'pasted.txt',content_b64:'aGVsbG8='});
+    fireEvent.drop(document.querySelector('.supplement-composer')!, { dataTransfer: { files: [new File(['world'], 'dropped.txt', {type:'text/plain'})], types:['Files'] } });
+    await screen.findByText('dropped.txt');
+    fireEvent.paste(note, { clipboardData: { files: [], getData: () => '普通文字' } });
+    expect(upload).toHaveBeenCalledTimes(2); expect(nativePaste).not.toHaveBeenCalled();
+    fireEvent.paste(note, { clipboardData: { files: [], getData: () => '' } });
+    await waitFor(() => expect(nativePaste).toHaveBeenCalledWith('emma'));
+  });
+});
 
 describe('mounted requirement workspace', () => {
   it('shows only the thirteen AI demand fields and hides legacy reminders and metadata', async () => {
@@ -151,13 +228,13 @@ describe('mounted requirement workspace', () => {
     const original = bridge.invoke.bind(bridge);
     bridge.invoke = vi.fn(async (method, params = {}) => method === 'get_product_main_image' ? { status: 'ready', data_url: 'data:image/png;base64,AAAA' } as never : method === 'get_requirement_media' ? { case_id: 'case-emma', revision: 1, cover_id: null, items: [{ media_id: 'customer', status: 'ready', data_url: 'data:image/png;base64,BBBB' }] } as never : original(method, params));
     await openApp(bridge);
-    const main = await screen.findByRole('button', { name: '放大查看商品主图' });
-    expect(screen.getByText('商品主图')).toBeInTheDocument();
+    const main = await screen.findByRole('button', { name: '放大查看商品图片 1' });
+    expect(screen.getByText('商品图片')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '放大查看产品图片' })).toBeInTheDocument();
-    expect(screen.getByText('https://www.alibaba.com/product-detail/123.html')).toBeInTheDocument();
+    expect(screen.queryByText('https://www.alibaba.com/product-detail/123.html')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '复制产品链接' })).toBeInTheDocument();
     expect(bridge.invoke).toHaveBeenCalledWith('get_product_main_image', { local_product_id: 'product-123' });
-    fireEvent.click(main); expect(screen.getByRole('dialog', { name: '商品主图' })).toBeInTheDocument();
+    fireEvent.click(main); expect(screen.getByRole('dialog', { name: '商品图片' })).toBeInTheDocument();
     fireEvent.keyDown(document, { key: 'Escape' }); expect(main).toHaveFocus();
   });
   it('does not fabricate a URL or trust a remote main image for a custom ID', async () => {
@@ -175,7 +252,7 @@ describe('mounted requirement workspace', () => {
     expect(within(panel).queryByRole('button', { name: '复制产品链接' })).not.toBeInTheDocument();
     expect(panel.querySelector('img[src^="https:"]')).toBeNull();
   });
-  it.each([['loading', '正在读取商品主图'], ['not_loaded', '暂无可用商品主图'], ['unavailable', '暂无可用商品主图'], ['failed', '商品主图读取失败'], ['unknown', '商品主图读取结果未知']] as const)('shows product image %s without requesting it in the renderer', async (status, label) => {
+  it.each([['loading', '正在读取商品图片'], ['not_loaded', '暂无商品图片'], ['unavailable', '暂无商品图片'], ['failed', '商品图片读取失败'], ['unknown', '商品图片读取未完成']] as const)('shows product image %s without requesting it in the renderer', async (status, label) => {
     const bridge = new FakeBridge(); const current = bridge.details.emma.case!;
     current.requirements_format = 'ai-v1'; current.requirements = { product_id: { value: '123', evidence_ids: [] } };
     current.product_main_image = { status }; bridge.details.emma.cases[0] = clone(current);
@@ -306,7 +383,7 @@ describe('manual suggestion and supplement', () => {
     act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
     const toggle = screen.getByRole('checkbox', { name: '自动中文翻译' });
     if (!(toggle as HTMLInputElement).checked) fireEvent.click(toggle);
-    fireEvent.click(await screen.findByRole('button', { name: '查看建议' }));
+    await screen.findByRole('region', { name: '待处理回复建议' });
     expect(await screen.findByText('建议中文译文')).toBeInTheDocument();
     expect(textarea()).toHaveValue(original);
     fireEvent.change(textarea(), { target: { value: 'Typed while viewing the suggestion' } });
@@ -326,8 +403,8 @@ describe('manual suggestion and supplement', () => {
     expect(calls(bridge, 'begin_manual_edit')).toHaveLength(0);
     expect((textarea() as HTMLTextAreaElement).value).toBe(initial);
     act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
-    fireEvent.click(await screen.findByRole('button', { name: '查看建议' }));
-    fireEvent.click(screen.getByRole('button', { name: '采用到输入框' }));
+    await screen.findByRole('region', { name: '待处理回复建议' });
+    fireEvent.click(await screen.findByRole('button', { name: '替换到输入框' }));
     expect((textarea() as HTMLTextAreaElement).value).toBe('New suggested reply');
     await waitFor(() => expect(calls(bridge, 'begin_manual_edit')).toHaveLength(1));
   });
@@ -661,7 +738,7 @@ describe('conversation chat and automatic reception', () => {
     fireEvent.click(screen.getByRole('button', { name: '查看建议' }));
     expect(screen.getByText('Separate AI suggestion')).toBeInTheDocument();
     expect(textarea()).toHaveValue(''); expect(calls(bridge, 'begin_manual_edit')).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: '采用到输入框' }));
+    fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
     expect(calls(bridge, 'begin_manual_edit')).toHaveLength(1);
     await waitFor(() => expect(sendButton()).toBeEnabled());
     fireEvent.change(textarea(), { target: { value: 'A carefully edited human answer' } });

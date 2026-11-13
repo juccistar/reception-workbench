@@ -74,7 +74,7 @@ def model_request(instructions, context, suffix=''):
         raise ServiceError('context_too_long', '完整请求超出单次预算，未截断证据', stage='context')
     return request
 
-PAYLOAD_VERSION = 'reception-payload-0.3.14'
+PAYLOAD_VERSION = 'reception-payload-0.3.15'
 
 
 def _pick(row, keys):

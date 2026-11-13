@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import type { ApiMethod, ChatSendParams, ConversationDetail, Draft, Job, JobAck, Outbox, Preferences, ReceptionBridge, ServiceEvent, Snapshot, Supplement, SupplementAttachment } from '../../shared/api';
+import type { ApiMethod, ChatSendParams, ConversationDetail, Draft, Job, JobAck, Outbox, Preferences, ReceptionBridge, ServiceEvent, Snapshot, Supplement, SupplementAttachment, SupplementAttachmentBatch, SupplementUpload } from '../../shared/api';
 
 export type Page = 'home' | 'reception' | 'handoff' | 'customers' | 'policies' | 'settings' | 'activity' | 'products' | 'suppliers' | 'procurement';
 type SendStatus = Job['status'] | 'requesting' | 'retry' | 'accepted' | 'rejected';
@@ -25,7 +25,7 @@ export interface EditorState {
   manualError: string;
   send: ChatSend | null;
 }
-const defaults: Preferences = { nav_preference: 'expanded', details_preference: 'expanded', list_width: 272, details_width: 320 };
+const defaults: Preferences = { nav_preference: 'expanded', details_preference: 'expanded', list_width: 272, details_width: 360, requirements_ratio: 0.68 };
 const isActive = (job: Job) => job.status === 'queued' || job.status === 'running';
 const sendUnsettled = (send: ChatSend | null) => !!send && ['requesting', 'retry', 'queued', 'running', 'unknown'].includes(send.status);
 const isSendJob = (job: Job) => ['send_chat', 'confirm_send', 'automatic_send'].includes(job.kind);
@@ -337,22 +337,47 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     if (!(await operation)) return false;
     return entry.dirty ? saveSupplement(conversationId) : true;
   }, [bridge]);
-  const changeSupplementAttachment = useCallback(async (conversationId: string, attachmentId?: string) => {
+  const updateSupplementAttachments = useCallback(async (conversationId: string, operation: () => Promise<SupplementAttachmentBatch | Supplement | null | undefined>): Promise<boolean> => {
     const entry = supplements.current.get(conversationId);
-    if (!entry || !bridge || entry.attachmentBusy || !(await saveSupplement(conversationId)) || entry.attachmentBusy) return;
+    if (!entry || !bridge || !connectedRef.current || closingRef.current || entry.attachmentBusy || !(await saveSupplement(conversationId)) || entry.attachmentBusy) return false;
     entry.attachmentBusy = true; entry.error = ''; redraw();
     try {
-      const saved = attachmentId
-        ? await bridge.invoke<Supplement>('remove_supplement_attachment', { conversation_id: conversationId, attachment_id: attachmentId })
-        : await bridge.chooseSupplementAttachment?.(conversationId);
+      const result = await operation();
+      const batch = result && 'supplement' in result ? result : { supplement: result, errors: [] };
+      const saved = batch.supplement;
       if (saved) {
         if (saved.conversation_id !== conversationId) throw new Error('附件结果与当前客户不匹配。');
         entry.revision = saved.revision;
         entry.attachments = saved.attachments ?? [];
       }
-    } catch (failure) { entry.error = errorText(failure); }
+      entry.error = batch.errors.join('；');
+      return !!saved || batch.errors.length > 0;
+    } catch (failure) { entry.error = errorText(failure); return true; }
     finally { entry.attachmentBusy = false; if (mounted.current) redraw(); }
   }, [bridge, saveSupplement]);
+  const changeSupplementAttachment = useCallback(async (conversationId: string, attachmentId?: string) => updateSupplementAttachments(conversationId, async () => {
+    if (attachmentId) return bridge!.invoke<Supplement>('remove_supplement_attachment', { conversation_id: conversationId, attachment_id: attachmentId });
+    return bridge!.chooseSupplementAttachments ? bridge!.chooseSupplementAttachments(conversationId) : bridge!.chooseSupplementAttachment?.(conversationId);
+  }), [bridge, updateSupplementAttachments]);
+  const uploadSupplementFiles = useCallback(async (conversationId: string, files: File[]) => updateSupplementAttachments(conversationId, async () => {
+    if (!bridge?.uploadSupplementAttachments) throw new Error('当前程序不支持粘贴或拖入附件，请更新程序。');
+    const existing = supplements.current.get(conversationId)!.attachments;
+    if (!files.length || files.length + existing.length > 5) throw new Error('业务补充最多添加 5 个附件。');
+    if (files.reduce((total, file) => total + file.size, existing.reduce((total, file) => total + file.size, 0)) > 20 * 1024 * 1024) throw new Error('附件合计不能超过 20 MiB。');
+    const uploads: SupplementUpload[] = [];
+    for (const file of files) {
+      if (file.size < 1 || file.size > 6 * 1024 * 1024) throw new Error('单个附件须大于零且不超过 6 MiB。');
+      const content_b64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('附件读取失败，请重新选择。'));
+        reader.onload = () => { const value = String(reader.result); const comma = value.indexOf(','); if (comma < 0) reject(new Error('附件读取失败。')); else resolve(value.slice(comma + 1)); };
+        reader.readAsDataURL(file);
+      });
+      uploads.push({ name: file.name || `粘贴图片-${Date.now()}.png`, content_b64 });
+    }
+    return bridge.uploadSupplementAttachments(conversationId, uploads);
+  }), [bridge, updateSupplementAttachments]);
+  const pasteSupplementAttachments = useCallback(async (conversationId: string) => updateSupplementAttachments(conversationId, async () => bridge?.pasteSupplementAttachments?.(conversationId)), [bridge, updateSupplementAttachments]);
   const editSupplement = useCallback((body: string) => {
     const entry = supplements.current.get(selectionRef.current.conversationId);
     if (!entry || closingRef.current) return;
@@ -519,6 +544,23 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     await runJob('generate_manual_suggestion', params);
   }, [saveSupplement, saveDraft, runJob]);
 
+  const reviewedSuggestions = useRef(new Map<string, string>());
+  const reviewKey = (conversationId: string) => `reception.suggestion.review.${snapshotRef.current?.app.mode ?? 'unknown'}.${snapshotRef.current?.app.seller_id ?? ''}.${conversationId}`;
+  const finishSuggestionReview = useCallback(() => {
+    const current = detailRef.current;
+    const suggestion = current?.manual_suggestion;
+    if (!current || !suggestion) return;
+    const key = `reception.suggestion.review.${snapshotRef.current?.app.mode ?? 'unknown'}.${snapshotRef.current?.app.seller_id ?? ''}.${current.conversation.conversation_id}`;
+    reviewedSuggestions.current.set(key, suggestion.suggestion_id);
+    try { localStorage.setItem(key, suggestion.suggestion_id); } catch { /* keep the current-window review state */ }
+    redraw();
+  }, []);
+  const suggestionKey = reviewKey(selection.conversationId);
+  if (!reviewedSuggestions.current.has(suggestionKey)) {
+    try { reviewedSuggestions.current.set(suggestionKey, localStorage.getItem(suggestionKey) ?? ''); } catch { reviewedSuggestions.current.set(suggestionKey, ''); }
+  }
+  const pendingSuggestion = !!detail?.manual_suggestion && reviewedSuggestions.current.get(suggestionKey) !== detail.manual_suggestion.suggestion_id;
+
   // The optional native preview belongs to the AI suggestion, never to manual chat.
   const preview = useCallback(async () => {
     const draft = detailRef.current?.draft;
@@ -527,8 +569,8 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
 
   const adoptSuggestion = useCallback(() => {
     const suggestion = detailRef.current?.manual_suggestion;
-    if (suggestion) editBody(suggestion.body);
-  }, [editBody]);
+    if (suggestion) { editBody(suggestion.body); finishSuggestionReview(); }
+  }, [editBody, finishSuggestionReview]);
 
   const conversationFence = useCallback((conversationId: string, entry?: EditorState): string => {
     const state = snapshotRef.current;
@@ -608,7 +650,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const sendIssue = chatBlocker(selection.conversationId, editor);
   const generationIssue = generationBlocker(snapshot, detail);
 
-  return { snapshot, connected, closing, loading, error, notice, setError, setNotice, page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, jobs, pending, generationRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, saveDraft, flush, adoptSuggestion, beginManualEdit, scrollPositions,
+  return { snapshot, connected, closing, loading, error, notice, setError, setNotice, page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
     aiReady, aiReceptionReady, sendIssue, generationIssue, reconcileOperation,
     unknownOperations: snapshot?.outbox.filter(item => isSendOperation(item) && item.status === 'unknown' && (item.conversation_id === selection.conversationId || caseOwners.current.get(item.case_id) === selection.conversationId)) ?? [],
     canSave: connected && !closing && !!editor?.dirty && !sendUnsettled(editor.send),

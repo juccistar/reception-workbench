@@ -110,6 +110,87 @@ class ProductMainImageTests(unittest.TestCase):
         self.assertEqual(context['main_image_url'], url)
         self.assertEqual(self.service.repo.list('message_image'), [])
 
+    def test_group_partial_failure_and_legacy_backfill_once(self):
+        self.demand()
+        identifier = self.product()['local_product_id']
+        buffer = io.BytesIO()
+        Image.new('RGB', (20, 10), 'green').save(buffer, format='PNG')
+        asset = decode_image(buffer.getvalue(), 'image/png')
+        urls = [f'https://sc04.alicdn.com/kf/{i}.png' for i in range(3)]
+        with self.service._lock, self.service.repo.transaction():
+            self.service.repo.put('image_asset', asset['sha256'], asset)
+            self.service.repo.put('product_main_image', identifier, {
+                'seller_id': self.service.seller_id, 'local_product_id': identifier,
+                'product_id': '1600000000123', 'status': 'ready', 'asset_sha256': asset['sha256'],
+                'source_url': urls[0]})
+        self.service.mode = 'live'
+        try:
+            result = {'product_id': '1600000000123', 'images': [
+                {'image_index': i, 'url': url} for i, url in enumerate(urls)],
+                'selection_rule': 'lowest_image_index', 'product_binding': 'request_parameters'}
+            with patch.object(self.service.integrations, 'read_product_display', return_value=result) as read, \
+                    patch('reception_service.product_presentation.fetch_image', side_effect=[ValueError('bad'), asset, asset]):
+                record = self.wait_image(identifier)
+                self.assertEqual(record['status'], 'ready')
+                preview = self.service.get_product_main_image(identifier)
+                self.assertEqual([image['status'] for image in preview['images']], ['failed', 'ready', 'ready'])
+                self.assertTrue(preview['data_url'].startswith('data:image/jpeg;base64,'))
+                self.assertEqual(self.service._source_main_image_url(identifier), urls[1])
+                snapshot = self.service.get_conversation('demo-emma')['case']['product_main_image']
+                self.assertNotIn('data_url', str(snapshot))
+                for _ in range(3):
+                    self.service._product_main_image_next_schedule = 0
+                    self.service._schedule_procurement()
+                self.assertEqual(read.call_count, 1)
+        finally:
+            self.service.mode = 'demo'
+
+    def test_old_unfinished_and_failed_records_are_not_backfilled(self):
+        self.demand()
+        identifier = self.product()['local_product_id']
+        for status in ('loading', 'unknown', 'failed'):
+            with self.subTest(status=status):
+                with self.service._lock, self.service.repo.transaction():
+                    self.service.repo.put('product_main_image', identifier, {
+                        'seller_id': self.service.seller_id, 'local_product_id': identifier,
+                        'product_id': '1600000000123', 'status': status, 'asset_sha256': 'old'})
+                self.service._product_main_image_next_schedule = 0
+                with patch.object(self.service.integrations, 'read_product_display') as read:
+                    self.service._schedule_procurement()
+                    self.assertEqual(self.service.repo.get('product_main_image', identifier)['status'], status)
+                    read.assert_not_called()
+
+    def test_legacy_image_remains_visible_during_backfill(self):
+        self.demand()
+        identifier = self.product()['local_product_id']
+        buffer = io.BytesIO()
+        Image.new('RGB', (20, 10), 'green').save(buffer, format='PNG')
+        asset = decode_image(buffer.getvalue(), 'image/png')
+        with self.service._lock, self.service.repo.transaction():
+            self.service.repo.put('image_asset', asset['sha256'], asset)
+            self.service.repo.put('product_main_image', identifier, {
+                'seller_id': self.service.seller_id, 'local_product_id': identifier,
+                'product_id': '1600000000123', 'status': 'ready', 'asset_sha256': asset['sha256']})
+        entered, release = threading.Event(), threading.Event()
+        def lookup(*args, **kwargs):
+            entered.set()
+            release.wait(3)
+            raise ValueError('offline')
+        try:
+            with patch.object(self.service.integrations, 'read_product_display', side_effect=lookup):
+                self.service._product_main_image_next_schedule = 0
+                self.service._schedule_procurement()
+                self.assertTrue(entered.wait(2))
+                preview = self.service.get_product_main_image(identifier)
+                self.assertEqual(preview['status'], 'loading')
+                self.assertTrue(preview['data_url'].startswith('data:image/jpeg;base64,'))
+                release.set()
+                record = self.wait_image(identifier)
+                self.assertEqual(record['status'], 'ready')
+                self.assertEqual(record['image_group_version'], 1)
+        finally:
+            release.set()
+
     def test_wrong_product_image_is_never_downloaded(self):
         self.demand()
         identifier = self.product()['local_product_id']
