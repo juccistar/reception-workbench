@@ -128,6 +128,14 @@ describe('0.3.15 compact workspace', () => {
   const ready = (bridge: FakeBridge, id = 'pending-0315') => {
     bridge.details.emma.manual_suggestion = { suggestion_id: id, conversation_id: 'emma', case_id: 'case-emma', body: 'A synthetic reply for review.', request_id: id, context_fingerprint: 'synthetic', status: 'ready', updated_at: 1 };
   };
+  it('shows full local timestamps above messages without date separators', async () => {
+    const bridge = new FakeBridge();
+    bridge.details.emma.messages[0].timestamp_ms = new Date(2026, 0, 2, 3, 4, 5).getTime();
+    await openApp(bridge);
+    const header = document.querySelector('.message-meta');
+    expect(header).toHaveTextContent('2026-01-02 03:04:05');
+    expect(document.querySelector('.date-separator')).toBeNull();
+  });
   it('shows pending suggestions directly and removes duplicate composer and metadata rows', async () => {
     const bridge = new FakeBridge(); ready(bridge); await openApp(bridge);
     expect(screen.getByRole('region', { name: '待处理回复建议' })).toHaveTextContent('A synthetic reply for review.');
@@ -245,6 +253,21 @@ describe('mounted requirement workspace', () => {
     fireEvent.click(main); expect(screen.getByRole('dialog', { name: '商品图片' })).toBeInTheDocument();
     fireEvent.keyDown(document, { key: 'Escape' }); expect(main).toHaveFocus();
   });
+  it('copies a product field through the host and ignores a late result after changing customer', async () => {
+    const bridge = new FakeBridge(); const current = bridge.details.emma.case!;
+    current.requirements_format = 'ai-v1'; current.requirements = { product_id: { value: '123', evidence_ids: [] }, product_url: { value: 'https://example.com/product', evidence_ids: [] } };
+    bridge.details.emma.cases[0] = clone(current);
+    let finish!: () => void;
+    const copyProductText = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    Object.assign(bridge, { copyProductText });
+    await openApp(bridge);
+    fireEvent.click(screen.getByRole('button', { name: '复制产品ID' }));
+    expect(copyProductText).toHaveBeenCalledWith({ field: 'product_id', case_id: 'case-emma' });
+    fireEvent.click(screen.getByRole('button', { name: /Sofia.*Do you have this mug in white/s }));
+    await screen.findByRole('main', { name: 'Sofia 的客户接待' });
+    await act(async () => finish());
+    expect(screen.queryByText('产品ID已复制')).not.toBeInTheDocument();
+  });
   it('does not fabricate a URL or trust a remote main image for a custom ID', async () => {
     const bridge = new FakeBridge(); const current = bridge.details.emma.case!;
     current.requirements_format = 'ai-v1'; current.requirements = { product: { value: '定制帽', evidence_ids: [] }, product_id: { value: '定制-6262662', evidence_ids: [] }, product_url: { value: null, evidence_ids: [] } };
@@ -260,7 +283,7 @@ describe('mounted requirement workspace', () => {
     expect(within(panel).queryByRole('button', { name: '复制产品链接' })).not.toBeInTheDocument();
     expect(panel.querySelector('img[src^="https:"]')).toBeNull();
   });
-  it.each([['loading', '正在读取商品图片'], ['not_loaded', '暂无商品图片'], ['unavailable', '暂无商品图片'], ['failed', '商品图片读取失败'], ['unknown', '商品图片读取未完成']] as const)('shows product image %s without requesting it in the renderer', async (status, label) => {
+  it.each([['loading', '正在读取商品图片'], ['not_loaded', '尚未读取商品图片'], ['unavailable', '暂无商品图片'], ['failed', '商品图片读取失败'], ['unknown', '商品图片读取未完成']] as const)('shows product image %s without requesting it in the renderer', async (status, label) => {
     const bridge = new FakeBridge(); const current = bridge.details.emma.case!;
     current.requirements_format = 'ai-v1'; current.requirements = { product_id: { value: '123', evidence_ids: [] } };
     current.product_main_image = { status }; bridge.details.emma.cases[0] = clone(current);

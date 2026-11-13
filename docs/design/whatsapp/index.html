@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>WhatsApp 历史自绘稿 · 已停止采用</title>
+  <link rel="stylesheet" href="preview.css">
+  <script src="preview.js" defer></script>
+</head>
+<body>
+  <header class="design-bar">
+    <div class="design-name"><strong>历史自绘稿</strong><span>已停止采用 · 改用原生界面</span></div>
+    <nav class="design-nav" aria-label="设计页面">
+      <button data-view="workbench">01 日常接待</button>
+      <button data-view="binding">02 绑定客户</button>
+      <button data-view="context">03 本轮上下文</button>
+      <button data-view="connection">04 连接账号</button>
+    </nav>
+    <label class="scenario-label">状态<select id="scenario" aria-label="接待状态"><option value="normal">已绑定 · 正常接待</option><option value="unbound">尚未绑定客户</option><option value="unknown">发送结果未知</option><option value="offline">WhatsApp 断开</option></select></label>
+  </header>
+  <main id="app"></main>
+  <div id="overlay"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

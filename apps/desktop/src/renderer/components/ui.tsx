@@ -7,6 +7,13 @@ export const checkLabels: Record<CheckStatus, string> = { not_checked: '尚未�
 export const jobLabels: Record<string, string> = { sync_messages: '同步近期消息', fill_history: '补全客户历史', generate_draft: '生成回复建议', manual_suggestion: '生成回复建议', translation: '中文翻译', check_connection: '检查平台读取', check_ai: '检查 AI', preview_send: '发送预演', confirm_send: '发送回复', send_chat: '发送聊天消息', automatic_send: '自动发送回复', continuity_send: '发送接待跟进', run_outbox: '同步交接记录', check_feishu: '检查飞书', reconcile_operation: '核查原操作', source_product: '查找产品货源', load_product_main_image: '读取商品主图' };
 export const jobStatusLabels: Record<string, string> = { queued: '等待执行', running: '处理中', succeeded: '已完成', deferred: '待补读', failed: '失败', cancelled: '已取消', stale: '依据已变化', unknown: '结果未知', pending: '待处理', accepted: '平台已受理', rejected: '未受理', blocked: '未就绪', demo: '演示', synced: '已同步', superseded: '已由新版本取代' };
 export const time = (value?: number | null) => value ? new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '时间未知';
+export const messageDateTime = (value?: number | null) => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '时间未知';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '时间未知';
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${String(date.getFullYear()).padStart(4, '0')}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
 export const dateTime = (value?: number | null) => value ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '尚无记录';
 export function MessageSyncSummary({ sync }: { sync?: MessageSync }) {
   if (!sync) return null;

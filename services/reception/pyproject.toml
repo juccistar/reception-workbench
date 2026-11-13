@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reception-workbench-service"
-version = "0.3.16"
+version = "0.3.17"
 description = "Independent SQLite reception business service"
 requires-python = ">=3.12"
 dependencies = ["Pillow==11.3.0", "httpx==0.28.1", "pypdf==7.0.1"]

@@ -45,8 +45,6 @@ def _check_product_ids(value, product_id):
 def _component_image(reply, product_id):
     _check_product_ids(reply, product_id)
     data = reply.get('data')
-    if data is None and 'data' in reply:
-        return 'no_image', None
     if not isinstance(data, str):
         return 'unavailable', None
     try:
@@ -60,25 +58,30 @@ def _component_image(reply, product_id):
         if not images:
             return 'no_image', None
         by_index = {}
+        invalid = []
         for row in images:
             if not isinstance(row, dict):
                 return 'unavailable', None
             index, url = row.get('imageIndex'), row.get('originalImageUrl')
-            if type(index) is not int or index < 0 or index in by_index or not isinstance(url, str):
+            if type(index) is not int or index < 0 or index in by_index:
                 return 'unavailable', None
-            host, _ = _image_url(url)
-            if not host.endswith('.alicdn.com'):
-                return 'unavailable', None
-            by_index[index] = url
+            by_index[index] = None
+            try:
+                host, _ = _image_url(url)
+                if not host.endswith('.alicdn.com'):
+                    raise ValueError('invalid image host')
+                by_index[index] = url
+            except (ValueError, TypeError, ImageAssetError):
+                invalid.append(index)
         selected = []
         seen = set()
         for index, url in sorted(by_index.items()):
-            if url not in seen:
+            if url and url not in seen:
                 selected.append({'image_index': index, 'url': url})
                 seen.add(url)
                 if len(selected) == 5:
                     break
-        return 'product_images', selected
+        return ('product_images' if selected else 'invalid_images'), (selected, invalid)
     except ServiceError:
         raise
     except (ValueError, TypeError, ImageAssetError, RecursionError):
@@ -112,8 +115,15 @@ def read_product_display(native, seller_id, product_id, request_id, *, cancel_ev
     if len(raw) > 256_000:
         raise ServiceError('product_display_invalid_response', '商品主图查询结果超出读取预算', stage='read')
     source, images = _component_image(reply, product_id)
+    invalid_indices = []
+    if isinstance(images, tuple):
+        images, invalid_indices = images
     images = images or []
-    return {'product_id': product_id, 'main_image_url': images[0]['url'] if images else None,
-            'images': images, 'source': source, 'result_sha256': hashlib.sha256(raw).hexdigest(),
-            'product_binding': 'request_parameters', 'primary_verified': False,
-            'selection_rule': 'lowest_image_index' if images else None}
+    result = {'product_id': product_id, 'main_image_url': images[0]['url'] if images else None,
+              'images': images, 'source': source, 'result_sha256': hashlib.sha256(raw).hexdigest(),
+              'product_binding': 'request_parameters', 'primary_verified': False,
+              'selection_rule': 'lowest_image_index' if images else None}
+    if invalid_indices:
+        result['invalid_count'] = len(invalid_indices)
+        result['invalid_indices'] = invalid_indices[:5]
+    return result

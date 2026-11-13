@@ -29,6 +29,146 @@ class ProductMainImageTests(unittest.TestCase):
             threading.Event().wait(.01)
         self.fail('Synthetic product image did not finish')
 
+    def test_manual_refresh_clears_old_group_and_coalesces(self):
+        self.demand()
+        identifier = self.product()['local_product_id']
+        buffer = io.BytesIO()
+        Image.new('RGB', (10, 10), 'red').save(buffer, format='PNG')
+        asset = decode_image(buffer.getvalue(), 'image/png')
+        with self.service._lock, self.service.repo.transaction():
+            self.service.repo.put('image_asset', asset['sha256'], asset)
+            self.service.repo.put('product_main_image', identifier, {
+                'seller_id': self.service.seller_id, 'local_product_id': identifier,
+                'product_id': '1600000000123', 'status': 'ready', 'updated_at': 9999999999999,
+                'asset_sha256': asset['sha256'], 'images': [{'status': 'ready', 'asset_sha256': asset['sha256']}]})
+        entered, release = threading.Event(), threading.Event()
+        def lookup(*args, **kwargs):
+            entered.set()
+            release.wait(3)
+            raise ValueError('synthetic failure')
+        try:
+            with patch.object(self.service.integrations, 'read_product_display', side_effect=lookup):
+                first = self.service.call('request_product_images', {'local_product_id': identifier, 'client_request_id': 'one'})
+                self.assertTrue(entered.wait(2))
+                second = self.service.call('request_product_images', {'local_product_id': identifier, 'client_request_id': 'two'})
+                self.assertEqual(first, second)
+                record = self.service.repo.get('product_main_image', identifier)
+                self.assertGreater(record['updated_at'], 9999999999999)
+                self.assertFalse(record.get('asset_sha256'))
+                self.assertEqual(record.get('images'), [])
+                release.set()
+                self.assertEqual(self.wait_image(identifier)['status'], 'failed')
+                self.assertFalse(self.service.repo.get('product_main_image', identifier).get('asset_sha256'))
+        finally:
+            release.set()
+
+    def test_manual_join_of_automatic_backfill_clears_legacy_image(self):
+        self.demand()
+        identifier = self.product()['local_product_id']
+        buffer = io.BytesIO()
+        Image.new('RGB', (10, 10), 'red').save(buffer, format='PNG')
+        asset = decode_image(buffer.getvalue(), 'image/png')
+        with self.service._lock, self.service.repo.transaction():
+            self.service.repo.put('image_asset', asset['sha256'], asset)
+            self.service.repo.put('product_main_image', identifier, {'seller_id': self.service.seller_id,
+                'local_product_id': identifier, 'product_id': '1600000000123', 'status': 'ready',
+                'asset_sha256': asset['sha256'], 'updated_at': 10})
+        entered, release = threading.Event(), threading.Event()
+        def lookup(*args, **kwargs):
+            entered.set()
+            release.wait(3)
+            raise ValueError('offline')
+        try:
+            with patch.object(self.service.integrations, 'read_product_display', side_effect=lookup):
+                self.service._product_main_image_next_schedule = 0
+                self.service._schedule_procurement()
+                self.assertTrue(entered.wait(2))
+                old = self.service.get_product_main_image(identifier)
+                job = self.service.request_product_images('join', local_product_id=identifier)
+                current = self.service.get_product_main_image(identifier)
+                self.assertEqual(job['job_id'], current['job_id'])
+                self.assertGreater(current['updated_at'], old['updated_at'])
+                self.assertFalse(current['images'])
+                release.set()
+                self.assertEqual(self.wait_image(identifier)['status'], 'failed')
+        finally:
+            release.set()
+
+    def test_refresh_cleanup_preserves_shared_asset_and_invalidates_reference(self):
+        self.demand()
+        identifier = self.product()['local_product_id']
+        assets = []
+        for color in ('red', 'blue'):
+            buffer = io.BytesIO()
+            Image.new('RGB', (10, 10), color).save(buffer, format='PNG')
+            assets.append(decode_image(buffer.getvalue(), 'image/png'))
+        with self.service._lock, self.service.repo.transaction():
+            for asset in assets:
+                self.service.repo.put('image_asset', asset['sha256'], asset)
+            self.service.repo.put('message_image', 'synthetic-shared', {'asset_sha256': assets[1]['sha256']})
+            self.service.repo.put('product_main_image', identifier, {'seller_id': self.service.seller_id,
+                'local_product_id': identifier, 'product_id': '1600000000123', 'status': 'ready', 'updated_at': 42,
+                'asset_sha256': assets[0]['sha256'], 'images': [{'status': 'ready', 'asset_sha256': a['sha256']} for a in assets]})
+        ref = self.service.get_product_main_image(identifier)['image_ref']
+        entered, release = threading.Event(), threading.Event()
+        def lookup(*args, **kwargs):
+            entered.set()
+            release.wait(3)
+            return {'product_id': '1600000000123', 'source': 'no_image', 'images': []}
+        try:
+            with patch.object(self.service.integrations, 'read_product_display', side_effect=lookup):
+                self.service.request_product_images('cleanup', local_product_id=identifier)
+                self.assertTrue(entered.wait(2))
+                self.assertIsNone(self.service.repo.get('image_asset', assets[0]['sha256']))
+                self.assertIsNotNone(self.service.repo.get('image_asset', assets[1]['sha256']))
+                from reception_service.errors import ServiceError
+                with self.assertRaises(ServiceError):
+                    self.service._image_original_describe(ref)
+                release.set()
+                self.assertEqual(self.wait_image(identifier)['status'], 'unavailable')
+        finally:
+            release.set()
+
+    def test_manual_failure_types_and_retry_old_loading(self):
+        self.demand()
+        identifier = self.product()['local_product_id']
+        for index, (result, expected, code) in enumerate([
+            ({'product_id': '1600000000123', 'source': 'unavailable', 'images': []}, 'failed', 'product_display_invalid_response'),
+            ({'product_id': '1600000000123', 'source': 'no_image', 'images': []}, 'unavailable', None),
+            ({'product_id': '1600000000123', 'source': 'product_images', 'images': [{'image_index': 0, 'url': 'https://sc04.alicdn.com/a'}]}, 'failed', 'product_image_download_failed')]):
+            with self.subTest(expected=expected, code=code):
+                with self.service._lock, self.service.repo.transaction():
+                    self.service.repo.put('product_main_image', identifier, {'seller_id': self.service.seller_id,
+                        'local_product_id': identifier, 'product_id': '1600000000123', 'status': 'loading', 'job_id': 'old'})
+                with patch.object(self.service.integrations, 'read_product_display', return_value=result):
+                    self.service.request_product_images('type-' + str(index), local_product_id=identifier)
+                    record = self.wait_image(identifier)
+                    self.assertEqual(record['status'], expected)
+                    self.assertEqual(record.get('error_code'), code)
+
+    def test_missing_binding_is_repaired_without_new_procurement_or_case_revision(self):
+        case = self.demand()
+        identifier = self.product()['local_product_id']
+        before = self.service.repo.get('case', case['case_id'])
+        tasks = self.service.repo.list('procurement_task')
+        with self.service._lock, self.service.repo.transaction():
+            self.service.repo.db.execute("DELETE FROM entities WHERE kind='requirement_product_binding' AND id=?", (case['case_id'],))
+        with patch.object(self.service.integrations, 'read_product_display', return_value={
+                'product_id': '1600000000123', 'source': 'no_image', 'images': []}):
+            self.service.request_product_images('repair', case_id=case['case_id'])
+            self.wait_image(identifier)
+        self.assertEqual(self.service.repo.get('requirement_product_binding', case['case_id'])['local_product_id'], identifier)
+        self.assertEqual(self.service.repo.get('case', case['case_id']), before)
+        self.assertEqual(self.service.repo.list('procurement_task'), tasks)
+
+    def test_manual_refresh_rejects_foreign_and_ambiguous_references(self):
+        self.demand()
+        identifier = self.product()['local_product_id']
+        from reception_service.errors import ServiceError
+        for params in ({'local_product_id': 'foreign'}, {'local_product_id': identifier, 'case_id': 'x'}, {}):
+            with self.subTest(params=params), self.assertRaises(ServiceError):
+                self.service.call('request_product_images', {**params, 'client_request_id': 'request'})
+
     def test_custom_id_has_no_platform_link_or_native_image_lookup(self):
         self.assertEqual(product_kind('定制-6262662'), 'custom')
         self.assertIsNone(product_link('定制-6262662'))

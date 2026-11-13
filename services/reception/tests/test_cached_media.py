@@ -108,6 +108,24 @@ class CachedMediaTests(unittest.TestCase):
         with self.assertRaises(ServiceError):
             self.host._image_original_describe(ref)
 
+    def test_product_text_copy_is_owned_bounded_and_derived(self):
+        self.host.repo.rows[('library_product', 'p')] = {'seller_id': 'seller', 'product_id': '123'}
+        self.assertEqual(self.host._copy_text_for_reference({'local_product_id': 'p', 'field': 'product_id'}),
+                         {'field': 'product_id', 'text': '123'})
+        self.assertEqual(self.host._copy_text_for_reference({'local_product_id': 'p', 'field': 'product_url'})['text'],
+                         'https://www.alibaba.com/product-detail/_123.html')
+        self.host.repo.rows[('library_product', 'p')]['product_id'] = '定制-123'
+        self.assertEqual(self.host._copy_text_for_reference({'local_product_id': 'p', 'field': 'product_id'})['text'], '定制-123')
+        with self.assertRaises(ServiceError):
+            self.host._copy_text_for_reference({'local_product_id': 'p', 'field': 'product_url'})
+        self.host.repo.rows[('library_product', 'p')]['seller_id'] = 'other'
+        with self.assertRaises(ServiceError):
+            self.host._copy_text_for_reference({'local_product_id': 'p', 'field': 'product_id'})
+        for ref in ({'local_product_id': 'p', 'field': 'contact'}, {'local_product_id': 'p', 'field': 'product_id', 'text': 'injected'},
+                    {'case_id': 'c', 'local_product_id': 'p', 'field': 'product_id'}, None):
+            with self.subTest(ref=ref), self.assertRaises(ServiceError):
+                self.host._copy_text_for_reference(ref)
+
     def test_reject_wrong_owner_or_corruption(self):
         self.attachment['buyer_id'] = 'other'
         with self.assertRaises(ServiceError):

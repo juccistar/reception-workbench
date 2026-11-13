@@ -15,8 +15,17 @@ class ProductDisplayTests(unittest.TestCase):
         self.native._identity = Mock(return_value=('123', 'identity-hash'))
         self.native.cli = 'workctl.exe'
 
+    def test_invalid_image_url_does_not_discard_valid_sibling(self):
+        self.native.process.run.return_value = {'success': True, 'data': json.dumps({'basicInfo': {'images': [
+            {'imageIndex': 0, 'originalImageUrl': 'https://evil.test/a'},
+            {'imageIndex': 2, 'originalImageUrl': 'https://sc04.alicdn.com/good.jpg'}]}})}
+        result = read_product_display(self.native, '123', '456', 'request')
+        self.assertEqual(result['source'], 'product_images')
+        self.assertEqual(result['images'][0]['image_index'], 2)
+        self.assertEqual(result['invalid_count'], 1)
+
     def test_empty_success_is_no_image_and_uses_exact_command(self):
-        reply = {'success': True, 'data': None, 'meta': {'warning': 'upstream returned success with empty data'}}
+        reply = {'success': True, 'data': json.dumps({'basicInfo': {'images': []}})}
         observed = []
         def process(args, *, timeout):
             self.assertEqual(args[:5], ['workctl.exe', 'icbu', 'product', 'list-information', '--json-file'])
@@ -71,9 +80,9 @@ class ProductDisplayTests(unittest.TestCase):
     def test_empty_and_ambiguous_component_handling(self):
         cases = [([], 'no_image'),
                  ([{'imageIndex': 0, 'originalImageUrl': 'https://sc04.alicdn.com/a'}, {'imageIndex': 0, 'originalImageUrl': 'https://sc04.alicdn.com/b'}], 'unavailable'),
-                 ([{'imageIndex': 0, 'originalImageUrl': 'https://evil.test/a'}], 'unavailable'),
+                 ([{'imageIndex': 0, 'originalImageUrl': 'https://evil.test/a'}], 'invalid_images'),
                  ([{'imageIndex': True, 'originalImageUrl': 'https://sc04.alicdn.com/a'}], 'unavailable'),
-                 ([{'imageIndex': 1, 'url': 'https://sc04.alicdn.com/a'}], 'unavailable')]
+                 ([{'imageIndex': 1, 'url': 'https://sc04.alicdn.com/a'}], 'invalid_images')]
         for images, expected in cases:
             with self.subTest(images=images):
                 self.native.process.run.return_value = {'success': True, 'data': json.dumps({'basicInfo': {'images': images}})}

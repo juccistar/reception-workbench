@@ -55,11 +55,11 @@ FAST = frozenset({'get_snapshot', 'get_conversation', 'get_messages', 'get_messa
                   'get_translation_info', 'get_translation_config', 'save_translation_settings',
                   'configure_translation_credential', 'validate_translation_settings',
                   'check_translation_provider', 'clear_translation_cache', 'set_case_category', 'create_procurement_case',
-                  'list_products', 'get_product', 'get_product_main_image', 'list_suppliers', 'get_supplier', 'save_supplier', 'save_product_offer',
+                  'list_products', 'get_product', 'get_product_main_image', 'request_product_images', 'list_suppliers', 'get_supplier', 'save_supplier', 'save_product_offer',
                   'select_supplier_offer', 'bind_requirement_product', 'set_product_default_offer', 'get_procurement_settings',
                   'save_procurement_settings', 'set_procurement_enabled', 'list_procurement_tasks', 'request_procurement',
                   'reconcile_procurement', '_image_original_describe', '_image_original_chunk',
-                  '_image_copy_describe', '_image_copy_chunk', '_product_link_for_reference', 'shutdown'})
+                  '_image_copy_describe', '_image_copy_chunk', '_product_link_for_reference', '_copy_text_for_reference', 'shutdown'})
 DEFAULT_SETTINGS = {'workctl_path': '', 'poll_seconds': 30, 'probe_seconds': 2, 'merge_seconds': 1,
                     'required_fields': ['product', 'quantity', 'specifications', 'destination'],
                     'image_batch_mib': 64, 'image_prepare_seconds': 60, 'image_parallelism': 2,

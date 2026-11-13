@@ -14,7 +14,7 @@ from PIL import Image, ImageOps
 
 from .errors import ServiceError
 from .image_assets import MAX_BYTES, MAX_DIMENSION, MAX_PIXELS
-from .product_identity import product_link
+from .product_identity import product_kind, product_link
 from .repository import encoded
 
 _CHUNK = 256 * 1024
@@ -178,6 +178,37 @@ class CachedMediaMixin:
             if offset + len(data) == len(item['data']):
                 sessions.pop(token, None)
             return {'offset': offset, 'sha256': sha256, 'data_b64': base64.b64encode(data).decode('ascii')}
+
+    def _copy_text_for_reference(self, reference):
+        def unavailable():
+            raise ServiceError('copy_unavailable', '复制内容不可用或归属已变化，请刷新后重试')
+        if not isinstance(reference, dict) or len(reference) != 2:
+            unavailable()
+        field = reference.get('field')
+        target = set(reference) - {'field'}
+        if field not in ('product_id', 'product_url') or target not in ({'case_id'}, {'local_product_id'}):
+            unavailable()
+        key = next(iter(target))
+        value = reference[key]
+        if not isinstance(value, str) or not value or len(value) > 500 or any(ord(char) < 32 for char in value):
+            unavailable()
+        with self._lock:
+            if not self.account_verified or self._closing:
+                unavailable()
+            if key == 'case_id':
+                case = self._requirement_media_case(value)
+                identifier = ((case.get('requirements') or {}).get('product_id') or {}).get('value')
+            else:
+                product = self.repo.get('library_product', value) or {}
+                if product.get('seller_id') != self.seller_id:
+                    unavailable()
+                identifier = product.get('product_id')
+            if not product_kind(identifier):
+                unavailable()
+            text = product_link(identifier) if field == 'product_url' else identifier
+            if not text:
+                unavailable()
+            return {'field': field, 'text': text}
 
     def _product_link_for_reference(self, reference):
         if not isinstance(reference, dict) or len(reference) != 1 or set(reference) not in ({'case_id'}, {'local_product_id'}):

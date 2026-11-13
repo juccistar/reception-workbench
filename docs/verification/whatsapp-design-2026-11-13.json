@@ -1,0 +1,46 @@
+{
+  "date": "2026-11-13",
+  "status": "prototype-validated",
+  "scope": "Development proposal and interactive UI design only",
+  "current_product_version": "0.3.16",
+  "product_implemented": false,
+  "actual_prototype_window": true,
+  "prototype_runtime": "Isolated Electron with sandboxed renderer",
+  "synthetic_only": true,
+  "real_whatsapp_connections": 0,
+  "real_ai_calls": 0,
+  "real_sends": 0,
+  "production_data_accessed": false,
+  "full_test_suite_run": false,
+  "renderer_errors": [],
+  "external_requests_during_preview": [],
+  "screenshots_visually_reviewed": true,
+  "screenshots": [
+    "docs/design/whatsapp/previews/01-workbench.png",
+    "docs/design/whatsapp/previews/02-binding.png",
+    "docs/design/whatsapp/previews/03-context.png",
+    "docs/design/whatsapp/previews/04-connection.png",
+    "docs/design/whatsapp/previews/05-connected.png",
+    "docs/design/whatsapp/previews/06-unbound.png",
+    "docs/design/whatsapp/previews/07-unknown.png",
+    "docs/design/whatsapp/previews/08-narrow.png"
+  ],
+  "verified_interactions": [
+    "Customer binding requires identity confirmation and leaves automatic reception paused.",
+    "Binding closes the old AI suggestion; context drawer is visible and Escape closes it.",
+    "Simulated login success does not enable automatic reception.",
+    "Unbound customers cannot enable automatic reception; unknown sends block new sends.",
+    "Adopting a suggestion replaces the editor text, closes the suggestion and pauses this customer.",
+    "The 1100x820 layout keeps the editor within the viewport and exposes context through a drawer."
+  ],
+  "earlier_driver_attempts": [
+    {"status": "failed", "stage": "launch", "resolution": "Used an explicit Electron executable and removed inherited runtime and credential environment variables."},
+    {"status": "failed", "stage": "argument-parsing", "resolution": "Read the trailing input/profile arguments instead of fixed positions shifted by Electron debugger flags."}
+  ],
+  "limitations": [
+    "No whatsapp-web.js dependency was installed or run; LocalAuth, browser packaging, WhatsApp IDs and ACK semantics still require controlled integration verification.",
+    "All contacts, telephone numbers, conversations and QR area are synthetic design examples.",
+    "Only Olivia is the complete interactive customer example; other customers and search rows demonstrate layout.",
+    "Protocol, authorization, source version checks and durable sending ledgers are proposed, not implemented."
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "version": "0.3.17",
+  "date": "2026-11-13",
+  "status": "repair-source-validation",
+  "public_latest": "0.3.16",
+  "repair": {
+    "backend": {
+      "product_main_image_file": 16,
+      "product_display_file": 11,
+      "cached_media_file": 7,
+      "total_distinct_cases": 34,
+      "status": "passed"
+    },
+    "desktop": {
+      "clipboard_host_file": 5,
+      "media_host_file": 5,
+      "renderer_and_product_filtered_cases": 15,
+      "product_pages_file_after_recovery_refinement": 11,
+      "filtered_and_product_file_overlap": true,
+      "status": "passed"
+    },
+    "typescript": "passed",
+    "build": "passed",
+    "actual_window": "pending",
+    "full_suite_run": false
+  },
+  "whatsapp": {
+    "status": "not_started",
+    "ui": "original-web-ui-separate-module",
+    "scope": "all-one-to-one-chats",
+    "alibaba_binding": "optional-context-enhancement",
+    "reverse_sync": false
+  },
+  "publication": {
+    "status": "pending",
+    "repository": "juccistar/reception-workbench-releases"
+  },
+  "actual_installer_executed": false,
+  "installed_application_replaced": false,
+  "default_entry_promoted": false,
+  "production_data_migrated": false,
+  "source_pushed": false,
+  "real_ai_calls": 0,
+  "real_customer_sends": 0,
+  "production_data_accessed": false
+}

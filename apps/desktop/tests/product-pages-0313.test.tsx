@@ -2,6 +2,14 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, expect, it, vi } from 'vitest';
 import { ProductsPage, SuppliersPage, ProcurementPage } from '../src/renderer/components/ProductProcurementPages';
 import { ProductMainImage } from '../src/renderer/components/ProductMainImage';
+import { messageDateTime } from '../src/renderer/components/ui';
+
+it('formats complete local message times and rejects missing or invalid values', () => {
+  expect(messageDateTime(new Date(2026, 0, 2, 3, 4, 5).getTime())).toBe('2026-01-02 03:04:05');
+  expect(messageDateTime(null)).toBe('时间未知');
+  expect(messageDateTime(Number.NaN)).toBe('时间未知');
+  expect(messageDateTime(0)).toBe('时间未知');
+});
 
 const product = { local_product_id: 'p1', platform: 'demo', product_id: '123', name: '棉帽', product_url: null, product_images: [], default_offer_id: null, revision: 3, supplier_count: 1 };
 const supplier = { supplier_id: 's1', name: '供应商甲', platform: 'demo', platform_supplier_id: null, product_url: null, contact: '', notes: '', revision: 2 };
@@ -39,6 +47,20 @@ it('selects and clears a current case offer with the projected revision and sets
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('select_supplier_offer', expect.objectContaining({ case_id: 'case1', offer_id: null, expected_case_revision: 8 })));
 });
 
+it('copies the product library ID and link through the host', async () => {
+  const invoke = setup(); const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (method: string, params: unknown = {}) => method === 'get_product' ? { product: { ...product, product_url: 'https://example.com/product' }, offers: [], suppliers: [], tasks: [] } : original(method, params));
+  const copyProductText = vi.fn(async () => {});
+  Object.assign(window.reception!, { copyProductText });
+  render(<ProductsPage initialProductId="p1" />);
+  fireEvent.click(await screen.findByRole('button', { name: '复制产品ID' }));
+  await screen.findByText('产品ID已复制');
+  fireEvent.click(screen.getByRole('button', { name: 'https://example.com/product' }));
+  await screen.findByText('产品链接已复制');
+  expect(copyProductText).toHaveBeenCalledWith({ field: 'product_id', local_product_id: 'p1' });
+  expect(copyProductText).toHaveBeenCalledWith({ field: 'product_url', local_product_id: 'p1' });
+});
+
 it('does not show a late product image after switching products', async () => {
   let resolveOld!: (value: unknown) => void;
   const invoke = vi.fn((method: string, params: Record<string, unknown>) => params.local_product_id === 'old' ? new Promise(resolve => { resolveOld = resolve; }) : Promise.resolve({ status: 'ready', data_url: 'data:image/png;base64,BBBB' }));
@@ -56,6 +78,37 @@ it('rejects a remote URL returned by the local image RPC', async () => {
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('get_product_main_image', { local_product_id: 'p1' }));
   expect(screen.getByText('暂无商品图片')).toBeInTheDocument();
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
+});
+
+it('clears the old gallery and dialog for a case image refresh and shows the current failed result', async () => {
+  const invoke = vi.fn(async (method: string) => method === 'request_product_images' ? { job_id: 'job1' } : { status: 'ready', data_url: 'data:image/png;base64,AAAA' });
+  const view = render(<ProductMainImage caseId="case1" localProductId="p1" metadata={{ status: 'ready', updated_at: 1 }} invoke={invoke as never} />);
+  fireEvent.click(await screen.findByRole('button', { name: '放大查看商品图片 1' }));
+  expect(screen.getByRole('dialog', { name: '商品图片' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '重新采集' }));
+  expect(screen.queryByRole('dialog', { name: '商品图片' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('img', { name: '商品图片 1' })).not.toBeInTheDocument();
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('request_product_images', { case_id: 'case1', client_request_id: expect.any(String) }));
+  invoke.mockImplementation(async () => ({ status: 'failed' }));
+  view.rerender(<ProductMainImage caseId="case1" localProductId="p1" metadata={{ status: 'failed', updated_at: 2, job_id: 'job1' }} invoke={invoke as never} />);
+  expect(await screen.findByText('商品图片读取失败')).toBeInTheDocument();
+  expect(screen.queryByRole('img', { name: '商品图片 1' })).not.toBeInTheDocument();
+});
+
+it('allows explicit recovery of a persisted loading image record', async () => {
+  const invoke = vi.fn(async (method: string) => method === 'request_product_images' ? { job_id: 'recovery' } : { status: 'loading' });
+  render(<ProductMainImage caseId="case1" localProductId="p1" metadata={{ status: 'loading', job_id: 'old-job' }} invoke={invoke as never} />);
+  const retry = screen.getByRole('button', { name: '读取图片' });
+  expect(retry).toBeEnabled();
+  fireEvent.click(retry);
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('request_product_images', { case_id: 'case1', client_request_id: expect.any(String) }));
+});
+
+it('requests an unbound case without a product reference', async () => {
+  const invoke = vi.fn(async () => ({ job_id: 'job1' }));
+  render(<ProductMainImage caseId="case1" invoke={invoke as never} />);
+  fireEvent.click(screen.getByRole('button', { name: '读取图片' }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('request_product_images', { case_id: 'case1', client_request_id: expect.any(String) }));
 });
 
 it('retains the offer form when a real save error occurs', async () => {

@@ -1,0 +1,37 @@
+{
+  "date": "2026-11-13",
+  "status": "permission-denial-confirmed",
+  "scope": "Isolated diagnosis of the browser clipboard permission path used by the current renderer; product repair remains planned",
+  "product_version": "0.3.16",
+  "electron": "45.2.3",
+  "chrome": "156.0.8078.80",
+  "fixture": {
+    "protocol": "file:",
+    "sandbox": true,
+    "context_isolation": true,
+    "node_integration": false,
+    "permission_request_handler": "callback(false), matching main/index.ts",
+    "secure_context": true,
+    "focused": true,
+    "navigator_clipboard_present": true,
+    "write_text_function_present": true
+  },
+  "query_only_clipboard_write_state": "granted",
+  "actual_write_permission_probe": {
+    "api": "navigator.clipboard.write with a text/plain ClipboardItem whose Blob promise never resolves",
+    "permission_requested": "clipboard-sanitized-write",
+    "decision": "denied",
+    "result": "rejected",
+    "error_name": "NotAllowedError",
+    "error_message": "Failed to execute 'write' on 'Clipboard': Write permission denied.",
+    "clipboard_content_provided": false,
+    "system_clipboard_content_read_or_written": false
+  },
+  "conclusion": "The renderer relies on browser clipboard writing while the host rejects its write permission. Permission query results alone do not demonstrate actual write access. Route product text copying through a restricted main-process clipboard entry and verify its completed write separately.",
+  "raw_evidence": "artifacts/verification/clipboard-permission-0317-a/write-permission-report.json",
+  "business_backend_started": false,
+  "production_data_accessed": false,
+  "runtime_business_code_changed": false,
+  "actual_product_copy_button_tested": false,
+  "system_clipboard_roundtrip_tested": false
+}

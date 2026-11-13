@@ -1,5 +1,6 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, safeStorage, screen, shell, type IpcMainInvokeEvent } from 'electron';
 import { productUrl, readOriginal, validateReference } from './media-host';
+import { copyProductText } from './clipboard-host';
 import { TranslationHost } from './translation-host';
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -166,7 +167,7 @@ async function accioLaunchInfo(): Promise<AccioLaunchInfo> {
 }
 async function copyAccioLaunchInstructions(): Promise<AccioLaunchInfo> {
   const info = await accioLaunchInfo();
-  try { clipboard.writeText(info.instructions); }
+  try { await clipboard.writeText(info.instructions); }
   catch { throw new Error('复制失败，请在指令详情中手动选择并复制。'); }
   return info;
 }
@@ -390,6 +391,10 @@ function installIPC() {
     validSender(event); mediaReady();
     const url = await productUrl(call, reference, mediaReady);
     await shell.openExternal(url);
+  });
+  ipcMain.handle('reception:product:copy-text', async (event, reference: unknown) => {
+    validSender(event); mediaReady();
+    await copyProductText(call, reference, mediaReady, text => clipboard.writeText(text));
   });
   ipcMain.handle('reception:translation:get', event => { validSender(event); return translations().get(); });
   ipcMain.handle('reception:translation:save', (event, input: unknown) => {
