@@ -1,13 +1,41 @@
 """Independent product-main-image display/cache; never a reception photo source."""
 from __future__ import annotations
 
+import base64
 import copy
+import io
 import time
+
+from PIL import Image
 
 from .errors import ServiceError
 from .image_assets import fetch_image, _image_url
 from .product_identity import product_kind
 from .repository import new_id, now_ms
+
+
+def _gallery_preview(data_url):
+    """Keep five previews plus the compatibility cover below the JSON-line budget."""
+    if not isinstance(data_url, str):
+        return None
+    if len(data_url) <= 175_000:
+        return data_url
+    try:
+        prefix, encoded_image = data_url.split(',', 1)
+        if prefix not in ('data:image/png;base64', 'data:image/jpeg;base64') or len(encoded_image) > 1_400_000:
+            return None
+        with Image.open(io.BytesIO(base64.b64decode(encoded_image, validate=True))) as source:
+            source.load()
+            image = source.convert('RGB')
+        image.thumbnail((512, 512), Image.Resampling.LANCZOS)
+        for quality in (80, 60, 40):
+            output = io.BytesIO()
+            image.save(output, format='JPEG', quality=quality, optimize=True)
+            if output.tell() <= 128 * 1024:
+                return 'data:image/jpeg;base64,' + base64.b64encode(output.getvalue()).decode('ascii')
+    except Exception:
+        return None
+    return None
 
 
 def project_main_image(repo, product, *, include_preview=False):
@@ -39,8 +67,12 @@ def project_main_image(repo, product, *, include_preview=False):
             for key in ('width', 'height'):
                 if isinstance(asset.get(key), int):
                     item[key] = asset[key]
-            if include_preview and isinstance(asset.get('preview_data_url'), str):
-                item['data_url'] = asset['preview_data_url']
+            if include_preview:
+                preview = _gallery_preview(asset.get('preview_data_url'))
+                if preview:
+                    item['data_url'] = preview
+                elif image_state == 'ready':
+                    item['status'] = 'unavailable'
         projected.append(item)
     result['images'] = projected
     first = next((image for image in projected if image['status'] == 'ready'), None)

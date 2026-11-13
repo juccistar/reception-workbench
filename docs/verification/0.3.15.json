@@ -1,0 +1,65 @@
+{
+  "version": "0.3.15",
+  "date": "2026-11-13",
+  "status": "candidate_building",
+  "layout": "A-compact-three-column",
+  "user_additions": [
+    "Remove the duplicate date and Chinese-translation information row.",
+    "Show generated and polished replies directly above the composer until adopted or discarded; no permanent suggestion banner."
+  ],
+  "source_window": {
+    "report": "artifacts/verification/workbench-0315-source-c/report.json",
+    "status": "passed",
+    "screenshots": 7,
+    "screenshots_visually_reviewed": true,
+    "business_ipc_mocked": false,
+    "native_picker_and_clipboard_sources_mocked": true,
+    "production_clipboard_accessed": false,
+    "production_data_accessed": false,
+    "real_ai_calls": 0,
+    "real_customer_sends": 0,
+    "earlier_attempts": [
+      { "report": "artifacts/verification/workbench-0315-source-a/report.json", "status": "failed", "reason": "Window driver used an exact category label that included select-option text." },
+      { "report": "artifacts/verification/workbench-0315-source-b/report.json", "status": "failed", "reason": "Window driver dynamic import was unsupported in the Electron evaluation context." }
+    ]
+  },
+  "targeted_validation": {
+    "full_suite_run": false,
+    "typescript": "passed",
+    "prompt_generated_module": "matched reception-0.3.15",
+    "backend": {
+      "product_metadata": 10,
+      "product_cache_including_large_previews": 10,
+      "prompt_text_and_image_subset": 8,
+      "supplement_attachments": 9,
+      "status": "passed"
+    },
+    "desktop": {
+      "status": "passed",
+      "scope": [
+        "Policy form and bridge priority contract",
+        "Restricted attachment host and preload boundaries",
+        "Focused mounted renderer demand, supplement and suggestion interactions",
+        "Unknown-send and frozen-body protections",
+        "Product-page image ownership and delayed responses",
+        "Mixed valid/invalid attachment partial success"
+      ]
+    }
+  },
+  "candidate": {
+    "output": "relase/release-0.3.15-b",
+    "superseded_local_build": "relase/release-0.3.15-a",
+    "superseded_reason": "Add a separate display-preview budget for five images plus the compatibility cover; preserve original image assets and sourcing references."
+  },
+  "publication": null,
+  "actual_installer_executed": false,
+  "installed_application_replaced": false,
+  "default_entry_promoted": false,
+  "production_data_migrated": false,
+  "source_pushed": false,
+  "limitations": [
+    "Synthetic window, AI and media fixtures do not verify live model semantics, platform image access, image sourcing or supplier inquiries.",
+    "Windows clipboard input sources were substituted; no production clipboard was read or changed.",
+    "Directed supplier inquiries and quote collection remain unavailable."
+  ]
+}

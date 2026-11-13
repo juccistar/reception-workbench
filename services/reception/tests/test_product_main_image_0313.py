@@ -110,6 +110,27 @@ class ProductMainImageTests(unittest.TestCase):
         self.assertEqual(context['main_image_url'], url)
         self.assertEqual(self.service.repo.list('message_image'), [])
 
+    def test_five_large_previews_fit_transport_without_changing_original_assets(self):
+        import random
+        self.demand()
+        identifier = self.product()['local_product_id']
+        image = Image.frombytes('RGB', (1000, 1000), random.Random(315).randbytes(3_000_000))
+        output = io.BytesIO()
+        image.save(output, format='PNG')
+        asset = decode_image(output.getvalue(), 'image/png')
+        self.assertGreater(len(asset['preview_data_url']), 175_000)
+        with self.service._lock, self.service.repo.transaction():
+            self.service.repo.put('image_asset', asset['sha256'], asset)
+            self.service.repo.put('product_main_image', identifier, {
+                'seller_id': self.service.seller_id, 'local_product_id': identifier,
+                'product_id': '1600000000123', 'status': 'ready', 'image_group_version': 1,
+                'images': [{'status': 'ready', 'asset_sha256': asset['sha256']} for _ in range(5)]})
+        preview = self.service.get_product_main_image(identifier)
+        self.assertEqual(len(preview['images']), 5)
+        self.assertLess(len(json.dumps(preview).encode('utf-8')), 1_200_000)
+        self.assertTrue(all(len(row['data_url']) <= 175_000 for row in preview['images']))
+        self.assertEqual(self.service.repo.get('image_asset', asset['sha256']), asset)
+
     def test_group_partial_failure_and_legacy_backfill_once(self):
         self.demand()
         identifier = self.product()['local_product_id']
