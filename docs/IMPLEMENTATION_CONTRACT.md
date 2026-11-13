@@ -1,6 +1,6 @@
 # 工作台实施契约
 
-本文维护0.3.15源码的进程、接口和业务约束；紧凑布局、五图及附件输入见[发布说明](0.3.15发布说明.md)。当前候选验收中，上一公开版验证见[记录](verification/0.3.14.json)。0.3.13的需求、摘要、产品及采购契约继续沿用，见[基础开发说明](0.3.13开发说明.md)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
+本文维护0.3.15源码的进程、接口和业务约束；紧凑布局、五图及附件输入见[发布说明](0.3.15发布说明.md)。本版已公开发布，验证范围见[记录](verification/0.3.15.json)。0.3.13的需求、摘要、产品及采购契约继续沿用，见[基础开发说明](0.3.13开发说明.md)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
 
 ## 1. 进程与协议
 
@@ -43,7 +43,7 @@ Case.requirements_format为ai-v1，requirements只允许下列13键：
 
 商品链接不再由AI填写。product_identity.product_link仅对数字平台ID生成https://www.alibaba.com/product-detail/_<ID>.html；定制-数字是本地编号，URL为null，不作平台商品查询。定制ID须有真实产品需求依据、同事项稳定复用，碰撞时原子分配不同本地编号，不能误合并客户。AI或找货结果不能替换派生链接。其他需求仍不由程序扫描历史链接或假定cardType/fields/skus/imageUrl代填，不另存平台标题。
 
-新增Case/Product.product_main_image独立展示元数据：local_product_id、status、updated_at、message、width/height（可选），并标display_only，可保留primary_verified、selection_rule。get_product_main_image(local_product_id)仅本地返回安全data_url，列表/多事项投影不携带大图或原始source_url。后台调用icbu.product.list-information，JSON参数为productId（整数）、queryType=trunk、componentList=["images"]。仅解析已观察到的data（JSON字符串）→basicInfo.images[]，按imageIndex排序、对originalImageUrl去重并取最多五张，分项下载及安全缓存，部分失败不影响其余图片。images数组按原顺序投影status及可选尺寸，本地图片RPC可带各项data_url；顶层data_url兼容第一张有效缓存图，快照不含base64。旧单图记录持久标记image_group_version并安排一次补齐，loading/unknown及失败不反复查询。响应不含商品ID，因此按已核身份及确切请求参数绑定，不声称响应回验；若显式返回异ID则拒绝。没有主图标志，primary_verified=false、selection_rule=lowest_image_index，界面不再常驻显示来源解释，内部仍记录确切请求和排序证据；不称SKU图。安全缓存放product_main_image及image_asset，不创建message_image关联，不替代或合并原客户product_images。
+新增Case/Product.product_main_image独立展示元数据：local_product_id、status、updated_at、message、width/height（可选），并标display_only，可保留primary_verified、selection_rule。get_product_main_image(local_product_id)仅本地返回安全data_url，列表/多事项投影不携带大图或原始source_url。后台调用icbu.product.list-information，JSON参数为productId（整数）、queryType=trunk、componentList=["images"]。仅解析已观察到的data（JSON字符串）→basicInfo.images[]，按imageIndex排序、对originalImageUrl去重并取最多五张，分项下载及安全缓存，部分失败不影响其余图片。images数组按原顺序投影status及可选尺寸，本地图片RPC可带各项data_url；顶层data_url兼容第一张有效缓存图，快照不含base64。独立展示预览将较大缓存预览转为不超过128 KiB的512像素缩略图，五图及兼容封面响应保持在预算内，原始资产和找货引用不改。旧单图记录持久标记image_group_version并安排一次补齐，loading/unknown及失败不反复查询。响应不含商品ID，因此按已核身份及确切请求参数绑定，不声称响应回验；若显式返回异ID则拒绝。没有主图标志，primary_verified=false、selection_rule=lowest_image_index，界面不再常驻显示来源解释，内部仍记录确切请求和排序证据；不称SKU图。安全缓存放product_main_image及image_asset，不创建message_image关联，不替代或合并原客户product_images。
 
 链接和主图不进入接待模型指定字段、photo_context/image_manifest或语义指纹；补图不增事项业务版本、不使旧回复过期。它们可以进入采购专属上下文，图搜参数只接受冻结的确切公共AliCDN主图URL。原消息或冻结润色正文中的链接原样保留。来源正文修改仍使实际需求失效，并解除旧供货关联；产品和原执行证据保全。
 

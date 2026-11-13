@@ -1,7 +1,7 @@
 {
   "version": "0.3.15",
   "date": "2026-11-13",
-  "status": "candidate_building",
+  "status": "published",
   "layout": "A-compact-three-column",
   "user_additions": [
     "Remove the duplicate date and Chinese-translation information row.",
@@ -19,8 +19,16 @@
     "real_ai_calls": 0,
     "real_customer_sends": 0,
     "earlier_attempts": [
-      { "report": "artifacts/verification/workbench-0315-source-a/report.json", "status": "failed", "reason": "Window driver used an exact category label that included select-option text." },
-      { "report": "artifacts/verification/workbench-0315-source-b/report.json", "status": "failed", "reason": "Window driver dynamic import was unsupported in the Electron evaluation context." }
+      {
+        "report": "artifacts/verification/workbench-0315-source-a/report.json",
+        "status": "failed",
+        "reason": "Window driver used an exact category label that included select-option text."
+      },
+      {
+        "report": "artifacts/verification/workbench-0315-source-b/report.json",
+        "status": "failed",
+        "reason": "Window driver dynamic import was unsupported in the Electron evaluation context."
+      }
     ]
   },
   "targeted_validation": {
@@ -32,7 +40,8 @@
       "product_cache_including_large_previews": 10,
       "prompt_text_and_image_subset": 8,
       "supplement_attachments": 9,
-      "status": "passed"
+      "status": "passed",
+      "total_distinct_cases": 37
     },
     "desktop": {
       "status": "passed",
@@ -49,9 +58,63 @@
   "candidate": {
     "output": "relase/release-0.3.15-b",
     "superseded_local_build": "relase/release-0.3.15-a",
-    "superseded_reason": "Add a separate display-preview budget for five images plus the compatibility cover; preserve original image assets and sourcing references."
+    "superseded_reason": "Add a separate display-preview budget for five images plus the compatibility cover; preserve original image assets and sourcing references.",
+    "status": "passed",
+    "python_inputs": 82,
+    "frozen_backend_files": 75,
+    "portable_files": 164,
+    "zip_entries": 165,
+    "asar_sha256": "5b51ebf56c9e4e4d3b36a6d736407b0c650fa40a695f2a94e2ecb4fc071a496d",
+    "source_manifest_sha256": "4b4f7ba461fca6594775df74ae53f434ec6816b210fd4f203cab3510dc03ef14",
+    "staging": "artifacts/build/package-input-1794551680344"
   },
-  "publication": null,
+  "publication": {
+    "repository": "juccistar/reception-workbench-releases",
+    "release_id": 443901471,
+    "url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.15",
+    "published_at": "2026-11-13T06:44:50Z",
+    "draft": false,
+    "prerelease": false,
+    "latest": true,
+    "anonymous_complete_download": "passed",
+    "release_signature": "ed25519",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "windows_authenticode": "NotSigned",
+    "assets": [
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.15.exe",
+        "bytes": 137003541,
+        "sha256": "c1406741d63c55c0c07981f69be92b24294108043cfebd0ded30782b9cdd62df",
+        "server_digest": "sha256:c1406741d63c55c0c07981f69be92b24294108043cfebd0ded30782b9cdd62df",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.15/ReceptionWorkbench-Setup-0.3.15.exe",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.15.zip",
+        "bytes": 178791117,
+        "sha256": "921790969ad1b13c6f75da617db950e2b10efa620692b1db82389fa876986f6d",
+        "server_digest": "sha256:921790969ad1b13c6f75da617db950e2b10efa620692b1db82389fa876986f6d",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.15/ReceptionWorkbench-0.3.15.zip",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.15.exe.blockmap",
+        "bytes": 143187,
+        "sha256": "1dd7c4ae4adb3f3943370a966f8ceee43f8a99e626a0404ea930006ed90bb2d1",
+        "server_digest": "sha256:1dd7c4ae4adb3f3943370a966f8ceee43f8a99e626a0404ea930006ed90bb2d1",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.15/ReceptionWorkbench-Setup-0.3.15.exe.blockmap",
+        "complete": true
+      },
+      {
+        "name": "latest.yml",
+        "bytes": 726,
+        "sha256": "c70fce0a196a58ff94f2a2c29bd558c0b821ec54e751ddafc23a741474104da0",
+        "server_digest": "sha256:c70fce0a196a58ff94f2a2c29bd558c0b821ec54e751ddafc23a741474104da0",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.15/latest.yml",
+        "complete": true
+      }
+    ]
+  },
   "actual_installer_executed": false,
   "installed_application_replaced": false,
   "default_entry_promoted": false,
@@ -61,5 +124,32 @@
     "Synthetic window, AI and media fixtures do not verify live model semantics, platform image access, image sourcing or supplier inquiries.",
     "Windows clipboard input sources were substituted; no production clipboard was read or changed.",
     "Directed supplier inquiries and quote collection remain unavailable."
-  ]
+  ],
+  "build_commit": "33da0a1",
+  "development_commits": [
+    "3d4560a",
+    "af0b813",
+    "33da0a1"
+  ],
+  "final_executable": {
+    "path": "relase/release-0.3.15-b/installer-build/win-unpacked/ReceptionWorkbench.exe",
+    "workbench_report": "artifacts/verification/workbench-0315-package-b/report.json",
+    "base_report": "artifacts/verification/demo-package-0315-base/result.json",
+    "status": "passed",
+    "screenshots": 10,
+    "screenshots_visually_reviewed": true,
+    "business_ipc_mocked": false,
+    "native_picker_and_clipboard_sources_mocked": true,
+    "production_clipboard_accessed": false,
+    "real_ai_calls": 0,
+    "real_customer_sends": 0,
+    "completed": [
+      "layout-a-no-duplicate-row-five-local-images-and-zoom",
+      "multi-select-drop-browser-paste-native-file-and-image-fixtures-capacity-and-concurrent-note",
+      "pending-suggestion-survives-reopen-dismissal-persists-replace-does-not-send-polish-keeps-original",
+      "customer-isolation-attachment-preview-policy-reopen-and-narrow-drawer"
+    ],
+    "translation_cache_reopen_verified": true,
+    "restart_reception_paused": true
+  }
 }

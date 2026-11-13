@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 源码在独立私有仓库 `juccistar/reception-workbench` 维护，默认分支为 `main`。安装包与客户端更新继续使用公开仓库 `juccistar/reception-workbench-releases`；旧 Qt 工程及导出分支仅是历史来源，运行时不导入旧工程。仓库、应用标识、数据命名空间与固定签名公钥的约定见 [PROJECT.md](docs/PROJECT.md)。
 
-常用资料：[开发说明](docs/DEVELOPMENT.md)、[现行规则](docs/CURRENT_RULES.md)、[实施契约](docs/IMPLEMENTATION_CONTRACT.md)、[架构](docs/项目开发/02-架构文档.md)。当前源码及最新公开发行均为0.3.14，恢复接待业务规则并支持会话级业务补充附件，见[发布说明](docs/0.3.14发布说明.md)、[提示词审核稿](docs/接待提示词审核稿.md)与[验证记录](docs/verification/0.3.14.json)。0.3.13的中文需求、独立摘要、新布局、程序商品链接与参考图、产品/供应商及持久采购任务继续沿用，见[前版说明](docs/0.3.13开发说明.md)。本版已打包发布，最终EXE窗口及固定更新签名已核对；构建完成立即提交05b0ed7。未执行真实安装、默认入口晋级或业务数据迁移，不以公开版本推断本机已升级。自动定向询价和报价回收仍blocked，其他未完成能力见[ROADMAP](docs/ROADMAP.md)，合成回归不替代真实模型语义、平台、图搜或供应商询价验收。
+常用资料：[开发说明](docs/DEVELOPMENT.md)、[现行规则](docs/CURRENT_RULES.md)、[实施契约](docs/IMPLEMENTATION_CONTRACT.md)、[架构](docs/项目开发/02-架构文档.md)。当前源码及公开发行为0.3.15，采用A版紧凑三栏，修复资料保存、扩展五张商品图并支持多选/粘贴/拖入补充附件，见[发布说明](docs/0.3.15发布说明.md)、[验证记录](docs/verification/0.3.15.json)及[提示词规则核对](docs/0.3.15提示词规则核对.md)。用户追加要求已落实：不显示重复日期/翻译行或常驻建议条，建议和润色直接在输入框上方展示待处理框，替换/弃用后关闭，同一条已处理结果重开不重复显示；处理偏好与发送回执独立。提示词只清理多余解释，必要规则和限制继续保留。0.3.13的中文需求、独立摘要、程序链接及产品/供应商采购基础继续沿用。本版已打包发布，最终EXE窗口与固定更新签名已核对；最终候选构建完成立即提交33da0a1。未执行真实安装、默认入口晋级或业务数据迁移，不以公开版本推断本机已升级。自动定向询价和报价回收仍blocked，其他未完成能力见[ROADMAP](docs/ROADMAP.md)，合成回归不替代真实模型语义、平台、图搜或供应商询价验收。
 
 ## 新版本构建后的提交
 
