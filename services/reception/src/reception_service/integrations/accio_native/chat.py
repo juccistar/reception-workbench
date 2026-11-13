@@ -1,4 +1,4 @@
-"""Direct human chat: request claims, memory-only chat tokens, native readback.
+"""Direct chat submission: request claims, memory-only tokens, native readback.
 
 Protocol verified by A02 (2026-11-07). BusinessID is not a conversation ID;
 only a platform message read from the exact conversation proves acceptance.
@@ -85,43 +85,33 @@ def read_chat_receipt(gateway, intent, result):
 
 
 def _continuity_verify(gateway, intent):
-    from .vendor.adapters.live import _latest
+    """Check the local phase/receipt binding; source freshness is owned by the service."""
     gateway._send_authorized(intent)
-    gateway._identity(intent['seller_id'])
-    history = gateway._history(intent['seller_id'], intent['buyer_id'], intent['conversation_id'])
-    # Read may overlap revocation, so recheck after the read as well.
-    gateway._send_authorized(intent)
-    latest = _latest(history)
-    buyers = [m for m in history if m.role == 'buyer']
-    source = _latest(buyers)
-    sha = lambda text: hashlib.sha256(text.encode('utf-8')).hexdigest()
-    if (source.message_id.startswith('missing-id-') or source.message_id != intent['source_message_id']
-            or source.timestamp_ms != intent['source_timestamp_ms'] or sha(source.text) != intent['source_text_sha256']
-            or latest.message_id.startswith('missing-id-') or latest.message_id != intent['latest_message_id']
-            or latest.role != intent['latest_message_role'] or sha(latest.text) != intent['latest_text_sha256']):
-        raise AdapterError('消息来源或最新消息已变化', code='auth', stage='send')
-    phase = intent['continuity_phase']
-    if latest.role == 'buyer':
-        if latest.message_id != source.message_id or phase == 'final':
-            raise AdapterError('续答阶段与最新消息不匹配', code='auth', stage='send')
+    phase, latest_role = intent['continuity_phase'], intent['latest_message_role']
+    if latest_role == 'buyer':
+        if (intent['latest_message_id'] != intent['source_message_id'] or phase == 'final'
+                or intent['latest_text_sha256'] != intent['source_text_sha256']):
+            raise AdapterError('续答阶段与本地最新消息不匹配', code='auth', stage='send')
         return
-    if latest.role != 'seller' or phase == 'ack' or latest.timestamp_ms <= source.timestamp_ms:
-        raise AdapterError('续答阶段与最新消息不匹配', code='auth', stage='send')
+    if latest_role != 'seller' or phase == 'ack':
+        raise AdapterError('续答阶段与本地最新消息不匹配', code='auth', stage='send')
     with gateway.ledger.lock, closing(gateway.ledger._db()) as db:
         rows = db.execute("SELECT request,result FROM operations WHERE kind='send'").fetchall()
     matches = []
     for raw_request, raw_result in rows:
         request, result = json.loads(raw_request), json.loads(raw_result)
-        if (result.get('status') == 'accepted' and result.get('message_id') == latest.message_id
-                and request.get('reply') == latest.text
+        body = request.get('reply')
+        if (result.get('status') == 'accepted' and result.get('message_id') == intent['latest_message_id']
+                and isinstance(body, str) and hashlib.sha256(body.encode('utf-8')).hexdigest() == intent['latest_text_sha256']
+                and type(result.get('timestamp_ms')) is int and result['timestamp_ms'] > intent['source_timestamp_ms']
                 and all(request.get(k) == intent[k] for k in ('seller_id', 'buyer_id', 'conversation_id'))):
             matches.append(request)
     if len(matches) != 1 or (phase == 'final' and not (
             matches[0].get('purpose') == 'continuity' and matches[0].get('continuity_phase') == 'ack'
-            and matches[0].get('source_message_id') == source.message_id
-            and matches[0].get('source_timestamp_ms') == source.timestamp_ms
-            and matches[0].get('source_text_sha256') == sha(source.text))):
+            and all(matches[0].get(k) == intent[k] for k in
+                    ('source_message_id', 'source_timestamp_ms', 'source_text_sha256')))):
         raise AdapterError('最新卖家消息缺少本机受理凭据', code='auth', stage='send')
+    gateway._send_authorized(intent)
 
 
 def _claim_continuity(gateway, intent):
@@ -129,7 +119,7 @@ def _claim_continuity(gateway, intent):
     ledger = gateway.ledger
     logical = 'continuity:' + digest([intent['seller_id'], intent['buyer_id'], intent['conversation_id'],
                                       intent['source_message_id'], intent['continuity_phase'],
-                                      intent['client_request_id'] if intent['continuity_phase'] == 'assistance' else None])
+                                      intent['client_request_id'] if intent['continuity_phase'] in ('assistance', 'supplement') else None])
     with ledger.lock, closing(ledger._db()) as db, db:
         db.execute('BEGIN IMMEDIATE')
         rows = db.execute("SELECT operation_id,logical_key,request,result FROM operations WHERE kind='send'").fetchall()
@@ -155,19 +145,30 @@ def _claim_continuity(gateway, intent):
 
 
 def execute_chat(gateway, intent, authorization):
-    """One platform submission per immutable client request, without AI business gates."""
+    """Submit a frozen intent; automatic business checks stay in its service callback."""
     from .vendor.adapters.common import target
     intent = deepcopy(intent)
-    claimed = attempted = False
+    claimed = attempted = automatic = False
+    returned_id = ''
     operation = intent.get('operation_id')
     with gateway.lock:
         try:
             continuity = intent.get('purpose') == 'continuity' and intent.get('send_mode') == 'automatic'
-            if not continuity and (intent.get('purpose') != 'chat' or intent.get('send_mode') != 'manual'):
+            reception = intent.get('purpose') == 'reception' and intent.get('send_mode') == 'automatic'
+            automatic = continuity or reception
+            if not automatic and (intent.get('purpose') != 'chat' or intent.get('send_mode') != 'manual'):
                 raise AdapterError('聊天意图无效', code='args', stage='send')
+            if reception:
+                if (any(not isinstance(intent.get(k), str) or not intent[k].strip()
+                        for k in ('source_message_id', 'draft_id', 'case_id'))
+                        or intent['source_message_id'].startswith('missing-id-')
+                        or type(intent.get('source_timestamp_ms')) is not int or intent['source_timestamp_ms'] <= 0
+                        or type(intent.get('revision')) is not int or intent['revision'] < 1
+                        or not isinstance(intent.get('reply'), str) or len(intent['reply']) > 1200):
+                    raise AdapterError('自动回复正文或来源无效', code='args', stage='send')
             if continuity:
                 if (not isinstance(operation, str) or not operation.strip()
-                        or intent.get('continuity_phase') not in ('ack', 'final', 'assistance')
+                        or intent.get('continuity_phase') not in ('ack', 'final', 'assistance', 'supplement')
                         or intent.get('latest_message_role') not in ('buyer', 'seller')
                         or type(intent.get('source_timestamp_ms')) is not int
                         or intent['source_timestamp_ms'] <= 0
@@ -188,13 +189,17 @@ def execute_chat(gateway, intent, authorization):
                     raise AdapterError('操作编号已绑定不同人工消息', code='args', stage='send')
                 return previous[2]
             authorized(authorization)
+            if automatic:
+                gateway._send_authorized(intent)
             gateway._identity(seller)
             if continuity:
                 _continuity_verify(gateway, intent)
                 _claim_continuity(gateway, intent)
             else:
-                prior = gateway.ledger.claim(operation, 'chat:' + digest([seller, cid, request]), 'send', intent,
-                                             conversation_fence=True)
+                logical = ('send:' + digest([seller, cid, intent['source_message_id']]) if reception
+                           else 'chat:' + digest([seller, cid, request]))
+                prior = gateway.ledger.claim(operation, logical, 'send', intent,
+                                             allow_rejected_send=reception, conversation_fence=True)
                 if prior:
                     return prior
             claimed = True
@@ -204,14 +209,17 @@ def execute_chat(gateway, intent, authorization):
                 raise AdapterError('未取得本次会话通信令牌', code='auth', stage='send')
             gateway._identity(seller)
             authorized(authorization)
+            if automatic:
+                gateway._send_authorized(intent)
             def submit():
                 nonlocal attempted
                 if continuity:
                     _continuity_verify(gateway, intent)
-                    gateway._identity(seller)
+                if automatic:
                     gateway._send_authorized(intent)
                 else:
                     authorized(authorization)
+                gateway.ledger.finish(operation, dict(status='unknown', message_id='', submission_started=True))
                 attempted = True
             native = gateway._chat_call('send_msg', {'sendRequest': {
                 'messageType': 'CUSTOMER_TEXT', 'chatTypeEnum': 'SINGLE', 'content': intent['reply'],
@@ -222,7 +230,7 @@ def execute_chat(gateway, intent, authorization):
             mid = native.get('data', {}).get('messageID') if isinstance(native.get('data'), dict) else None
             result = dict(status='unknown', message_id='', submission_started=True)
             if native.get('success') is True and isinstance(mid, str) and mid.strip():
-                result['message_id'] = mid
+                returned_id = result['message_id'] = mid
             # Preserve the returned ID before a possibly interrupted readback. It is
             # the only ID reconciliation may look up; no body-based guessing or resend.
             gateway.ledger.finish(operation, result)
@@ -231,8 +239,19 @@ def execute_chat(gateway, intent, authorization):
             except Exception:
                 pass
             return gateway.ledger.finish(operation, result)
-        except Exception:
-            result = dict(status='unknown' if attempted else 'rejected', message_id='', submission_started=attempted)
+        except Exception as exc:
+            # A failed final receipt write must not erase the platform ID already
+            # returned (and possibly journaled) before the readback.
+            result = dict(status='unknown' if attempted else 'rejected',
+                          message_id=returned_id if attempted else '', submission_started=attempted)
+            if automatic:
+                from .vendor.diagnostics import CODES, process_diagnostics
+                from .vendor.adapters.live import SEND_ERROR_STAGES
+                code = exc.code if isinstance(exc, AdapterError) and exc.code in CODES else 'adapter_error'
+                stage = exc.stage if isinstance(exc, AdapterError) and exc.stage in SEND_ERROR_STAGES else 'adapter'
+                facts = process_diagnostics(exc.diagnostics) if isinstance(exc, AdapterError) else {}
+                facts.update(code=code, stage=stage)
+                result.update(error_code=code, stage=stage, diagnostics=facts)
             if claimed:
                 return gateway.ledger.finish(operation, result)
             return result
@@ -241,7 +260,7 @@ def execute_chat(gateway, intent, authorization):
 def reconcile_chat(gateway, operation_id):
     with gateway.lock:
         previous = gateway.ledger.get(operation_id)
-        if not previous or previous[0] != 'send' or previous[1].get('purpose') not in ('chat', 'continuity'):
+        if not previous or previous[0] != 'send' or previous[1].get('purpose') not in ('chat', 'continuity', 'reception'):
             return dict(status='unknown', message_id='', submission_started=True)
         intent, result = previous[1], previous[2]
         if result.get('status') != 'unknown':

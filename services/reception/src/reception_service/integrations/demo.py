@@ -46,13 +46,13 @@ def natural_demo_analysis(context):
                       summary=case.get('summary', ''), missing=list(case.get('missing') or []),
                       reply_sources=[latest['message_id']])
         return validate_analysis(result, context)
-    photo_rows = (context.get('photo_context') or {}).get('observations') or []
+    photo_rows = ((context.get('photo_context') or {}).get('observations') or []) + ((context.get('photo_context') or {}).get('read_images') or [])
     photo = next((row for row in photo_rows if row.get('message_id') == latest['message_id']), None)
     if photo and latest['text'].strip() == '[image]':
         result.update(action='ask', facts={}, question_keys=[],
                       reply='Thanks for the photo. The image appears to show a green tote bag. Is this the design you have in mind?',
                       summary=case.get('summary', ''), missing=list(case.get('missing') or []),
-                      reply_sources=[latest['message_id'], photo['observation_id']])
+                      reply_sources=[latest['message_id'], photo.get('observation_id') or photo['image_id']])
         return validate_analysis(result, context)
     buyers = [row for row in messages if row['role'] == 'buyer']
     boundary = re.compile(r'new (?:order|inquiry)|another (?:order|product)|separate order|新(?:采购|订单|需求)|另(?:一|外).*采购', re.I)
@@ -85,7 +85,11 @@ def natural_demo_analysis(context):
     required = list(dict.fromkeys(['product', *context.get('required_fields', ['product', 'quantity'])]))
     missing = [key for key in required if not is_complete(key, values.get(key, ''))]
     refused = bool(re.search(r'don.t know|not sure|prefer not|不知道|不确定|不提供|未确定', latest['text'], re.I))
-    questions = [] if refused or continuing else [key for key in missing if (case.get('questions') or {}).get(key, 0) < 2][:2]
+    from ..collection_rules import collection_rules
+    limits = collection_rules(context.get('collection_rules'), case)
+    questions = ([] if refused or continuing else
+                 [key for key in missing if (case.get('questions') or {}).get(key, 0) < limits['max_questions_per_field']]
+                 [:limits['max_questions_per_reply']])
     human = bool(re.search(r'\bhuman\b|real person|refund|complaint|bank account|人工|业务员|退款|投诉|收款账户', latest['text'], re.I))
     action = 'human' if human or (missing and not questions and not continuing) else 'ask' if missing else 'wait_quote'
     if not continuing and case.get('state') == 'waiting_quote' and not facts and not result['new_case']:
@@ -115,10 +119,14 @@ def natural_demo_analysis(context):
     if action == 'ask' and questions:
         reply += ('请再告诉我' + '和'.join(FACT_LABELS[key] for key in questions) + '。') if chinese else (
             ' Could you let me know ' + ' and '.join(en[key] for key in questions) + '?')
+    note = context.get('supplement') or {}
+    if note.get('body'):
+        reply += '\n' + note['body']
     result.update(action=action, facts=facts, question_keys=questions if action == 'ask' else [], reply=reply,
                   summary='；'.join(FACT_LABELS[key] + '：' + value for key, value in values.items() if key in FIELDS),
                   missing=missing, reply_sources=list(dict.fromkeys([latest['message_id'],
-                      *(mid for fact in facts.values() for mid in fact['evidence_ids'])])))
+                      *(mid for fact in facts.values() for mid in fact['evidence_ids']),
+                      *([note['source_id']] if note.get('body') and note.get('source_id') else [])])))
     return validate_analysis(result, context)
 
 
@@ -130,6 +138,17 @@ class DemoIntegration:
         self.ledger = Ledger(Path(data_dir) / 'integrations-demo.sqlite3')
         self.lock = threading.RLock()
         self.permission_epoch = 0
+        self.product_lookup_count = 0
+
+    def lookup_product(self, seller_id, product_id, request_id, *, cancel_event=None):
+        self.resolve_identity(seller_id)
+        if cancel_event is not None and cancel_event.is_set():
+            raise ServiceError('cancelled', '查询已取消')
+        with self.lock:
+            self.product_lookup_count += 1
+        return {'product_id': product_id, 'product_url': None, 'original_title': None,
+                'summary': '', 'product_images': [], 'sku': None,
+                'source': 'native_product_lookup', 'reference_only': True}
 
     def capabilities(self):
         return dict(mode='demo', simulated=True, demo=True, local_only=True, verified=False,
@@ -143,6 +162,10 @@ class DemoIntegration:
         if expected_seller_id and expected_seller_id != self.seller_id:
             raise ServiceError('identity_mismatch', '演示卖家身份不匹配', stage='identity')
         return self.seller_id
+
+    def company_profile(self, seller_id):
+        self.resolve_identity(seller_id)
+        return {'seller_id': seller_id, 'company_name': '演示商家公司'}
 
     def read_recent_conversations(self, seller_id, before_ms=None, count=20):
         self.resolve_identity(seller_id)
@@ -180,12 +203,16 @@ class DemoIntegration:
         return self._page(rows, 'timestamp_ms', before_ms, count, 'messages')
 
     def load_photo(self, message):
+        self.resolve_identity(message.get('seller_id'))
+        if message.get('role') not in ('buyer', 'seller') or message.get('text', '').strip() != '[image]':
+            raise ServiceError('image_not_found', '该演示消息没有图片')
+        return self._synthetic_photo_asset()
+
+    @staticmethod
+    def _synthetic_photo_asset():
         from io import BytesIO
         from PIL import Image, ImageDraw
         from ..image_assets import decode_image
-        self.resolve_identity(message.get('seller_id'))
-        if message.get('role') != 'buyer' or message.get('text', '').strip() != '[image]':
-            raise ServiceError('image_not_found', '该演示消息没有图片')
         image = Image.new('RGB', (480, 360), '#f4f3ef')
         draw = ImageDraw.Draw(image)
         draw.rounded_rectangle((150, 100, 330, 280), radius=18, fill='#668b83')
@@ -206,21 +233,71 @@ class DemoIntegration:
                     uncertainties=['这是合成演示图，不能确认实物材质、尺寸或采购要求。'],
                     request_id='demo-vision-' + uuid.uuid4().hex, image_sha256=asset['sha256'])
 
-    def generate(self, context, request_id, *, on_call_start=None):
+    @classmethod
+    def _direct_image_reads(cls, context, photo_inputs):
+        from ..photos import photo_version
+        refs = (context.get('photo_context') or {}).get('direct_images', [])
+        if len(refs) != len(photo_inputs or []):
+            raise ServiceError('source_changed', '演示图片未绑定当前请求', stage='context')
+        for ref, item in zip(refs, photo_inputs or []):
+            message, asset = item['message'], item['asset']
+            expected = cls._synthetic_photo_asset()
+            if (any(ref.get(key) != message.get(key) for key in ('seller_id', 'buyer_id', 'conversation_id', 'message_id', 'role'))
+                    or message.get('role') not in ('buyer', 'seller')
+                    or message.get('own') is not (message.get('role') == 'seller')
+                    or ref.get('source_version') != photo_version(message)
+                    or asset.get('sha256') != expected['sha256'] or ref['image_sha256'] != expected['sha256']
+                    or asset.get('original_b64') != expected['original_b64']):
+                raise ServiceError('source_changed', '演示图片不匹配', stage='context')
+        return refs
+
+    def read_product_display(self, seller_id, product_id, request_id, *, cancel_event=None):
+        self.resolve_identity(seller_id)
+        if cancel_event is not None and cancel_event.is_set():
+            raise ServiceError('cancelled', '请求已取消', stage='product_display')
+        return {'status': 'no_image', 'product_id': product_id, 'simulated': True}
+
+    def source_product(self, context, request_id, *, cancel_event=None, on_call_start=None, on_request_created=None):
+        from .sourcing import demo_source_product
+        return demo_source_product(context, request_id, cancel_event=cancel_event,
+                                   on_call_start=on_call_start, on_request_created=on_request_created)
+
+    def reconcile_source_product(self, record, context, *, cancel_event=None):
+        from .sourcing import demo_reconcile_source_product
+        return demo_reconcile_source_product(record, context, cancel_event=cancel_event)
+
+    def generate(self, context, request_id, *, on_call_start=None, photo_inputs=None):
+        from ..photos import with_direct_photo_reads
         prepare_context(context)
         self.resolve_identity(context['case']['seller_id'])
         if not isinstance(request_id, str) or not request_id.strip():
             raise ServiceError('invalid_request', '生成请求缺少任务标识', stage='context')
+        refs = self._direct_image_reads(context, photo_inputs)
         if on_call_start is not None:
             on_call_start()
-        return natural_demo_analysis(context)
+        result = natural_demo_analysis(with_direct_photo_reads(context, refs))
+        latest = next((m for m in reversed(context.get('recent_messages', [])) if m.get('role') == 'buyer'), None)
+        if latest:
+            result['conversation_summary'] = '客户提出了沟通事项。'
+            if latest.get('text') == 'I need 100 pieces':
+                result['requirements'] = {'quantity': {'value': '100件', 'evidence_ids': [latest['message_id']],
+                    'source_excerpts': {latest['message_id']: '100 pieces'}}}
+        result['verified_image_reads'] = refs
+        return result
 
-    def generate_manual(self, context, request_id, *, on_call_start=None, cancel_event=None):
+    def generate_requirements(self, context, request_id, *, on_call_start=None, cancel_event=None, photo_inputs=None):
+        if cancel_event is not None and cancel_event.is_set():
+            raise ServiceError('cancelled', '请求已取消', stage='analysis')
+        result = self.generate(context, request_id, on_call_start=on_call_start, photo_inputs=photo_inputs)
+        return {key: result[key] for key in ('facts', 'category_label', 'requirement_items', 'summary') if key in result}
+
+    def generate_manual(self, context, request_id, *, on_call_start=None, cancel_event=None, photo_inputs=None):
         self.resolve_identity(context.get('seller_id'))
         if not isinstance(request_id, str) or not request_id.strip():
             raise ServiceError('invalid_request', '生成请求缺少任务标识', stage='context')
         if cancel_event is not None and cancel_event.is_set():
             raise ServiceError('cancelled', '请求已取消', stage='analysis')
+        reads = self._direct_image_reads(context, photo_inputs)
         if on_call_start is not None:
             on_call_start()
         messages = context.get('recent_messages') or []
@@ -228,11 +305,22 @@ class DemoIntegration:
         supplement = context.get('supplement') or ''
         if isinstance(supplement, dict):
             supplement = supplement.get('body', '')
-        if re.search(r'[一-鿿]', buyer):
+        unsent = context.get('unsent_reply')
+        if unsent:
+            # Synthetic demo preserves all seller-provided terms verbatim.
+            reply = unsent['body'].strip()
+        elif re.search(r'[一-鿿]', buyer):
             reply = '感谢您的耐心等待。' + (f'关于您的询价，{supplement}。' if supplement else '我们已记录您的需求，会继续跟进。')
         else:
             reply = 'Thank you for your patience. ' + (f'Regarding your inquiry: {supplement}' if supplement else 'We have noted your request and will follow up.')
-        return {'reply': reply[:1200]}
+        result = {'reply': reply[:1200], 'verified_image_reads': reads}
+        if not unsent and buyer:
+            result['conversation_summary'] = '客户提出了沟通事项。'
+            message = next((m for m in reversed(messages) if m.get('role') == 'buyer'), None)
+            if message and buyer == 'I need 100 pieces':
+                result['requirements'] = {'quantity': {'value': '100件', 'evidence_ids': [message['message_id']],
+                    'source_excerpts': {message['message_id']: '100 pieces'}}}
+        return result
 
     def translate(self, items, request_id, *, on_call_start=None, cancel_event=None):
         if not isinstance(request_id, str) or not request_id.strip() or not isinstance(items, list) or not items:
@@ -247,7 +335,10 @@ class DemoIntegration:
         if on_call_start is not None:
             on_call_start()
         fixtures = {'Hello': '你好', 'Thank you': '谢谢', 'How much?': '多少钱？',
-                    'I need 100 pieces': '我需要100件', 'Bonjour': '你好'}
+                    'I need 100 pieces': '我需要100件', 'Bonjour': '你好',
+                    'We can offer 15 per piece. Shipping is not included.': '每件15，不含运费。',
+                    'We can offer 18 per piece. Shipping is not included.': '每件18，不含运费。',
+                    'Thank you for your patience. We have noted your request and will follow up.': '感谢您的耐心等待。我们已记录您的需求并将继续跟进。'}
         return {'items': [{'key': row['key'], 'text': fixtures.get(row['text'], row['text'])} for row in items]}
 
     def preview_send(self, intent):
@@ -326,7 +417,7 @@ class DemoIntegration:
                 or scope['mode'] == 'incoming' and source['timestamp_ms'] < scope.get('started_at_ms', 9007199254740991)):
             raise ServiceError('source_changed', '演示接待来源已变化')
         phase = intent.get('continuity_phase')
-        if phase not in ('ack', 'final', 'assistance') or phase == 'ack' and latest['role'] != 'buyer':
+        if phase not in ('ack', 'final', 'assistance', 'supplement') or phase == 'ack' and latest['role'] != 'buyer':
             raise ServiceError('invalid_intent', '演示接待阶段无效')
         if phase == 'final' and latest['role'] != 'seller':
             raise ServiceError('invalid_intent', '演示正式答复缺少先前确认')

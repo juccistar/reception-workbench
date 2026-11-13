@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -65,9 +66,13 @@ class IncomingPermissionTests(unittest.TestCase):
         self.assertEqual(process.send_count, 1)
         commands = [call['args'][3] for call in process.calls if call['args'][1:3] == ['workflow', 'chat-analysis']]
         self.assertIn('resolve-id', commands)
-        self.assertIn('seal-reply-preview', commands)
-        self.assertEqual(commands.count('send-message'), 1)
-        self.assertEqual(commands[-1], 'resolve-id')  # Receipt readback rechecks identity.
+        self.assertNotIn('run', commands)
+        self.assertNotIn('read-ready', commands)
+        self.assertNotIn('seal-reply-preview', commands)
+        self.assertNotIn('send-message', commands)
+        direct = [json.loads(call['input'])['name'] for call in process.calls
+                  if call['args'][1:3] == ['--input-type=module', '-e']]
+        self.assertEqual(direct, ['get_communication_chatToken', 'send_msg'])
 
     def test_message_earlier_than_authorization_start_is_rejected(self):
         value = incoming()
@@ -112,9 +117,15 @@ class IncomingPermissionTests(unittest.TestCase):
             raise RuntimeError('synthetic authorization failure')
         self.reject(incoming(), failed_callback)
 
-    def test_pause_after_native_sealing_still_prevents_submission(self):
+    def test_pause_after_token_still_prevents_submission(self):
         facade, process = self.live()
-        process.stage_hook = lambda command: facade.revoke() if command == 'seal-reply-preview' else None
+        original = facade.native._chat_call
+        def call(name, arguments, **options):
+            result = original(name, arguments, **options)
+            if name == 'get_communication_chatToken':
+                facade.revoke()
+            return result
+        facade.native._chat_call = call
         result = facade.send(incoming(), lambda: True)
         self.assertEqual(result['status'], 'rejected', result)
         self.assertFalse(result['submission_started'])
@@ -140,29 +151,31 @@ class IncomingPermissionTests(unittest.TestCase):
         self.assertEqual(process.send_count, 0)
         self.assertIn(result['status'], ('rejected', 'unknown'))
 
-    def test_claimed_source_time_must_match_native_message_time(self):
+    def test_claimed_source_time_must_match_the_service_local_source(self):
         value = incoming(source_timestamp_ms=NOW + 100)
         value['frozen_scope']['started_at_ms'] = NOW + 1
-        self.reject(value)
+        self.reject(value, lambda: value['source_timestamp_ms'] == NOW)
 
-    def test_native_identity_and_latest_buyer_checks_remain_required(self):
+    def test_native_identity_and_local_latest_source_callback_remain_required(self):
         facade, process = self.live()
         process.seller = '30003'
         result = facade.send(incoming(), lambda: True)
         self.assertEqual(result['status'], 'rejected', result)
         self.assertEqual(process.send_count, 0)
+        for role in ('buyer', 'seller'):
+            facade, process = self.live()
+            local_latest = {'message_id': role + '-later'}
+            value = incoming()
+            result = facade.send(value, lambda: local_latest['message_id'] == value['source_message_id'])
+            self.assertEqual(result['status'], 'rejected', result)
+            self.assertEqual(process.send_count, 0)
+
+    def test_remote_only_activity_is_not_reread_before_submission(self):
         facade, process = self.live()
-        process.history['messages'].append(dict(messageId='buyer-later', senderAliId=BUYER,
-                                               timestamp=NOW + 1, content='A newer buyer question'))
-        result = facade.send(incoming(), lambda: True)
-        self.assertEqual(result['status'], 'rejected', result)
-        self.assertEqual(process.send_count, 0)
-        facade, process = self.live()
-        process.history['messages'].append(dict(messageId='seller-later', senderAliId=SELLER,
-                                               timestamp=NOW + 1, content='A newer seller reply'))
-        result = facade.send(incoming(), lambda: True)
-        self.assertEqual(result['status'], 'rejected', result)
-        self.assertEqual(process.send_count, 0)
+        process.history['messages'].append(dict(messageId='remote-later', senderAliId=BUYER,
+                                               timestamp=NOW + 1, content='Not synchronized locally'))
+        self.assertEqual(facade.send(incoming(), lambda: True)['status'], 'accepted')
+        self.assertEqual(process.send_count, 1)
 
     def test_selected_and_all_guards_are_not_relaxed_by_incoming(self):
         for mode in ('selected', 'all'):

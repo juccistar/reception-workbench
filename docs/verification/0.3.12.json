@@ -1,0 +1,279 @@
+{
+  "version": "0.3.12",
+  "status": "published_and_verified",
+  "date": "2026-11-13",
+  "source_branch": "feat/chat-translation-0.3.4",
+  "source_committed": false,
+  "prompt_version": "reception-0.3.12.1",
+  "model_payload_version": "reception-payload-0.3.12.1",
+  "tests": {
+    "full_suite_run": false,
+    "backend_unique_tests_passed": 153,
+    "backend_files": 14,
+    "desktop_host_tests_passed": 103,
+    "desktop_host_files": 5,
+    "typecheck": "passed",
+    "build": "passed_in_final_packaging",
+    "evidence": [
+      "artifacts/verification/reception-0.3.12/targeted-final.json",
+      "artifacts/verification/reception-0.3.12/backend-agent.json",
+      "artifacts/verification/reception-0.3.12/frontend-agent.json",
+      "artifacts/verification/reception-0.3.12/host-tests.json",
+      "artifacts/verification/reception-0.3.12/targeted-main-backend.json"
+    ],
+    "initial_failures_and_rechecks_retained": true
+  },
+  "product_references": {
+    "stored_with_case_and_waiting_quote": true,
+    "fields": [
+      "product_id",
+      "product_url",
+      "product_images",
+      "original_title",
+      "sku",
+      "source_message_ids",
+      "catalog_product_id",
+      "suitability",
+      "lookup"
+    ],
+    "catalog_key": [
+      "seller_id",
+      "platform",
+      "product_id"
+    ],
+    "cross_customer_public_catalog_shared": true,
+    "customer_requirements_budgets_and_private_photos_shared": false,
+    "actual_text_inquiry_format_supported": true,
+    "platform_title_is_buyer_requirement": false,
+    "current_reply_target_in_historical_evidence_supported": true,
+    "historical_unrelated_cards_trigger_lookups": false,
+    "source_revision_invalidates_reference": true,
+    "known_message_public_url_separate_from_tool_result": true
+  },
+  "product_lookup": {
+    "entry": "workctl icbu tm get-product",
+    "self_ali_id_required": true,
+    "program_controlled_before_existing_main_ai": true,
+    "new_standalone_link_model": false,
+    "durable_statuses": [
+      "not_queried",
+      "querying",
+      "completed",
+      "no_link",
+      "failed",
+      "unknown"
+    ],
+    "atomic_claim_before_external_call": true,
+    "concurrent_same_id_deduplicated": true,
+    "no_link_or_nonadoption_or_restart_requeries": false,
+    "interrupted_query_on_restart": "unknown",
+    "explicit_rpc": "request_product_lookup",
+    "explicit_requery_preserves_history": true,
+    "normal_ai_allow_product_lookup": false,
+    "reference_only": true,
+    "listing_details_verified": false,
+    "real_public_product_sample": {
+      "product_id": "1601904072453",
+      "attempts": 1,
+      "status": "no_link",
+      "result_structure": "data JSON string -> prod_info multiline text",
+      "url_constructed": false
+    },
+    "alternate_own_product_query": "ALI_ID_MISMATCH; no object returned; no retry or fallback",
+    "arbitrary_product_id_guarantees_link_or_sku_images": false
+  },
+  "ui": {
+    "daily_requirement_review_form_removed": true,
+    "suggestion_internal_long_text_and_rule_lists_removed": true,
+    "summary_requirements_and_business_note_preserved": true,
+    "product_fields_local_previews_and_explicit_requery": true
+  },
+  "complete_context": {
+    "request_file": "docs/0.3.12接待完整上下文示例.txt",
+    "explanation": "docs/0.3.12接待完整上下文说明.md",
+    "request_chars": 10406,
+    "request_sha256": "fbe7042c646c3281516ad0f0ec015c46a62cf66f98a728b54eef1a1d8cc31cf5",
+    "file_integrity_evidence": "artifacts/verification/reception-0.3.12/context-file-integrity.json",
+    "captured_from_actual_service_generation": true,
+    "all_customer_data_synthetic": true,
+    "demo_generation_tasks": 3,
+    "demo_customers": 2,
+    "demo_product_lookup_calls": 1,
+    "real_text_generation_attempts": 1,
+    "original_checker_failure_retained": true,
+    "offline_review_passed_without_new_ai_call": true,
+    "transport_result": "CLI no stdout, exit 1; existing exact owned completed-record recovery succeeded",
+    "product_id_and_no_link_verified": true,
+    "catalogue_price_not_quoted": true,
+    "custom_logo_not_saved_as_buyer_customization": true,
+    "false_title_logo_warning_fixed_offline": true,
+    "semantic_quality_warnings_remaining": true,
+    "evidence": "artifacts/verification/reception-0.3.12/synthetic-ai-reviewed.json"
+  },
+  "future_sourcing": {
+    "document": "docs/自动找货技术路线验证-0.3.12.md",
+    "runtime_included": false,
+    "verified_route": "Feishu technical task -> enabled Accio Agent -> product_supplier_search",
+    "synthetic_readonly_searches": 1,
+    "query": "plain cotton tote bag",
+    "public_results_retained": 3,
+    "external_direct_search_cli_or_mcp_verified": false,
+    "tool_task_id_returned": false,
+    "quantity_is_strict_moq_filter": false,
+    "supplier_contact_or_inquiry_or_rfq_performed": false,
+    "guard_rejection_recorded_and_not_bypassed": true,
+    "production_reliability_or_latency_accepted": false,
+    "evidence": [
+      "artifacts/verification/reception-0.3.12/native-product-route.json",
+      "artifacts/verification/reception-0.3.12/sourcing-route.json",
+      "artifacts/verification/reception-0.3.12/sourcing-agent-readonly.json",
+      "artifacts/verification/reception-0.3.12/product-query-metadata.json"
+    ]
+  },
+  "media": {
+    "real_platform_sku_card_schema_verified": false,
+    "image_transport": "read_compat",
+    "new_native_attachment_api": false,
+    "preparation_is_model_read": false,
+    "ordinary_polish_reads_history_images": false,
+    "display_cache_changes_generation_fingerprint": false
+  },
+  "send_guards": {
+    "identity_and_source_versions_preserved": true,
+    "conversation_unresolved_fence_preserved": true,
+    "unknown_reconciles_original_operation": true,
+    "maximum_unsubmitted_temporary_attempts": 3,
+    "retry_backoff_seconds": [
+      5,
+      15
+    ],
+    "no_real_sends_in_this_verification": true
+  },
+  "actual_windows": {
+    "status": "passed",
+    "evidence": {
+      "product_fields_and_progress": "artifacts/verification/products-0312-package-final-a/report.json",
+      "translation_and_suggestion": "artifacts/verification/demo-package-0312-base-a/result.json"
+    },
+    "packaged": true,
+    "screenshots_reviewed": true,
+    "screenshots_reviewed_count": 10,
+    "all_test_windows_closed": true,
+    "business_ipc_mocked": false,
+    "progress_and_shared_catalog_ui_fixture_preseeded": true,
+    "pixels_synthetic_only": true
+  },
+  "package": {
+    "directory": "relase/release-0.3.12-a",
+    "candidate": true,
+    "status": "passed",
+    "staging": "artifacts/build/package-input-1794500192008",
+    "portable_files": 164,
+    "portable_zip_entries": 165,
+    "python_source_inputs": 75,
+    "frozen_backend_files": 75,
+    "app_asar_sha256": "69e7a422c9fce5531056e6952c4c83ec0204e95737e71e507e5f5a7409aab9e4",
+    "source_manifest_sha256": "fa65556c206a8fb6c7b493b722e22157caa904ba824fd453ed1d3998f8b8a843",
+    "release_signature": "ed25519",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "windows_authenticode_signed": false,
+    "both_bundles_guides_match_source": true,
+    "installer": {
+      "name": "ReceptionWorkbench-Setup-0.3.12.exe",
+      "asset_id": 740171757,
+      "bytes": 136135365,
+      "sha256": "38b65ced239f749a02a0886392a9648aeb4039f4b382e3e9d872209f9134d4a9",
+      "server_digest_verified": true,
+      "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.12/ReceptionWorkbench-Setup-0.3.12.exe",
+      "anonymous_full_download_verified": true
+    },
+    "portable_zip": {
+      "name": "ReceptionWorkbench-0.3.12.zip",
+      "asset_id": 740171751,
+      "bytes": 177915497,
+      "sha256": "f26a82b4baee8be31c84c8e73d61b797014aedde142fbdb9a6db6f0bc4441914",
+      "server_digest_verified": true,
+      "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.12/ReceptionWorkbench-0.3.12.zip",
+      "anonymous_full_download_verified": true
+    },
+    "default_runtime_promoted": false
+  },
+  "release": {
+    "status": "passed",
+    "version": "0.3.12",
+    "repository": "juccistar/reception-workbench-releases",
+    "release_url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.12",
+    "release_id": 443204851,
+    "published_at": "2026-11-12T16:23:38Z",
+    "draft": false,
+    "prerelease": false,
+    "latest": true,
+    "metadata_access": "existing_authorization",
+    "anonymous_asset_downloads": true,
+    "download_directory": "artifacts/downloads/release-0312-public-jy3jh8_p",
+    "assets": [
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.12.exe",
+        "asset_id": 740171757,
+        "bytes": 136135365,
+        "sha256": "38b65ced239f749a02a0886392a9648aeb4039f4b382e3e9d872209f9134d4a9",
+        "server_digest_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.12/ReceptionWorkbench-Setup-0.3.12.exe",
+        "anonymous_full_download_verified": true
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.12.zip",
+        "asset_id": 740171751,
+        "bytes": 177915497,
+        "sha256": "f26a82b4baee8be31c84c8e73d61b797014aedde142fbdb9a6db6f0bc4441914",
+        "server_digest_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.12/ReceptionWorkbench-0.3.12.zip",
+        "anonymous_full_download_verified": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.12.exe.blockmap",
+        "asset_id": 740171752,
+        "bytes": 142252,
+        "sha256": "bd88a2dc5308be37ef794e95a0f7f062ff17ce1d414df5f2fba04e7a88594b2d",
+        "server_digest_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.12/ReceptionWorkbench-Setup-0.3.12.exe.blockmap",
+        "anonymous_full_download_verified": true
+      },
+      {
+        "name": "latest.yml",
+        "asset_id": 740171794,
+        "bytes": 726,
+        "sha256": "32749471b867f2999afb1c66666840c500eea29ac67ca88f10fb911dadf3a8fe",
+        "server_digest_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.12/latest.yml",
+        "anonymous_full_download_verified": true
+      }
+    ],
+    "uploaded": true,
+    "public": true,
+    "all_server_digests_verified": true,
+    "all_anonymous_full_downloads_verified": true
+  },
+  "known_limits": [
+    "Product lookup can add up to the bounded first-query wait; cached queries do not repeat it.",
+    "Actual get-product sample returned no URL. Successful own-product response fields are unverified.",
+    "Real SKU-card ingestion, long-running customer reception and supplier inquiry remain unaccepted.",
+    "Single synthetic AI output retains quality warnings; no universal semantic quality claim.",
+    "Remote cancellation and physical internal model-call count are not observable.",
+    "Finding no external search API in a partial directory does not prove absence everywhere."
+  ],
+  "boundaries": {
+    "real_customer_sends": 0,
+    "real_supplier_sends": 0,
+    "rfq_or_inquiry_published": 0,
+    "real_synthetic_text_ai_calls": 1,
+    "real_customer_data_sent_to_ai": false,
+    "merchant_business_db_opened_for_checks": false,
+    "installed_program_replaced": false,
+    "nsis_installer_executed": false,
+    "business_data_migrated": false,
+    "running_merchant_windows_modified": false,
+    "feishu_business_registration_writes": 0,
+    "source_git_committed_or_pushed": false
+  }
+}

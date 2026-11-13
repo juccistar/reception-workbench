@@ -1,5 +1,6 @@
-"""Grounded visual context using only in-memory synthetic records."""
+"""Legacy observation validation; new business requests use original image refs."""
 import copy
+import hashlib
 import unittest
 
 from reception_service.context import build_context, validated_facts
@@ -41,7 +42,29 @@ class PhotoObservationTests(unittest.TestCase):
         self.repo.put('photo_observation', key, record)
 
     def context(self):
-        return build_context(self.repo, self.case, {'required_fields': ['product', 'quantity']}, {'ai_remaining': 4})
+        # Explicit historical context fixture. Current build_context deliberately
+        # excludes these old reports; the legacy projection still validates them.
+        result = build_context(self.repo, self.case, {'required_fields': ['product', 'quantity']}, {'ai_remaining': 4})
+        records = []
+        for message in self.repo.list('message', conversation_id='cid'):
+            key = encoded(['cid', message['message_id']])
+            state = self.repo.get('message_image', key, {})
+            asset = self.repo.get('image_asset', state.get('sha256'), {})
+            if asset.get('sha256') == state.get('sha256') and state.get('source_version') == photo_version(message):
+                record = valid_photo_observation(message, self.repo.get('photo_observation', key), state.get('sha256'))
+                if record:
+                    records.append(record)
+        result['photo_context'] = photo_context(result['historical_evidence'] + result['recent_messages'], records)
+        result['fingerprint'] = hashlib.sha256(encoded({key: value for key, value in result.items()
+            if key not in ('budget', 'fingerprint')}).encode()).hexdigest()
+        return result
+
+    def test_new_business_context_does_not_import_legacy_observation_reports(self):
+        result = build_context(self.repo, self.case, {'required_fields': ['product', 'quantity']}, {})
+        self.assertEqual(result['photo_context']['mode'], 'direct')
+        self.assertEqual(result['photo_context']['observations'], [])
+        self.assertFalse(result['photo_context']['pixel_access'])
+        self.assertNotIn(self.record['description'], str(result))
 
     def test_projection_keeps_raw_identity_and_observation_provenance(self):
         before = copy.deepcopy(self.message)
@@ -85,7 +108,8 @@ class PhotoObservationTests(unittest.TestCase):
 
     def test_observation_and_raw_revision_change_fingerprints_but_budget_is_separate(self):
         before = self.context()
-        other_budget = build_context(self.repo, self.case, {'required_fields': ['product', 'quantity']}, {'ai_remaining': 3})
+        other_budget = self.context()
+        other_budget['budget'] = {'ai_remaining': 3}
         self.assertEqual(before['fingerprint'], other_budget['fingerprint'])
         self.assertEqual(photo_fingerprint(before), photo_fingerprint(other_budget))
         self.repo.put('photo_observation', encoded(['cid', 'image-1']), dict(self.record, description='A red bag.'))

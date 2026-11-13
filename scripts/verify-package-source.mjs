@@ -32,7 +32,7 @@ const manifest = JSON.parse(await readFile(path.join(staging, 'source-manifest.j
 assert.equal(manifest.format, 1);
 assert(manifest.files.length > 0);
 for (const row of manifest.files) {
-  assert(/^services\/reception\/(?:src\/.*\.(?:py|txt)|run\.py)$/.test(row.path));
+  assert(/^services\/reception\/(?:src\/.*\.(?:py|txt)|run\.py)$/.test(row.path) || row.path === 'services/reception/src/reception_service/resources/builtin_policies.json');
   assert(!row.path.split('/').includes('..'));
   const current = await readFile(path.join(root, row.path));
   assert.equal(current.length, row.bytes, row.path);
@@ -40,10 +40,12 @@ for (const row of manifest.files) {
   const staged = row.path === 'services/reception/run.py' ? path.join(staging, 'python/run.py') : path.join(staging, 'python/src', row.path.slice('services/reception/src/'.length));
   assert.equal(hash(await readFile(staged)), row.sha256, row.path + ' staged');
 }
-const currentPython = (await filesAt(path.join(root, 'services/reception/src'))).filter(name => (name.endsWith('.py') || name.endsWith('/SOURCE.txt')) && !name.split('/').includes('__pycache__')).map(name => 'services/reception/src/' + name);
+const currentPython = (await filesAt(path.join(root, 'services/reception/src'))).filter(name => (name.endsWith('.py') || name.endsWith('/SOURCE.txt') || name === 'reception_service/resources/builtin_policies.json') && !name.split('/').includes('__pycache__')).map(name => 'services/reception/src/' + name);
 assert.deepEqual([...manifest.files.map(row => row.path)].sort(), [...currentPython, 'services/reception/run.py'].sort(), 'Python source manifest coverage');
 const frozen = path.join(staging, 'python-dist/reception-backend');
 const frozenFiles = await filesAt(frozen);
+const policyResource = 'reception_service/resources/builtin_policies.json';
+assert.equal(hash(await readFile(path.join(frozen, '_internal', policyResource))), hash(await readFile(path.join(root, 'services/reception/src', policyResource))), 'Frozen built-in policy resource');
 for (const name of frozenFiles) assert.equal(hash(await readFile(path.join(frozen, name))), hash(await readFile(path.join(bundle, 'resources/backend', name))), 'Frozen backend ' + name);
 const stagedApp = path.join(staging, 'app');
 const asar = path.join(bundle, 'resources/app.asar');

@@ -80,6 +80,22 @@ class MockProcess:
             return deepcopy(self.answer)
         if len(args) > 3 and args[2] == 'call':
             return {'success': True, 'data': deepcopy(self.conversations if args[3] == 'query_recent_conversation' else self.history)}
+        if args[1:3] == ['--input-type=module', '-e']:
+            request = json.loads(input)
+            if request['name'] == 'get_communication_chatToken':
+                return {'success': True, 'data': {'chatToken': 'synthetic-direct-token'}}
+            if request['name'] != 'send_msg':
+                raise AssertionError('Unexpected synthetic chat tool')
+            self.send_count += 1
+            if self.send_status == 'timeout':
+                raise AdapterError('private synthetic direct timeout', code='timeout', stage='cli')
+            if self.send_status == 'incomplete':
+                return {'success': True, 'data': {}}
+            mid = 'native-synthetic-direct-' + str(self.send_count)
+            self.history['messages'].append(dict(messageId=mid, senderAliId=SELLER,
+                timestamp=max(row['timestamp'] for row in self.history['messages']) + 100,
+                content=request['arguments']['sendRequest']['content']))
+            return {'success': True, 'data': {'messageID': mid}}
         if args[1:3] != ['workflow', 'chat-analysis']:
             raise AssertionError('Only synthetic protocol commands may run')
         command = args[3]
@@ -281,11 +297,32 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn('180s', call['args'])
         self.assertEqual(call['timeout'], 190)
         self.assertTrue(call['inherit_runtime_config'])
-        self.assertIn('historical_evidence', call['input'])
+        self.assertIn('message_view', call['input'])
+        self.assertNotIn('historical_evidence', call['input'])
+        self.assertNotIn('recent_messages', call['input'])
         self.assertIn('knowledge', call['input'])
         self.assertNotIn('--approve-tools', call['args'])
         self.assertNotIn('--yes', call['args'])
         self.assertFalse(any(row['args'][1:3] == ['workflow', 'chat-analysis'] and row['args'][3] == 'run' for row in process.calls))
+
+    def test_automatic_generation_cancellation_reaches_query_without_starting(self):
+        facade, process = self.live(ai={'agent_id': 'synthetic-seller-agent'})
+        cancel = threading.Event()
+        cancel.set()
+        with self.assertRaises(ServiceError) as error:
+            facade.generate(context(), 'cancelled-request', cancel_event=cancel,
+                            on_call_start=lambda: self.fail('cancelled query started'))
+        self.assertEqual(error.exception.code, 'cancelled')
+        self.assertFalse(any(row['args'][1:3] == ['desktop', 'query'] for row in process.calls))
+
+    def test_requirements_returns_only_candidate_fields(self):
+        facade, _ = self.live(ai={'agent_id': 'synthetic-seller-agent'})
+        answer = {'facts': {}, 'category_label': '水杯', 'requirement_items': [],
+                  'summary': '采购水杯', 'action': 'send', 'reply': 'ignore'}
+        with patch.object(facade, '_business_query', return_value=({'answer': json.dumps(answer)}, [])) as query:
+            result = facade.generate_requirements(context(), 'requirements-request')
+        self.assertEqual(result, {key: answer[key] for key in ('facts', 'category_label', 'requirement_items', 'summary')})
+        self.assertEqual(query.call_args.args[1]['task_mode'], 'requirements')
 
     def test_missing_explicit_agent_blocks_without_account_scan(self):
         facade, process = self.live(ai={})
@@ -503,7 +540,8 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(result['status'], 'rejected')
             self.assertEqual(process.send_count, 0)
         facade, process = self.live()
-        result = facade.send(intent(send_mode='automatic', frozen_scope={'mode': 'selected', 'conversation_ids': [CID]}, budget_reserved=True), lambda: True)
+        result = facade.send(intent(send_mode='automatic', source_timestamp_ms=NOW,
+                                    frozen_scope={'mode': 'selected', 'conversation_ids': [CID]}, budget_reserved=True), lambda: True)
         self.assertEqual(result['status'], 'accepted')
         self.assertEqual(process.send_count, 1)
 

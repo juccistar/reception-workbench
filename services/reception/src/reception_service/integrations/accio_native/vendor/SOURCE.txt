@@ -49,3 +49,7 @@ and empty attachments are rechecked using the existing post-seal history read.
 Naive card clocks must agree with the verified source display clock at their
 stated precision; no fixed merchant or host timezone is assumed. Unknown results,
 conversation fences, source/version checks and retry limits remain unchanged.
+2026-11-12 version 0.3.7: adapters/live.py permits the additional read-only MCP tool
+ai_minisite_get_company_info for the current seller's company display name. It uses
+the same owned process, runtime identity, request-file and bounded read boundary;
+no arbitrary tool names, credentials or send entry points are exposed.

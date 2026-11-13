@@ -35,7 +35,7 @@ class AssistanceTests(unittest.TestCase):
         live = object.__new__(LiveIntegration)
         live.resolve_identity = lambda seller: seller
         seen = []
-        live._assistance_query = lambda prompt, context, request, started, event: (
+        live._assistance_query = lambda prompt, context, request, started, event, **options: (
             seen.append((prompt, context)) or {'reply': 'Thank you for waiting.'})
         context = {'seller_id': '1', 'buyer_id': '2', 'conversation_id': '1-2#test', 'case_id': None,
                    'supplement': '', 'recent_messages': [{'role': 'buyer', 'text': 'Price?'},

@@ -186,7 +186,8 @@ class LiveGateway:
         return seller, field(result, 'identitySha256')
 
     def _read(self, name, request):
-        if name not in ('query_recent_conversation', 'query_conversation_msg', 'query_conversation_msg_for_aimode'):
+        if name not in ('query_recent_conversation', 'query_conversation_msg', 'query_conversation_msg_for_aimode',
+                         'ai_minisite_get_company_info'):
             raise AdapterError('不允许该读取工具')
         node, script = os.environ.get('ACCIO_NODE_BIN'), os.environ.get('ACCIO_MCP_SCRIPT')
         if not node or not script:

@@ -80,6 +80,9 @@ def _unsafe(value):
 
 def validate_trace(rows, cid, agent, prompt, image_path):
     """Return (answer, request ID) only for the exact four-row synthetic shape."""
+    if isinstance(image_path, (tuple, list)):
+        from .business_image_trace import validate_business_trace
+        return validate_business_trace(rows, cid, agent, prompt, image_path)
     if not isinstance(rows, list) or len(rows) != 4 or _unsafe(rows):
         raise ValueError
     req, call, tool, final = rows
@@ -180,7 +183,9 @@ def request_workspace(cli, agent_id, conversation_name):
         _binding(binding)
         return binding
     except (OSError, ValueError, TypeError, UnicodeError, RuntimeError, RecursionError):
-        raise AdapterError('工作区绑定未核实', code='unverified', stage='cli') from None
+        error = AdapterError('工作区绑定未核实', code='unverified', stage='cli')
+        error.visual_stage, error.visual_status = 'workspace', 'rejected'
+        raise error from None
 
 
 class _Records:
@@ -274,7 +279,8 @@ class _Records:
             meta = matches[0]
             binding = self.workspace(meta)
             root = _binding(binding)
-            if not self.image.is_relative_to(root):
+            images = self.image if isinstance(self.image, (tuple, list)) else [self.image]
+            if any(not image.is_relative_to(root) for image in images):
                 self.status = 'rejected'
                 return None
             cid = meta['id']
@@ -287,7 +293,9 @@ class _Records:
                             if len(rows) > _MAX_ROWS:
                                 self.status = 'budget_exhausted'
                                 return None
-            if len(rows) < 4 or (len(rows) == 4 and isinstance(rows[-1], dict) and rows[-1].get('status') != 'finished'):
+            if (len(rows) < 4 or not isinstance(rows[-1], dict) or rows[-1].get('status') != 'finished'
+                    or isinstance(self.image, (tuple, list))
+                    and (rows[-1].get('role') != 'res' or rows[-1].get('tool_calls'))):
                 return None
             answer, rid = validate_trace(rows, cid, self.agent, self.prompt, self.image)
             self.status = 'completed'
@@ -310,20 +318,59 @@ class VisualQueryRunner:
         self.last_request = {}
 
     def _raise(self, code):
-        raise AdapterError('视觉查询未核实结果（%s）' % code, code=code, stage='cli',
-                           diagnostics=self.last_diagnostics) from None
+        status = self.last_diagnostics.get('status', 'invalid')
+        stage = ('preflight' if code == 'args' else 'workspace' if code == 'unavailable'
+                 else 'image_changed' if code == 'image_changed'
+                 else 'process' if status in ('process_error', 'cancelled') or code == 'cancelled'
+                 else 'read_trace')
+        self.last_diagnostics.update(visual_stage=stage, visual_status=status)
+        error = AdapterError('视觉查询未核实结果（%s）' % code, code=code, stage='cli',
+                             diagnostics=self.last_diagnostics)
+        error.visual_stage, error.visual_status = stage, status
+        raise error from None
 
-    def run(self, cli, agent_id, image_path, image_sha256, prompt, timeout=100):
+    def run_many(self, cli, agent_id, images, prompt, *, timeout=190, cancel_event=None, expected_manifest=None):
+        return self.run(cli, agent_id, [row[0] for row in images], [row[1] for row in images],
+                        prompt, timeout=timeout, cancel_event=cancel_event, expected_manifest=expected_manifest)
+
+    def run(self, cli, agent_id, image_path, image_sha256, prompt, timeout=100, cancel_event=None, expected_manifest=None):
         self.last_request = {}
         self.last_diagnostics = {'status': 'invalid', 'reads': 0, 'bytes_read': 0}
         try:
             if (not isinstance(cli, (str, Path)) or not isinstance(agent_id, str)
                     or not _ID.fullmatch(agent_id) or not isinstance(prompt, str)
-                    or not prompt or len(prompt) > 65536 or type(timeout) not in (int, float)
+                    or not prompt or len(prompt) > 140000 or type(timeout) not in (int, float)
                     or not math.isfinite(timeout) or timeout <= 0):
                 raise ValueError
-            image = _image(image_path, image_sha256)
-            if str(image) not in prompt:
+            multiple = isinstance(image_path, (tuple, list))
+            if multiple:
+                if (not isinstance(image_sha256, (tuple, list)) or not image_path
+                        or len(image_path) != len(image_sha256)):
+                    raise ValueError
+                image = tuple(_image(p, sha) for p, sha in zip(image_path, image_sha256))
+                if len(set(image)) != len(image):
+                    raise ValueError
+            else:
+                image = _image(image_path, image_sha256)
+            if multiple:
+                marker = '\nimage_inputs = '
+                if marker not in prompt:
+                    raise ValueError
+                manifest = json.loads(prompt.rsplit(marker, 1)[1], object_pairs_hook=_object)
+                if (not isinstance(manifest, list) or len(manifest) != len(image)
+                        or manifest != expected_manifest
+                        or any(not isinstance(row, dict) for row in manifest)):
+                    raise ValueError
+                for row, path, sha in zip(manifest, image, image_sha256):
+                    if (row.get('file_path') != str(path) or row.get('image_sha256') != sha
+                            or row.get('role') not in ('buyer', 'seller')
+                            or any(not isinstance(row.get(key), str) or not row[key]
+                                   for key in ('alias', 'image_id', 'message_id', 'sender_id'))):
+                        raise ValueError
+                if any(len({row[key] for row in manifest}) != len(manifest)
+                       for key in ('alias', 'image_id', 'message_id', 'file_path')):
+                    raise ValueError
+            elif str(image) not in prompt:
                 raise ValueError
             name = '接待分析草稿-视觉-' + uuid.uuid4().hex
             started = time.monotonic()
@@ -334,10 +381,14 @@ class VisualQueryRunner:
             records = _Records(cli, name, agent_id, prompt, image, started_at, started + timeout)
             if records.folder is None:
                 self._raise('unavailable')
+        except AdapterError:
+            raise
         except (OSError, ValueError, TypeError, UnicodeError, RuntimeError):
             self._raise('args')
         args = [str(cli), 'desktop', 'query', '--agent-id', agent_id, '--input', '-', '--json',
-                '--conversation-name', name, '--request-timeout', '90s']
+                '--conversation-name', name, '--request-timeout', '180s' if multiple else '90s']
+        if cancel_event is not None and cancel_event.is_set():
+            self._raise('cancelled')
         proc = None
         result = None
         try:
@@ -350,6 +401,9 @@ class VisualQueryRunner:
             track_native_child(proc)
             first = True
             while time.monotonic() < started + timeout:
+                if cancel_event is not None and cancel_event.is_set():
+                    records.status = 'cancelled'
+                    break
                 remaining = started + timeout - time.monotonic()
                 try:
                     proc.communicate(input=prompt if first else None, timeout=min(2.0, remaining))
@@ -378,7 +432,11 @@ class VisualQueryRunner:
         if result is None or proc is None or proc.poll() is None:
             self._raise('unverified')
         try:
-            _image(image, image_sha256)
+            if multiple:
+                for item, sha in zip(image, image_sha256):
+                    _image(item, sha)
+            else:
+                _image(image, image_sha256)
         except (OSError, ValueError, TypeError, RuntimeError):
             self._raise('image_changed')
         result.update(conversation_name=name, image_sha256=image_sha256)

@@ -1,0 +1,178 @@
+{
+  "version": "0.3.9",
+  "status": "published_and_verified",
+  "date": "2026-11-12",
+  "source_branch": "feat/chat-translation-0.3.4",
+  "source_committed": false,
+  "prompt_version": "reception-0.3.9.3",
+  "tests": {
+    "full_suite_run": false,
+    "backend_unique_tests_passed": 231,
+    "backend_files": 22,
+    "backend_evidence": "artifacts/verification/reception-0.3.9/targeted-backend-final.json",
+    "desktop_host_tests_passed": 80,
+    "desktop_host_files": 4,
+    "desktop_host_evidence": "artifacts/verification/reception-0.3.9/targeted-ui.log",
+    "typecheck": "passed",
+    "typecheck_evidence": "artifacts/verification/reception-0.3.9/typecheck.log",
+    "build": "passed_in_final_packaging",
+    "build_evidence": "artifacts/verification/reception-0.3.9/package-build.log",
+    "failures_preserved": [
+      "artifacts/verification/reception-0.3.9/targeted-backend.json",
+      "artifacts/verification/reception-0.3.9/smoke-generated-files.json"
+    ]
+  },
+  "native_image_attachments": {
+    "verified_workctl": "0.1.65",
+    "supported_external_parameters": false,
+    "runtime_mode": "read_compat",
+    "short_aliases": "p1/p2 in chronological buyer/seller message projection",
+    "maximum_combined_images": 4,
+    "separate_observation_task": false,
+    "evidence": "artifacts/communication/attachments-039-20261112-a/reply.json"
+  },
+  "real_read_verification": {
+    "company_name": "passed",
+    "previously_failing_seller_image": "passed",
+    "image_mime": "image/png",
+    "image_bytes": 1974,
+    "image_dimensions": [
+      116,
+      197
+    ],
+    "evidence": "artifacts/verification/reception-0.3.9/live-verification.json",
+    "note": "Read steps passed in a report whose later first synthetic AI call failed schema_facts; the original overall failed report is preserved."
+  },
+  "synthetic_ai": {
+    "calls_started_total": 7,
+    "initial_schema_failure_calls": 1,
+    "completed_calls": 6,
+    "automatic_final_recheck_prompt": "reception-0.3.9.2",
+    "manual_final_recheck_prompt": "reception-0.3.9.3",
+    "manual_metadata_and_preserved_terms": "passed",
+    "quality_status": "reviewed_with_limits",
+    "known_limits": [
+      "Small synthetic samples do not establish universal model compliance or end-to-end live reception acceptance.",
+      "The final manual suggestion still uses general sample-pricing language and an optimistic expectation of an exact cost. It remains advisory, carries verification warnings, and requires review before adoption.",
+      "Native image attachments are not supported by the verified external interface. Synthetic text checks do not prove image understanding quality."
+    ],
+    "evidence": [
+      "artifacts/verification/reception-0.3.9/live-verification.json",
+      "artifacts/verification/reception-0.3.9/live-quality-final.json",
+      "artifacts/verification/reception-0.3.9/live-manual-final.json",
+      "artifacts/verification/reception-0.3.9/quality-review.json"
+    ]
+  },
+  "package": {
+    "directory": "relase/release-0.3.9-policy-a",
+    "candidate": true,
+    "status": "passed",
+    "staging": "artifacts/build/package-input-1794473656282",
+    "portable_files": 164,
+    "python_source_inputs": 67,
+    "frozen_backend_files": 75,
+    "compiled_app_files": 6,
+    "app_asar_sha256": "c341e81f04f0c848b317a404e512758df00abe0cc6ccc6742a34a8af6f3765bf",
+    "source_manifest_sha256": "6f421a9b8b323436506f3d1cfff66c31eb7ca0f2ae864cf435d918ccfaeb1763",
+    "installer": "relase/release-0.3.9-policy-a/ReceptionWorkbench-Setup-0.3.9.exe",
+    "installer_bytes": 136011625,
+    "installer_sha256": "feeae999368b5b0d247831872e1f7fd51ca87358d7dae39404e9270419a9a3bf",
+    "portable_zip": "relase/release-0.3.9-policy-a/ReceptionWorkbench-0.3.9.zip",
+    "portable_zip_bytes": 177789534,
+    "portable_zip_sha256": "2ef5ea5f9d2d3b15d860c3b904fa30127951e708c63c0cb36953f55617347f15",
+    "release_signature": "ed25519",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "windows_authenticode_signed": false,
+    "portable_and_installer_resources_match_source": true,
+    "built_in_policy_resource_in_frozen_backend": true,
+    "default_runtime_promoted": false,
+    "evidence": [
+      "artifacts/verification/reception-0.3.9/update-integrity.json",
+      "artifacts/verification/reception-0.3.9/package-source.json",
+      "artifacts/verification/reception-0.3.9/installer-package-source.json",
+      "artifacts/verification/reception-0.3.9/release-integrity.json"
+    ]
+  },
+  "actual_windows": {
+    "status": "passed",
+    "evidence": {
+      "policy_library": "artifacts/verification/policy-library-package-039-policy-a/result.json",
+      "seller_images": "artifacts/verification/seller-images-package-039-images-a/result.json",
+      "translation_cache": "artifacts/verification/demo-package-039-base-a/result.json"
+    },
+    "policy_runtime": "installer-build/win-unpacked/ReceptionWorkbench.exe",
+    "image_and_translation_runtime": "win-unpacked/ReceptionWorkbench.exe",
+    "business_ipc_mocked": false,
+    "screenshots_reviewed": true,
+    "screenshots_reviewed_count": 10,
+    "all_test_windows_closed": true,
+    "renderer_errors": [],
+    "source_policy_window": "artifacts/verification/policy-library-source-039-b/result.json",
+    "synthetic_demo_sends": 1
+  },
+  "release": {
+    "state": "published",
+    "public": true,
+    "uploaded": true,
+    "latest": true,
+    "repository": "juccistar/reception-workbench-releases",
+    "release_id": 442702497,
+    "url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.9",
+    "published_at": "2026-11-12T09:05:21Z",
+    "assets": [
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.9.exe",
+        "bytes": 136011625,
+        "sha256": "feeae999368b5b0d247831872e1f7fd51ca87358d7dae39404e9270419a9a3bf",
+        "server_digest_verified": true,
+        "anonymous_full_download_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.9/ReceptionWorkbench-Setup-0.3.9.exe"
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.9.zip",
+        "bytes": 177789534,
+        "sha256": "2ef5ea5f9d2d3b15d860c3b904fa30127951e708c63c0cb36953f55617347f15",
+        "server_digest_verified": true,
+        "anonymous_full_download_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.9/ReceptionWorkbench-0.3.9.zip"
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.9.exe.blockmap",
+        "bytes": 142332,
+        "sha256": "f01fa28471d8f23ce30c0bf550b69d447c43282d235e1df9140a83f2774b2ea1",
+        "server_digest_verified": true,
+        "anonymous_full_download_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.9/ReceptionWorkbench-Setup-0.3.9.exe.blockmap"
+      },
+      {
+        "name": "latest.yml",
+        "bytes": 722,
+        "sha256": "15ef0c42b02dd597e903357ba3598e709ec16723d315707f60cd91945c486ee5",
+        "server_digest_verified": true,
+        "anonymous_full_download_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.9/latest.yml"
+      }
+    ],
+    "all_server_digests_verified": true,
+    "all_anonymous_full_downloads_verified": true,
+    "anonymous_api_rate_limited": true,
+    "metadata_access": "existing_authorization",
+    "evidence": [
+      "artifacts/verification/reception-0.3.9/draft-assets.json",
+      "artifacts/verification/reception-0.3.9/public-check-initial.json",
+      "artifacts/verification/reception-0.3.9/public-download.json"
+    ]
+  },
+  "boundaries": {
+    "real_customer_sends": 0,
+    "real_customer_data_sent_to_ai": false,
+    "real_customer_image_understanding_tested": false,
+    "merchant_business_db_written": false,
+    "installed_program_replaced": false,
+    "nsis_installer_executed": false,
+    "business_data_migrated": false,
+    "running_merchant_windows_modified": false,
+    "real_accio_automatic_direct_send": "not_run_in_this_release",
+    "feishu_business_registration_writes": 0
+  }
+}

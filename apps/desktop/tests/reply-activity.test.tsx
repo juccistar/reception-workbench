@@ -96,7 +96,7 @@ describe('seller-side reply activity', () => {
     const f = await open();
     act(() => f.publish(f.job('running')));
     act(() => f.publish(f.job('queued')));
-    expect(screen.getByText('AI 正在组织回复…')).toBeInTheDocument();
+    expect(screen.getByText('合成生成任务')).toBeInTheDocument();
     expect(screen.queryByText('等待 AI 生成回复…')).not.toBeInTheDocument();
   });
 
@@ -125,7 +125,7 @@ describe('seller-side reply activity', () => {
     await screen.findByRole('button', { name: '恢复此客户自动接待' });
     expect(activity()).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: '回复正文' })).toHaveValue('My handwritten reply');
-    expect(screen.getByRole('button', { name: '生成回复建议' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '润色当前回复' })).toBeEnabled();
     expect(f.calls.filter(call => call.method === 'generate_manual_suggestion')).toHaveLength(0);
   });
 
@@ -181,7 +181,7 @@ describe('truthful reception and registration copy', () => {
     f.snapshot.outbox = Array.from({ length: 20 }, (_, index) => receipt('accepted', index, 'send'));
     await open(f);
     const sidebar = screen.getByRole('region', { name: '采购需求' });
-    expect(within(sidebar).getByText('飞书：尚无登记记录')).toBeInTheDocument();
+    expect(within(sidebar).queryByText(/飞书：/)).not.toBeInTheDocument();
     expect(within(sidebar).queryByText(/平台已受理/)).not.toBeInTheDocument();
   });
   it('preserves old unknowns and distinguishes current versus earlier registration versions', () => {

@@ -9,12 +9,14 @@ export function effectiveReceptionStatus(snapshot: Snapshot | null, conversation
 
 // This is a temporary task projection, never an optimistic message or a send receipt.
 export function currentGeneration(detail: ConversationDetail, jobs: Job[]): Job | null {
+  if (!detail.case) return null;
+  const currentCase = detail.case;
   const candidates = jobs.filter(job => job.kind === 'generate_draft'
     && job.conversation_id === detail.conversation.conversation_id
-    && job.case_id === detail.case.case_id).sort((a, b) => b.created_at - a.created_at);
+    && job.case_id === currentCase.case_id).sort((a, b) => b.created_at - a.created_at);
   const latest = candidates[0];
   if (!latest || !(['queued', 'running'].includes(latest.status) || (latest.status === 'deferred' && !!latest.retry_at))) return null;
-  if (latest.source_case_revision !== undefined && latest.source_case_revision !== detail.case.revision) return null;
+  if (latest.source_case_revision !== undefined && latest.source_case_revision !== currentCase.revision) return null;
   if (latest.source_message_id) {
     const buyer = detail.messages.filter(message => message.role === 'buyer').sort((a, b) => compareMessages(b, a))[0];
     if (buyer?.message_id !== latest.source_message_id) return null;
@@ -26,7 +28,8 @@ export function receptionLabel(snapshot: Snapshot | null, detail: ConversationDe
   if (closing) return '工作台正在关闭';
   if (!connected) return '接待服务未连接';
   const projected = effectiveReceptionStatus(snapshot, detail.conversation);
-  if (projected) return projected.reason;
+  if (projected && (detail.case || detail.conversation.case_id || !projected.blockers.some(blocker => blocker.code === 'case' && blocker.message === projected.reason))) return projected.reason;
+  if (projected && !detail.case && !detail.conversation.case_id) return projected.blockers.find(blocker => blocker.code !== 'case')?.message || (detail.conversation.human_owned ? '此客户由人工接待' : '客户会话');
   if (detail.conversation.human_owned) return '此客户由人工接待';
   if (!snapshot?.reception.running) return '自动接待已暂停';
   const { scope } = snapshot.reception;

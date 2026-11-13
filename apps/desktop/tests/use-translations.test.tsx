@@ -6,7 +6,36 @@ import { useTranslations } from '../src/renderer/hooks/useTranslations';
 const item: TranslationItem = { kind: 'message', source_id: 'm1' };
 const sources = [{ item, version: 'hello' }];
 
-it('resumes failed loaded translations once after a successful AI check', async () => {
+it('reads saved translations without a key and never queues third-party work', async () => {
+  const invoke = vi.fn(async () => ({ items: [{ ...item, status: 'ready', text: '已保存的译文' }] }));
+  const bridge = { invoke, onEvent: () => () => {} } as unknown as ReceptionBridge;
+  const hook = renderHook(() => useTranslations(bridge, 'conversation', true, sources, 'seller', 4, false));
+  await waitFor(() => expect(hook.result.current.get(item, 'hello')?.text).toBe('已保存的译文'));
+  expect(invoke.mock.calls.every(([method]) => method === 'get_translations')).toBe(true);
+});
+
+it('reads a stale suggestion cache without starting a new translation request', async () => {
+  const suggestion: TranslationItem = { kind: 'manual_suggestion', source_id: 'suggestion-1' };
+  const invoke = vi.fn(async (method: string) => method === 'get_translations'
+    ? { items: [{ ...suggestion, status: 'pending', text: null }] } : { job_id: 'unexpected' });
+  const bridge = { invoke, onEvent: () => () => {} } as unknown as ReceptionBridge;
+  renderHook(() => useTranslations(bridge, 'conversation', true, [{ item: suggestion, version: 'Latest reply', requestable: false }], 'seller'));
+  await waitFor(() => expect(invoke).toHaveBeenCalled());
+  expect(invoke.mock.calls.every(([method]) => method === 'get_translations')).toBe(true);
+});
+
+it('does not treat an Accio AI check as translation authorization', async () => {
+  let listener: (event: ServiceEvent) => void = () => {};
+  const invoke = vi.fn(async (method: string) => method === 'get_translations'
+    ? { items: [{ ...item, status: 'pending', text: null }] } : { job_id: 'unexpected' });
+  const bridge = { invoke, onEvent(callback: typeof listener) { listener = callback; return () => {}; } } as unknown as ReceptionBridge;
+  renderHook(() => useTranslations(bridge, 'conversation', true, sources, 'seller', 0, false));
+  await waitFor(() => expect(invoke).toHaveBeenCalled());
+  act(() => listener({ event: 'job.updated', data: { kind: 'check_ai', status: 'succeeded', job_id: 'accio-check' } }));
+  expect(invoke.mock.calls.some(([method]) => method === 'request_translations')).toBe(false);
+});
+
+it('resumes failed loaded translations once after a successful translation check', async () => {
   let listener: (event: ServiceEvent) => void = () => {};
   let status = 'pending';
   const calls: string[] = [];
@@ -23,7 +52,7 @@ it('resumes failed loaded translations once after a successful AI check', async 
   await waitFor(() => expect(calls.filter(call => call === 'request_translations')).toHaveLength(1));
   act(() => listener({ event: 'job.updated', data: { kind: 'translation', conversation_id: 'conversation', status: 'failed' } }));
   await waitFor(() => expect(hook.result.current.get(item, 'hello')?.status).toBe('failed'));
-  const check = { event: 'job.updated', data: { kind: 'check_ai', status: 'succeeded', job_id: 'check-1' } };
+  const check = { event: 'job.updated', data: { kind: 'translation_check', status: 'succeeded', job_id: 'check-1' } };
   act(() => listener(check));
   await waitFor(() => expect(calls.filter(call => call === 'request_translations')).toHaveLength(2));
   act(() => { listener(check); listener({ event: 'state.changed', data: { reason: 'translations_updated', conversation_id: 'conversation' } }); });
@@ -61,6 +90,7 @@ it('ignores late reads after changing conversation and does not request old sour
   });
   const bridge = { invoke, onEvent: () => () => {} } as unknown as ReceptionBridge;
   const hook = renderHook(({ conversation }) => useTranslations(bridge, conversation, true, sources), { initialProps: { conversation: 'old' } });
+  await waitFor(() => expect(resolveFirst).toBeTypeOf('function'));
   hook.rerender({ conversation: 'new' });
   await waitFor(() => expect(hook.result.current.get(item, 'hello')?.text).toBe('新'));
   await act(async () => { resolveFirst({ items: [{ ...item, status: 'pending', text: null }] }); });

@@ -10,6 +10,7 @@ import hashlib
 
 from .errors import ServiceError
 from .repository import encoded, new_id, now_ms
+from .business_supplement import supplement_context
 from .send_retry_policy import (decision as send_retry_decision, retry_message as send_retry_message,
                                 settle_waiting_jobs)
 from .integrations.live import LiveIntegration
@@ -126,6 +127,8 @@ class ContinuityMixin:
         identity = [self.seller_id, case['conversation_id'], phase,
                     [task['task_id'], task['result_version']] if task else
                     [source['message_id'], text_hash(source['text'])]]
+        if phase == 'supplement' and draft:
+            identity.append(sorted(draft.get('supplement_issue_ids', [])))
         request_id = 'continue_' + text_hash(encoded(identity))
         # A fresh draft after changed evidence is a new immutable plan. Its
         # transport request remains tied to the same source/phase, so the native
@@ -147,6 +150,9 @@ class ContinuityMixin:
             plan.update(task_id=task['task_id'], result_version=task['result_version'])
         if draft:
             plan.update(draft_id=draft['draft_id'], draft_revision=draft['revision'])
+            if phase == 'supplement':
+                plan['supplement_issue_ids'] = sorted(draft.get('supplement_issue_ids', []))
+                plan['result_version'] = plan['supplement_issue_ids']
         self.repo.put('continuity_plan', plan_id, plan, history=True)
         return plan
 
@@ -163,7 +169,44 @@ class ContinuityMixin:
             task['followup_job_id'] = job_id
         self.repo.put('assistance_task', task['task_id'], task, history=True)
 
+    def _supplement_continuation(self, case):
+        cid = case['conversation_id']
+        work = self.repo.get('supplement_followup', cid) or {}
+        conversation = self.repo.get('conversation', cid)
+        messages = self._messages(cid)
+        source = self._latest_buyer(cid)
+        if (work.get('status') not in ('pending', 'generating', 'generated') or not conversation or not source or not messages
+                or work.get('case_id') != case.get('case_id') or conversation.get('case_id') != case.get('case_id')
+                or any(work.get(k) != conversation.get(k) or case.get(k) != conversation.get(k)
+                       for k in ('seller_id', 'buyer_id', 'conversation_id'))
+                or work.get('source_message_id') != source['message_id']
+                or work.get('source_text_sha256') != text_hash(source['text'])
+                or messages[-1].get('role') != 'seller' or messages[-1].get('message_id') != work.get('latest_message_id')
+                or supplement_context(self.repo, cid).get('source_id') != work.get('business_note_source_id')
+                or not work.get('issue_ids')):
+            return None
+        return {k: copy.deepcopy(work[k]) for k in ('source_message_id', 'latest_message_id', 'business_note_source_id', 'issue_ids')} | {'phase': 'supplement'}
+
+    def _supplement_source(self, case, *, excluding=None):
+        """A selected customer may have an owed issue predating this grant."""
+        cid = case['conversation_id']
+        scope = self._frozen_scope or {}
+        if scope.get('mode') == 'incoming':
+            return self._automatic_source(cid, excluding=excluding)
+        conversation = self.repo.get('conversation', cid)
+        source = self._latest_buyer(cid)
+        if (not self._supplement_continuation(case) or not self.account_verified or not conversation
+                or scope.get('seller_id') != self.seller_id or cid not in scope.get('conversation_ids', [])
+                or self._message_sync_pending(cid) or self._conversation_unresolved(cid, excluding=excluding)
+                or not source or type(source.get('timestamp_ms')) is not int
+                or any(m.get('role') == 'buyer' and m.get('timestamp_ms') is None for m in self._messages(cid))):
+            return None
+        return source
+
     def _generation_continuation(self, case):
+        supplement = self._supplement_continuation(case)
+        if supplement:
+            return supplement
         messages = self._messages(case['conversation_id'])
         source = self._latest_buyer(case['conversation_id'])
         if not messages or not source or messages[-1]['role'] != 'seller':
@@ -190,7 +233,7 @@ class ContinuityMixin:
                 return False
             # A specifically scheduled, public verification is an outgoing
             # follow-up within the frozen customer scope. It is not a new inbound.
-            if phase == 'assistance':
+            if phase in ('assistance', 'supplement'):
                 return True
         if self.mode == 'live' or scope['mode'] == 'incoming':
             baseline = self._source_baseline.get(conversation_id)
@@ -418,6 +461,11 @@ class ContinuityMixin:
         was_accepted = plan['status'] == 'accepted'
         if status == 'accepted':
             plan.update(status='accepted', updated_at=now_ms())
+            if plan.get('phase') == 'supplement':
+                work = self.repo.get('supplement_followup', plan['conversation_id']) or {}
+                if work.get('draft_id') == plan.get('draft_id'):
+                    work.update(status='complete', updated_at=now_ms())
+                    self.repo.put('supplement_followup', plan['conversation_id'], work)
             self._followup_state(plan, 'followed_up')
             draft = self.repo.get('draft', plan.get('draft_id'))
             if draft and draft['revision'] == plan['draft_revision']:
@@ -481,10 +529,15 @@ class ContinuityMixin:
         for operation in self.repo.list('operation'):
             if (operation['status'] == 'unknown' and operation['operation_id'] not in active_receipts
                     and operation.get('next_reconcile_at', 0) <= now_ms() and self.account_verified):
-                operation['reconcile_attempt'] = operation.get('reconcile_attempt', 0) + 1
-                operation['next_reconcile_at'] = now_ms() + min(60000, 2000 * 2 ** min(operation['reconcile_attempt'], 5))
-                self.repo.put('operation', operation['operation_id'], operation)
-                self._enqueue('reconcile_operation', {'operation_id': operation['operation_id']})
+                try:
+                    with self.repo.transaction():
+                        operation['reconcile_attempt'] = operation.get('reconcile_attempt', 0) + 1
+                        operation['next_reconcile_at'] = now_ms() + min(60000, 2000 * 2 ** min(operation['reconcile_attempt'], 5))
+                        self.repo.put('operation', operation['operation_id'], operation)
+                        self._enqueue('reconcile_operation', {'operation_id': operation['operation_id']})
+                except ServiceError as error:
+                    if error.code != 'task_queue_full':
+                        raise
         for plan in self.repo.list('continuity_plan'):
             if plan['status'] != 'pending' or plan['plan_id'] in active_plans:
                 continue
@@ -516,7 +569,7 @@ class ContinuityMixin:
         if (not source or not case or source['message_id'] != job['source_message_id']
                 or self._messages(job['conversation_id'])[-1]['message_id'] != source['message_id']):
             return
-        body = '收到您的消息，我会继续为您核实。' if any('一' <= c <= '鿿' for c in source['text']) else 'Thanks, I have received your message.'
+        body = '收到你的消息了。' if any('一' <= c <= '鿿' for c in source['text']) else 'Got your message.'
         self._new_continuity_plan(case, source, 'ack', body)
 
     def _can_replan_generation(self, job_id):
@@ -561,10 +614,20 @@ class ContinuityMixin:
             if any(p['conversation_id'] == job['conversation_id'] and p['phase'] == 'ack'
                    and p['status'] in ('pending', 'sending', 'unknown') for p in self.repo.list('continuity_plan')):
                 continue
-            self._job_update(job['job_id'], status='stale', retry_status='requeued', message='已按最新上下文安排下一次生成')
             try:
-                self._enqueue('generate_draft', {'case_id': case['case_id'], 'expected_case_revision': case['revision']},
-                              automatic=job.get('automatic') is True)
+                with self.repo.transaction():
+                    job.update(status='stale', retry_status='requeued', message='已按最新上下文安排下一次生成')
+                    self.repo.put('job', job['job_id'], job, history=True)
+                    params = {'case_id': case['case_id'], 'expected_case_revision': case['revision']}
+                    if job.get('supplement_followup'):
+                        work = self.repo.get('supplement_followup', job['conversation_id']) or {}
+                        if work.get('job_id') != job['job_id'] or not self._supplement_continuation(case):
+                            continue
+                        work.update(status='pending', due_at=0)
+                        self.repo.put('supplement_followup', job['conversation_id'], work)
+                        params['supplement_followup'] = True
+                    self._enqueue('generate_draft', params, automatic=job.get('automatic') is True)
+                self._emit('job.updated', job)
                 active.add(job['conversation_id'])
             except ServiceError:
                 # The source can change between inspection and claim; normal

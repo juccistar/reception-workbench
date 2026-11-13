@@ -448,7 +448,7 @@ class ManualReceptionTests(unittest.TestCase):
         self.start_manual()
         draft = self.manual('We offer free shipping.')
         self.assertTrue(draft['validation']['ready'])
-        self.assertTrue(draft['validation']['warnings'])
+        self.assertNotIn('warnings', draft['validation'])
         self.assertEqual(draft['body'], 'We offer free shipping.')
         self.assertTrue(self.prepare(draft)['confirmation_id'])
         draft = self.manual()
@@ -471,7 +471,7 @@ class ManualReceptionTests(unittest.TestCase):
         confirmation = self.prepare(draft)
         ack = self.service.call('confirm_send', {'confirmation_id': confirmation['confirmation_id']})
         self.assertTrue(self.facade.started.wait(1))
-        with patch('reception_service.context.now_ms', return_value=policy['valid_until'] + 1):
+        with patch('reception_service.policy_library.now_ms', return_value=policy['valid_until'] + 1):
             self.facade.release.set()
             result = self.wait_job(ack)
         self.assertEqual(result['status'], 'failed', result)

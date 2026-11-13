@@ -150,11 +150,27 @@ def run_maintenance(action, source, destination=None, archive=None, backup_dir=N
                     upgrades.append(name)
             if action == 'prepare' and upgrades and not lock.was_clean:
                 raise StorageError('Upgrade requires clean shutdown and a safety backup; recover the workspace with the previous version first')
+            cleanup_required = False
+            if action == 'prepare' and lock.was_clean:
+                from .reminder_cleanup import needs_reminder_cleanup
+                cleanup_required = needs_reminder_cleanup(root, paths)
         finally:
             lock.release()
-        if action == 'prepare' and upgrades:
+        cleanup = None
+        if action == 'prepare' and (upgrades or cleanup_required):
             backup = backup_workspace(root, _archive_path(backup_dir))
-        return {'status': 'completed', 'action': action, 'data_root': str(root), 'backup': str(backup) if backup else None, 'recovery_backup': str(recovery_backup) if recovery_backup else None, 'file_count': len(paths), 'upgrade_required': bool(upgrades)}
+        if action == 'prepare' and cleanup_required:
+            # No content is deleted before a complete archive is validated and
+            # every current source file is matched to that archive under lock.
+            from .reminder_cleanup import clean_reminders
+            with WorkspaceLock(root) as lock:
+                if not lock.was_clean:
+                    raise StorageError('Workspace has no managed clean shutdown')
+                current_paths = _check_snapshot(root, backup)
+                cleanup = clean_reminders(root, current_paths)
+                _workspace(root)
+                lock.mark_clean_shutdown()
+        return {'status': 'completed', 'action': action, 'data_root': str(root), 'backup': str(backup) if backup else None, 'recovery_backup': str(recovery_backup) if recovery_backup else None, 'file_count': len(paths), 'upgrade_required': bool(upgrades), 'reminder_cleanup': cleanup}
     if action == 'backup':
         target = _path(destination)
         backup = backup_workspace(root, target)

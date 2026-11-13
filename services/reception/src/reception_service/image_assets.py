@@ -22,13 +22,47 @@ MAX_DIMENSION = 8192
 MAX_PREVIEW_BYTES = 1024 * 1024
 DEADLINE_SECONDS = 15.0
 _FORMATS = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
+_BINARY_MIME = "application/octet-stream"
+_ERROR_TYPES = {
+    "image size limit exceeded": ("validation", "size_limit"),
+    "unsupported image type": ("validation", "unsupported_type"),
+    "image type mismatch": ("validation", "type_mismatch"),
+    "invalid image dimensions": ("validation", "dimensions"),
+    "animated images are unsupported": ("validation", "animation"),
+    "image preview failed": ("decode", "preview"),
+    "invalid image": ("decode", "invalid_image"),
+    "image network timeout": ("network", "timeout"),
+    "image host resolution failed": ("network", "resolution"),
+    "image redirect rejected": ("source", "redirect"),
+    "image redirect limit exceeded": ("source", "redirect"),
+    "image download rejected": ("http", "rejected"),
+    "image download failed": ("network", "download"),
+    "invalid image URL": ("source", "invalid_url"),
+    "image host not allowed": ("source", "host_not_allowed"),
+    "unsafe image host address": ("source", "unsafe_address"),
+    "image retrieval failed": ("network", "retrieval"),
+}
 # getaddrinfo is not cancellable on all supported platforms. Bound outstanding
 # resolver workers globally so repeated timeouts cannot accumulate threads.
 _DNS_SLOTS = threading.BoundedSemaphore(4)
 
 
 class ImageAssetError(ValueError):
-    """An error whose message contains no URL or third-party exception text."""
+    """An error with fixed, safe diagnostic attributes."""
+
+    def __init__(self, message):
+        super().__init__(message)
+        self.stage, self.category = _ERROR_TYPES.get(message, ("unknown", "unknown"))
+
+
+def _magic_mime(data: bytes) -> str | None:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 class _ImageRedirect(Exception):
@@ -40,9 +74,13 @@ class _ImageRedirect(Exception):
 def decode_image(data: bytes, mime: str) -> dict:
     if not isinstance(data, bytes) or len(data) > MAX_BYTES:
         raise ImageAssetError("image size limit exceeded")
-    if not isinstance(mime, str) or mime.lower() not in _FORMATS.values():
+    if not isinstance(mime, str) or mime.lower() not in (*_FORMATS.values(), _BINARY_MIME):
         raise ImageAssetError("unsupported image type")
     mime = mime.lower()
+    if mime == _BINARY_MIME:
+        mime = _magic_mime(data)
+        if mime is None:
+            raise ImageAssetError("unsupported image type")
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -161,7 +199,7 @@ def _transport(host: str, path: str, addresses: list[str], deadline: float) -> t
         if response.status != 200:
             raise ImageAssetError("image download rejected")
         mime = response.getheader("Content-Type", "").split(";", 1)[0].strip().lower()
-        if mime not in _FORMATS.values():
+        if mime not in (*_FORMATS.values(), _BINARY_MIME):
             raise ImageAssetError("unsupported image type")
         if response.getheader("Content-Encoding", "identity").lower() != "identity":
             raise ImageAssetError("image download rejected")

@@ -116,6 +116,29 @@ class ManualChatTests(unittest.TestCase):
         self.service.repo.put('conversation', self.cid, conversation)
         return case
 
+    def test_no_case_is_not_ownership_error_and_manual_chat_sends(self):
+        conversation = self.service.repo.get('conversation', self.cid)
+        conversation['case_id'] = None
+        self.service.repo.put('conversation', self.cid, conversation)
+        detail = self.service.get_conversation(self.cid)
+        self.assertIsNone(detail['case'])
+        self.assertNotIn('case', [b['code'] for b in detail['conversation']['reception_status']['blockers']])
+        draft = self.save('Manual message without a procurement case.')
+        self.assertIsNone(draft['case_id'])
+        self.assertEqual(self.send(draft)['status'], 'succeeded')
+        self.assertEqual(self.facade.chat_intents[-1]['reply'], draft['body'])
+
+    def test_foreign_case_still_reports_ownership_error(self):
+        conversation = self.service.repo.get('conversation', self.cid)
+        case = self.service.repo.get('case', self.case_id)
+        case['buyer_id'] = 'foreign-buyer'
+        self.service.repo.put('case', self.case_id, case)
+        from reception_service.reception_state import ReceptionProjection
+        status = ReceptionProjection(self.service).status(conversation)
+        self.assertIn('case', [block['code'] for block in status['blockers']])
+        with self.assertRaises(ServiceError):
+            self.service.get_conversation(self.cid)
+
     def test_sync_yields_to_queued_human_before_reading_next_customer(self):
         self.ingest(cid='synthetic-other', buyer='10003')
         draft = self.save()
@@ -767,12 +790,14 @@ class ManualChatTests(unittest.TestCase):
         self.facade.last_ai_diagnostics = {'result_source': 'completed_record', 'cli_timed_out': True, 'recovery_status': 'completed'}
         checked = self.wait_job(self.service.call('check_ai'))
         self.assertEqual(checked['status'], 'succeeded', checked)
-        self.assertEqual(checked['diagnostics'], self.facade.last_ai_diagnostics)
+        for key, value in self.facade.last_ai_diagnostics.items():
+            self.assertEqual(checked['diagnostics'][key], value)
         case = self.service.repo.get('case', self.case_id)
         generated = self.wait_job(self.service.call('generate_draft', {
             'case_id': self.case_id, 'expected_case_revision': case['revision']}))
         self.assertEqual(generated['status'], 'succeeded', generated)
-        self.assertEqual(generated['diagnostics'], self.facade.last_ai_diagnostics)
+        for key, value in self.facade.last_ai_diagnostics.items():
+            self.assertEqual(generated['diagnostics'][key], value)
 
 
 if __name__ == '__main__':

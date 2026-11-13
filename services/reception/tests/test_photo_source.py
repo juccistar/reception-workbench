@@ -39,6 +39,38 @@ class PhotoSourceTests(unittest.TestCase):
         self.assertEqual(self.gateway._read.call_args_list[1].args[1], dict(
             conversationId=CID, selfAliId=1, domain='icbu', count=100, limitTimeStamp=1001, forward=False))
 
+    def test_seller_image_uses_seller_sender_and_the_same_account(self):
+        expected = dict(EXPECTED, role='seller', own=True)
+        for page in (self.ordinary, self.aimode):
+            page['messages'][0]['senderAliId'] = '1'
+        self.assertEqual(self.lookup(expected)['resource_url'], URL)
+        self.gateway._identity.assert_called_with('1')
+        for call in self.gateway._read.call_args_list:
+            self.assertEqual(call.args[1]['selfAliId'], 1)
+            self.assertEqual(call.args[1]['conversationId'], CID)
+
+    def test_simultaneous_buyer_photo_does_not_replace_seller_image(self):
+        expected = dict(EXPECTED, role='seller', own=True)
+        for page in (self.ordinary, self.aimode):
+            buyer = copy.deepcopy(page['messages'][0])
+            buyer['messageId'] = 'buyer-image'
+            page['messages'][0]['senderAliId'] = '1'
+            page['messages'].append(buyer)
+        self.assertEqual(self.lookup(expected)['resource_url'], URL)
+
+    def test_seller_image_rejects_wrong_sender_role_and_ownership(self):
+        expected = dict(EXPECTED, role='seller', own=True)
+        with self.assertRaises(ServiceError):
+            self.lookup(expected)
+        for page in (self.ordinary, self.aimode):
+            page['messages'][0]['senderAliId'] = '1'
+        for changed in (dict(own=False), dict(own=1), dict(role='unknown')):
+            with self.subTest(changed=changed), self.assertRaises(ServiceError):
+                self.lookup(dict(expected, **changed))
+        self.aimode['messages'][0]['senderRole'] = 'buyer'
+        with self.assertRaises(ServiceError):
+            self.lookup(expected)
+
     def test_mutated_ordinary(self):
         for key, value in [('content', 'changed'), ('messageId', 'other'), ('senderAliId', '1'),
                            ('timestamp', 999), ('quoteMessage', {'content': 'changed'})]:

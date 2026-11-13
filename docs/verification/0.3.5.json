@@ -1,0 +1,66 @@
+{
+  "version": "0.3.5",
+  "status": "published_and_verified",
+  "scope": "Allow explicit loopback HTTP translation gateways and explain configuration failures",
+  "source_branch": "feat/chat-translation-0.3.4",
+  "source_committed": false,
+  "tests": {
+    "full_suite_run": false,
+    "backend": {"passed": 20, "files": {"test_translation_provider.py": 7, "test_external_translation_service.py": 13}},
+    "desktop": {"passed": 28, "files": {"translation-endpoint.test.ts": 3, "translation-settings.test.tsx": 9, "chat-host.test.ts": 16}},
+    "typecheck": "passed",
+    "build": "passed"
+  },
+  "actual_windows": {
+    "source_demo": "artifacts/verification/demo-loopback-035-source-a/result.json",
+    "source_status": "passed",
+    "final_status": "passed",
+    "final_executable": "artifacts/verification/demo-loopback-035-package-a/result.json",
+    "business_ipc_mocked": false,
+    "loopback_gateway_settings_saved": true,
+    "invalid_gateway_explained": true,
+    "encrypted_key_save_and_reopen": true,
+    "persistent_translation_cache": true,
+    "restart_reception_paused": true,
+    "screenshots_reviewed": true
+  },
+  "local_magpie": {
+    "endpoint": "http://127.0.0.1:3425/v1/models",
+    "http_status": 200,
+    "requested_model_exists": true,
+    "requested_model": "codex/gpt-5.6-luna",
+    "generation_requests": 0
+  },
+  "package": {
+    "directory": "relase/release-0.3.5-loopback",
+    "candidate": true,
+    "status": "passed",
+    "portable_files": 163,
+    "python_source_inputs": 58,
+    "frozen_backend_files": 74,
+    "compiled_app_files": 6,
+    "source_manifest_sha256": "8d771dd0108600c50f5c3e7f6dc3f346644dab86cb3fd1b54b70745cf5914170",
+    "app_asar_sha256": "3da7e4a928652e8073eef0831013b03120828ec4b02c5495c5cac8fee7df2be2",
+    "portable_zip_sha256": "3f3d0e66d0decbd1474a24b65c24bfdba5a059119faf6f49d151116af41e2055",
+    "installer_sha256": "2d5e3a129a8a4765d1d013077a5d762c515676c89d01ef2cf890cccdb56fbf05",
+    "release_signature": "ed25519",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "windows_authenticode_signed": false,
+    "source_matches_package": true,
+    "default_runtime_promoted": false,
+    "evidence": ["artifacts/verification/translation-0.3.5/release-integrity.json", "artifacts/verification/translation-0.3.5/update-integrity.json", "artifacts/verification/translation-0.3.5/package-source.json"]
+  },
+  "release": {
+    "repository": "juccistar/reception-workbench-releases",
+    "tag": "v0.3.5",
+    "id": 441707181,
+    "url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.5",
+    "state": "published",
+    "public": true,
+    "latest": true,
+    "server_asset_digests_verified": true,
+    "anonymous_downloads_verified": true,
+    "evidence": ["artifacts/verification/translation-0.3.5/github-draft-check.json", "artifacts/verification/translation-0.3.5/github-public-check.json"]
+  },
+  "boundaries": {"real_model_calls": 0, "real_customer_sends": 0, "production_data_accessed": false, "business_data_migrated": false, "installed_program_replaced": false, "nsis_installer_executed": false}
+}

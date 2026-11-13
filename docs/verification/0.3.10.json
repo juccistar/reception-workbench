@@ -1,0 +1,249 @@
+{
+  "version": "0.3.10",
+  "status": "published_and_verified",
+  "date": "2026-11-12",
+  "source_branch": "feat/chat-translation-0.3.4",
+  "source_committed": false,
+  "prompt_version": "reception-0.3.10.1",
+  "model_payload_version": "reception-payload-0.3.10.1",
+  "tests": {
+    "full_suite_run": false,
+    "backend_unique_tests_passed": 347,
+    "backend_files": 24,
+    "desktop_host_tests_passed": 117,
+    "desktop_host_files": 8,
+    "typecheck": "passed",
+    "build": "passed_in_final_packaging",
+    "evidence": [
+      "artifacts/verification/reception-0.3.10/targeted-backend-final.json",
+      "artifacts/verification/reception-0.3.10/targeted-ui.log",
+      "artifacts/verification/reception-0.3.10/typecheck.log",
+      "artifacts/verification/reception-0.3.10/package-build.log"
+    ],
+    "failures_preserved": [
+      "artifacts/verification/reception-0.3.10/targeted-backend.json",
+      "artifacts/verification/reception-0.3.10/targeted-ui-initial.log",
+      "artifacts/verification/reception-0.3.10/package-verification.log",
+      "artifacts/verification/requirements-ui-0310-01/report.json",
+      "artifacts/verification/requirements-0310-02/report.json"
+    ]
+  },
+  "settings": {
+    "new_defaults": {
+      "probe_seconds": 2,
+      "merge_seconds": 1,
+      "poll_seconds": 30
+    },
+    "existing_explicit_values_preserved": true,
+    "recent_text_messages": 50,
+    "append_only_missing_essential_evidence": true,
+    "response_presets_added": false,
+    "accio_ai_slots_per_merchant": 1,
+    "image_batch_mib": 64,
+    "image_prepare_seconds": 60,
+    "image_parallelism": 2,
+    "generation_retry_limit": 3,
+    "translation_parallelism": 2,
+    "translation_context_messages": 2,
+    "translation_context_bytes": 300,
+    "required_fields_by_category": true,
+    "style_priority": true
+  },
+  "synthetic_ai": {
+    "version": "0.3.10",
+    "prompt_version": "reception-0.3.10.1",
+    "status": "passed",
+    "at": "2026-11-12T11:07:09.602040+00:00",
+    "customer_sends": 0,
+    "merchant_business_db_opened": false,
+    "real_customer_data_sent_to_ai": false,
+    "ai_calls_started": 3,
+    "maximum_ai_calls": 3,
+    "cases": [
+      {
+        "case": "own-synthetic-workspace",
+        "status": "passed",
+        "elapsed_ms": 11563
+      },
+      {
+        "case": "five-original-images",
+        "status": "passed",
+        "image_count": 5,
+        "verified_read_count": 5,
+        "roles": [
+          "buyer",
+          "seller",
+          "buyer",
+          "seller",
+          "buyer"
+        ],
+        "all_hashes_and_sources_match": true,
+        "reply": "Happy to go through them in order. The five images are all plain, flat color fields with a short white label in the upper-left corner:\n\n1) Red\n2) Green\n3) Blue\n4) Yellow\n5) Purple\n\nImages 2 and 4 came from our side, and the rest are the three you sent. That's the full color description — nothing else is being implied here regarding price, samples or selection, since you've noted this is a color check only. If you'd like the shades compared side by side or want specific hex-style color names, tell me and I'll follow up on that.",
+        "elapsed_ms": 182797
+      },
+      {
+        "case": "ordinary-text-polish",
+        "status": "passed",
+        "verified_read_count": 0,
+        "reply": "The sample costs $15, and shipping is not included.",
+        "elapsed_ms": 16656
+      }
+    ],
+    "identity_matches": true,
+    "evidence": "artifacts/verification/reception-0.3.10/live-synthetic.json",
+    "stable_latency_quantiles_claimed": false,
+    "speedup_percentage_claimed": false,
+    "real_eight_or_twenty_image_runs": false
+  },
+  "images": {
+    "transport": "read_compat",
+    "native_attachment_interface_added": false,
+    "fixed_image_count_limit": null,
+    "offline_counts_tested": [
+      5,
+      8,
+      20
+    ],
+    "live_synthetic_images": 5,
+    "preparation_is_not_model_read": true,
+    "ordinary_polish_automatically_reads_history_images": false,
+    "native_source_call_deadline_limit": "Checked after each native source call returns; HTTPS downloads have their own timeout."
+  },
+  "actual_windows": {
+    "status": "passed",
+    "evidence": {
+      "requirements_and_settings": "artifacts/verification/requirements-package-0310-a/report.json",
+      "translation_cache": "artifacts/verification/demo-package-0310-base-a/result.json",
+      "seller_and_buyer_images": "artifacts/verification/seller-images-package-0310-images-a/result.json"
+    },
+    "packaged": true,
+    "all_test_windows_closed": true,
+    "screenshots_reviewed": true,
+    "screenshots_reviewed_count": 13,
+    "business_ipc_mocked": false,
+    "requirements_checks": [
+      "assistance-start-save",
+      "organize-preview-apply",
+      "create-case-move-candidate",
+      "review-fact",
+      "locate-source",
+      "same-category-cases",
+      "column-280-no-overflow",
+      "drawer-no-overflow",
+      "reopen-persistence",
+      "advanced-defaults-and-category-template-save"
+    ]
+  },
+  "package": {
+    "directory": "relase/release-0.3.10-a",
+    "candidate": true,
+    "status": "passed",
+    "staging": "artifacts/build/package-input-1794482080833",
+    "portable_files": 164,
+    "portable_zip_entries": 165,
+    "python_source_inputs": 71,
+    "frozen_backend_files": 75,
+    "app_asar_sha256": "c97f4bb26e00cb7e9312894f0f8d9340db4b5537efb8fc2432500a2383ce93b1",
+    "source_manifest_sha256": "d20987cf1dacab74db37f0ffaf8c2447e80112d99911013494e308e99e671d3b",
+    "release_signature": "ed25519",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "windows_authenticode_signed": false,
+    "both_bundles_guides_match_frozen_source": true,
+    "guides_publication_status": "Bundled guide retains the pre-publication build checkpoint; final public state is in this record and GitHub Release.",
+    "installer": {
+      "name": "ReceptionWorkbench-Setup-0.3.10.exe",
+      "asset_id": 739219993,
+      "bytes": 136068183,
+      "sha256": "12485a03b217aeb1a02749cf713282abb3d1d815f6f39e0e868adeddab6900ec",
+      "server_digest_verified": true,
+      "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.10/ReceptionWorkbench-Setup-0.3.10.exe",
+      "anonymous_full_download_verified": true
+    },
+    "portable_zip": {
+      "name": "ReceptionWorkbench-0.3.10.zip",
+      "asset_id": 739220005,
+      "bytes": 177849709,
+      "sha256": "eb6d709ca6ed405b7513109a5918a57c664221eb59ea60f86e9f317ef28f1fa1",
+      "server_digest_verified": true,
+      "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.10/ReceptionWorkbench-0.3.10.zip",
+      "anonymous_full_download_verified": true
+    },
+    "default_runtime_promoted": false
+  },
+  "release": {
+    "status": "passed",
+    "version": "0.3.10",
+    "repository": "juccistar/reception-workbench-releases",
+    "release_url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.10",
+    "release_id": 442850680,
+    "published_at": "2026-11-12T11:28:25Z",
+    "draft": false,
+    "prerelease": false,
+    "latest": true,
+    "metadata_access": "existing_authorization",
+    "anonymous_asset_downloads": true,
+    "download_directory": "artifacts/downloads/release-0310-public-wugyhdjp",
+    "assets": [
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.10.exe",
+        "asset_id": 739219993,
+        "bytes": 136068183,
+        "sha256": "12485a03b217aeb1a02749cf713282abb3d1d815f6f39e0e868adeddab6900ec",
+        "server_digest_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.10/ReceptionWorkbench-Setup-0.3.10.exe",
+        "anonymous_full_download_verified": true
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.10.zip",
+        "asset_id": 739220005,
+        "bytes": 177849709,
+        "sha256": "eb6d709ca6ed405b7513109a5918a57c664221eb59ea60f86e9f317ef28f1fa1",
+        "server_digest_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.10/ReceptionWorkbench-0.3.10.zip",
+        "anonymous_full_download_verified": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.10.exe.blockmap",
+        "asset_id": 739219995,
+        "bytes": 142268,
+        "sha256": "080abb7e48cb8ff7bd726fb8b4b85caf0c99bf45d1ae42d87b4223ab0ce3b39e",
+        "server_digest_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.10/ReceptionWorkbench-Setup-0.3.10.exe.blockmap",
+        "anonymous_full_download_verified": true
+      },
+      {
+        "name": "latest.yml",
+        "asset_id": 739220004,
+        "bytes": 726,
+        "sha256": "3b78e6960ed61c9d952e69ab56e37f2af903d9d8f752750699812533de9fe872",
+        "server_digest_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.10/latest.yml",
+        "anonymous_full_download_verified": true
+      }
+    ],
+    "uploaded": true,
+    "public": true,
+    "all_server_digests_verified": true,
+    "all_anonymous_full_downloads_verified": true
+  },
+  "known_limits": [
+    "Real multi-image processing can remain slow; this five-image sample took about 183 seconds.",
+    "Only five images were tested in the real runtime; eight and twenty were synthetic offline tests.",
+    "Native image transport remains read_compat, with resource budgets and current-request read evidence.",
+    "Conservative seller-quotation and buyer-budget language rules do not cover all natural-language expressions.",
+    "Question limits affect prompt and accepted metadata, not a strict count of every question in reply prose.",
+    "AI cancellation does not prove immediate remote cancellation or stopped billing.",
+    "AI concurrency two, altered AI timeouts, stage templates, total history-read deadlines and a historical-image picker remain future candidates."
+  ],
+  "boundaries": {
+    "real_customer_sends": 0,
+    "real_customer_data_sent_to_ai": false,
+    "merchant_business_db_opened_for_release_checks": false,
+    "installed_program_replaced": false,
+    "nsis_installer_executed": false,
+    "business_data_migrated": false,
+    "running_merchant_windows_modified": false,
+    "feishu_business_registration_writes": 0,
+    "source_git_committed_or_pushed": false
+  }
+}

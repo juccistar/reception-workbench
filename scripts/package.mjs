@@ -20,7 +20,9 @@ async function copyPublicPython(from,to) {
  for(const item of await readdir(from,{withFileTypes:true})) {
   if(item.isSymbolicLink()) throw new Error('Source links are not allowed in a distribution.');
   if(item.isDirectory()&&item.name!=='__pycache__') await copyPublicPython(path.join(from,item.name),path.join(to,item.name));
-  if(item.isFile()&&(item.name.endsWith('.py')||item.name==='SOURCE.txt')) {const source=path.join(from,item.name);await copyFile(source,path.join(to,item.name));const bytes=await readFile(source);manifest.push({path:path.relative(root,source).replaceAll('\\','/'),bytes:bytes.length,sha256:hash(bytes)});}
+  const source=path.join(from,item.name);
+  const relative=path.relative(root,source).replaceAll('\\','/');
+  if(item.isFile()&&(item.name.endsWith('.py')||item.name==='SOURCE.txt'||relative==='services/reception/src/reception_service/resources/builtin_policies.json')) {await copyFile(source,path.join(to,item.name));const bytes=await readFile(source);manifest.push({path:relative,bytes:bytes.length,sha256:hash(bytes)});}
  }
 }
 async function copyTree(from,to,include=()=>true) {
@@ -56,7 +58,7 @@ const runBytes=await readFile(path.join(sourceRoot,'run.py'));
 manifest.push({path:'services/reception/run.py',bytes:runBytes.length,sha256:hash(runBytes)});
 await writeFile(path.join(staging,'source-manifest.json'),JSON.stringify({format:1,files:manifest},null,2));
 const pythonDist=path.join(staging,'python-dist');
-run(pythonPath(),['-m','PyInstaller','--clean','--noconfirm','--noupx','--onedir','--console','--name','reception-backend','--paths',path.join(staging,'python/src'),'--collect-submodules','reception_service','--distpath',pythonDist,'--workpath',path.join(staging,'python-work'),'--specpath',path.join(staging,'python-spec'),path.join(staging,'python/run.py')],path.join(staging,'python'));
+run(pythonPath(),['-m','PyInstaller','--clean','--noconfirm','--noupx','--onedir','--console','--name','reception-backend','--paths',path.join(staging,'python/src'),'--collect-submodules','reception_service','--add-data',path.join(staging,'python/src/reception_service/resources/builtin_policies.json')+path.delimiter+'reception_service/resources','--distpath',pythonDist,'--workpath',path.join(staging,'python-work'),'--specpath',path.join(staging,'python-spec'),path.join(staging,'python/run.py')],path.join(staging,'python'));
 const appStage=path.join(staging,'app');
 for(const entry of ['main','preload','renderer'])await copyTree(path.join(root,'artifacts/app',entry),path.join(appStage,entry));
 const electronDist=path.join(staging,'electron-dist');

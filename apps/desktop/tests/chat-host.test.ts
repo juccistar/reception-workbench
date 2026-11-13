@@ -9,9 +9,13 @@ const host = vi.hoisted(() => ({
   invoke: vi.fn(async () => ({ job_id: 'synthetic-chat-job' })),
   showMessageBox: vi.fn(async () => ({ response: 1 })),
   ipcInvoke: vi.fn(async () => ({ job_id: 'synthetic-chat-job' })),
+  translationSave: vi.fn(), translationGet: vi.fn(),
   exposed: undefined as ReceptionBridge | undefined,
   window: undefined as any,
 }));
+vi.mock('../src/main/translation-host', () => ({ TranslationHost: class {
+  start = vi.fn(async () => {}); stop = vi.fn(); get = host.translationGet; save = host.translationSave;
+} }));
 vi.mock('node:fs', () => ({ existsSync: () => true, mkdirSync: vi.fn() }));
 vi.mock('node:fs/promises', () => ({ mkdir: vi.fn(), readFile: vi.fn(async () => { throw new Error('synthetic empty profile'); }), writeFile: vi.fn(), rename: vi.fn() }));
 vi.mock('../../../scripts/data-location.mjs', () => ({
@@ -33,6 +37,7 @@ vi.mock('../src/main/service-client', () => ({
   },
 }));
 vi.mock('electron', () => ({
+  safeStorage: { isEncryptionAvailable: () => false, encryptString: vi.fn(), decryptString: vi.fn() },
   app: { isPackaged: false, setName: vi.fn(), setPath: vi.fn(), requestSingleInstanceLock: () => true, whenReady: async () => {}, on: vi.fn(), quit: vi.fn(), exit: vi.fn() },
   BrowserWindow: class {
     webContents = { mainFrame: { url: '' }, setWindowOpenHandler: vi.fn(), on: vi.fn(), send: vi.fn(), session: { setPermissionRequestHandler: vi.fn() } };
@@ -88,6 +93,9 @@ describe('native chat IPC boundary', () => {
     await expect(call(validEvent(), 'send_chat', { ...request, client_request_id: '' })).rejects.toThrow();
     await expect(call(validEvent(), 'exec', { command: 'arbitrary' })).rejects.toThrow('不允许');
     await expect(call(validEvent(), 'confirm_send', {})).rejects.toThrow('不允许');
+    await expect(call(validEvent(), 'configure_translation_credential', { api_key: 'synthetic' })).rejects.toThrow('不允许');
+    await expect(call(validEvent(), 'save_translation_settings', { enabled: true })).rejects.toThrow('不允许');
+    await expect(call(validEvent(), 'validate_translation_settings', { base_url: 'https://example.com/v1' })).rejects.toThrow('不允许');
     expect(host.invoke).not.toHaveBeenCalled();
   });
 
@@ -125,6 +133,27 @@ describe('native chat IPC boundary', () => {
     expect(host.ipcInvoke).toHaveBeenCalledWith('reception:update:settings', { feed_url: 'https://updates.example.test/stable/' });
   });
 
+  it('routes translation saves through the shared coordinator and preserves both revisions', async () => {
+    const settings = { enabled: false, base_url: 'http://127.0.0.1:3425/v1', model: 'sample', revision: 1, shared_revision: 4 };
+    const info = { ...settings, revision: 2, has_key: false };
+    host.invoke.mockClear(); host.translationSave.mockClear();
+    host.translationSave.mockResolvedValueOnce(info);
+    await expect(host.handlers.get('reception:translation:save')!(validEvent(), settings)).resolves.toEqual(info);
+    expect(host.translationSave).toHaveBeenCalledWith(settings);
+    expect(host.invoke).not.toHaveBeenCalled();
+  });
+
+  it('returns coordinator errors on dedicated IPC and rejects foreign translation senders', async () => {
+    const save = host.handlers.get('reception:translation:save')!;
+    const settings = { enabled: false, base_url: 'http://remote.example.com/v1', model: 'sample', revision: 1 };
+    host.translationSave.mockClear();
+    host.translationSave.mockRejectedValueOnce(new Error('本机网关可使用 HTTP'));
+    await expect(save(validEvent(), settings)).rejects.toThrow('本机网关可使用 HTTP');
+    host.translationSave.mockClear();
+    expect(() => save({ ...validEvent(), sender: {} }, { ...settings, base_url: 'http://127.0.0.1:3425/v1' })).toThrow('无效的操作来源');
+    expect(host.translationSave).not.toHaveBeenCalled();
+  });
+
   it('copies only host-generated launch instructions and never forwards renderer commands', async () => {
     host.ipcInvoke.mockClear();
     await (host.exposed!.getAccioLaunchInfo as any)({ executable: 'never-accepted.exe' });
@@ -143,6 +172,6 @@ describe('native chat IPC boundary', () => {
     await expect(bridge.invoke('shell' as any, {})).rejects.toThrow('不允许');
     await expect(bridge.invoke('confirm_send', {})).rejects.toThrow('不允许');
     expect(host.ipcInvoke).not.toHaveBeenCalled();
-    expect(Object.keys(bridge).sort()).toEqual(['chooseWorkctl', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate'].sort());
+    expect(Object.keys(bridge).sort()).toEqual(['chooseWorkctl', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate', 'getTranslationSettings', 'saveTranslationSettings', 'checkTranslationProvider', 'clearTranslationCache'].sort());
   });
 });

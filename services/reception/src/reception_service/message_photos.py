@@ -7,11 +7,13 @@ alone grants no AI capability and never changes a send or reception permission.
 from __future__ import annotations
 
 import copy
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout
 import re
+import time
 
-from .errors import ServiceError
+from .errors import ServiceError, read_diagnostics
 from .photos import (has_photo, is_photo_placeholder, photo_version, with_photo_notice,
-                     photo_observation_id, valid_photo_observation)
+                     photo_observation_id, valid_photo_observation, pending_photo_message_ids)
 from .repository import encoded, new_id, now_ms
 
 _ACTIVE = frozenset({'queued', 'running'})
@@ -40,7 +42,7 @@ class MessagePhotosMixin:
 
     def _photo_state(self, message):
         version = photo_version(message)
-        if message.get('role') != 'buyer' or not is_photo_placeholder(message.get('text')):
+        if message.get('role') not in ('buyer', 'seller') or not is_photo_placeholder(message.get('text')):
             return {'source_version': version, 'status': 'unavailable', 'reason': 'format_not_supported',
                     'message': '此类图片记录尚不能取得原图，请在国际站查看'}
         record = self.repo.get('message_image', encoded([message['conversation_id'], message['message_id']]), {})
@@ -61,6 +63,7 @@ class MessagePhotosMixin:
             message = self._photo_target(conversation_id, message_id, source_version)
             state = self._photo_state(message)
             result = {key: state[key] for key in ('status', 'source_version', 'message') if key in state}
+            result['input_mode'] = 'direct'
             result['vision_status'] = 'unavailable' if state.get('status') in ('failed', 'unavailable') else 'not_started'
             if state.get('status') == 'ready':
                 asset = self.repo.get('image_asset', state.get('sha256'))
@@ -130,11 +133,9 @@ class MessagePhotosMixin:
         return {'job_id': job['job_id']}
 
     def _queue_recent_photos(self, conversation_id):
-        # Read only a bounded recent tail. Old images are fetched on explicit view.
+        # Preview queue capacity is backpressure, not a business image limit.
         with self._lock:
-            messages = sorted(self.repo.list('message', conversation_id=conversation_id),
-                              key=lambda row: (row.get('timestamp_ms') or -1, row['message_id']))[-20:]
-            candidates = [row for row in messages if row.get('role') == 'buyer' and is_photo_placeholder(row.get('text'))][-4:]
+            candidates = self._vision_candidates(conversation_id, include_seller=True)
             for message in candidates:
                 if self._photo_state(message)['status'] != 'not_loaded':
                     continue
@@ -145,10 +146,23 @@ class MessagePhotosMixin:
                     # Optional photo retrieval never turns a successful text sync into failure.
                     pass
 
-    def _vision_candidates(self, conversation_id):
+    def _vision_candidates(self, conversation_id, *, include_seller=False):
+        with self._lock:
+            return self._vision_candidates_locked(conversation_id, include_seller=include_seller)
+
+    def _vision_candidates_locked(self, conversation_id, *, include_seller=False):
+        # Count text messages separately: image bursts do not shrink the text window.
+        roles = ('buyer', 'seller') if include_seller else ('buyer',)
         messages = sorted(self.repo.list('message', conversation_id=conversation_id),
-                          key=lambda row: (row.get('timestamp_ms') or -1, row['message_id']))[-20:]
-        return [m for m in messages if m.get('role') == 'buyer' and is_photo_placeholder(m.get('text'))][-4:]
+                          key=lambda row: (row.get('timestamp_ms') or -1, row['message_id']))
+        from .reception_context import dialogue_window
+        conversation = self.repo.get('conversation', conversation_id, {})
+        case = self.repo.get('case', conversation.get('case_id'), {}) if conversation.get('case_id') else {}
+        pending = pending_photo_message_ids(self.repo, conversation_id, messages)
+        recent, historical = dialogue_window(messages, case, pending_message_ids=pending)
+        selected = {row['message_id'] for row in recent + historical}
+        return [m for m in messages if m['message_id'] in selected and m.get('role') in roles
+                and is_photo_placeholder(m.get('text'))]
 
     @staticmethod
     def _vision_record_matches(message, record, sha):
@@ -180,6 +194,224 @@ class MessagePhotosMixin:
                 continue
             count += 1
         return count
+
+    def _prepare_direct_photos(self, conversation_id, job_id, epoch, facade):
+        """Load originals on this worker; the main AI request reads them itself."""
+        cid = conversation_id
+        with self._lock:
+            token = self._read_token(facade)
+            original_messages = copy.deepcopy(self.repo.list('message', conversation_id=cid))
+            original_conversation = copy.deepcopy(self._require('conversation', cid))
+            original_chat = self.repo.get('chat_draft', cid)
+            original_note = self._supplement(cid)
+            from .requirement_media import get_product_source_images
+            job_case_id = self._require('job', job_id).get('case_id')
+            case = self.repo.get('case', job_case_id, {}) if job_case_id else {}
+            if any(case.get(key) != original_conversation.get(key) for key in ('seller_id', 'buyer_id', 'conversation_id')):
+                case = {}
+            candidates = copy.deepcopy(get_product_source_images(self.repo, case, original_messages))
+            seconds = self.settings.get('image_prepare_seconds', 60)
+            seconds = seconds if type(seconds) is int and 1 <= seconds <= 600 else 60
+            batch_mib = self.settings.get('image_batch_mib', 64)
+            batch_mib = batch_mib if type(batch_mib) is int and 1 <= batch_mib <= 1024 else 64
+            parallelism = self.settings.get('image_parallelism', 2)
+            parallelism = parallelism if type(parallelism) is int and 1 <= parallelism <= 4 else 2
+            bindings = {}
+            candidate_order = sorted(reversed(candidates),
+                                     key=lambda message: self._photo_state(message).get('status') != 'loading')
+            from .model_payload import _safe_text
+            def message_basis(rows):
+                selected = get_product_source_images(self.repo, case, rows)
+                return ([(m.get('message_id'), m.get('role'), _safe_text(m.get('text') or ''), m.get('timestamp_ms'))
+                         for m in rows], [(m['message_id'], photo_version(m)) for m in selected])
+            original_basis = message_basis(original_messages)
+
+        def guard():
+            self._require_current_read(token)
+            conversation = self._require('conversation', cid)
+            if (epoch != self._epoch or self._closing
+                    or any(conversation.get(key) != original_conversation.get(key) for key in
+                           ('seller_id', 'buyer_id', 'case_id', 'revision', 'human_owned'))
+                    or message_basis(self.repo.list('message', conversation_id=cid)) != original_basis
+                    or self.repo.get('chat_draft', cid) != original_chat
+                    or self._supplement(cid) != original_note):
+                raise ServiceError('cancelled', '图片准备期间来源或权限已变化')
+            for message, sha in bindings.values():
+                current = self._photo_target(cid, message['message_id'], photo_version(message))
+                state = self._photo_state(current)
+                asset = self.repo.get('image_asset', sha)
+                if state.get('status') != 'ready' or state.get('sha256') != sha or not asset or asset.get('sha256') != sha:
+                    raise ServiceError('cancelled', '图片内容已变化，旧回复未应用')
+
+        started = time.monotonic()
+        deadline = started + seconds
+        cancel_event = self._generation_cancel_event(job_id)
+        coverage = {message['message_id']: {'message_id': message['message_id'], 'role': message['role'],
+                                           'status': 'pending', 'reason': 'not_prepared'} for message in candidates}
+        guard.photo_deadline = deadline
+        guard.photo_coverage = coverage
+        total_bytes = 0
+        pending = []
+        split = callable(getattr(facade, 'read_photo_source', None)) and callable(getattr(facade, 'fetch_photo_source', None))
+        pool = ThreadPoolExecutor(max_workers=parallelism, thread_name_prefix='photo-download') if split else None
+
+        def check_budget():
+            if cancel_event is not None and cancel_event.is_set():
+                raise ServiceError('cancelled', '图片准备已取消')
+            if time.monotonic() >= deadline:
+                raise ServiceError('photo_preparation_timeout', '图片准备超过时间预算，本轮图片尚未全部读取')
+
+        def publish_coverage():
+            items = copy.deepcopy(list(coverage.values()))
+            ready_count = sum(item['status'] == 'ready' for item in items)
+            failed_count = sum(item['status'] == 'failed' for item in items)
+            pending_count = len(items) - ready_count - failed_count
+            self._job_update(job_id, photo_coverage={'total_count': len(items), 'ready_count': ready_count,
+                             'failed_count': failed_count, 'pending_count': pending_count, 'items': items},
+                             diagnostics={'photo_candidates': len(items), 'photo_ready': ready_count,
+                                          'photo_failed': failed_count, 'photo_pending': pending_count,
+                                          'photo_bytes': total_bytes,
+                                          'photo_prepare_ms': int((time.monotonic() - started) * 1000)})
+
+        def bind(message):
+            nonlocal total_bytes
+            with self._lock:
+                guard()
+                state = self._photo_state(message)
+                sha = state.get('sha256')
+                asset = self.repo.get('image_asset', sha) if sha else None
+                if state.get('status') != 'ready' or not asset or asset.get('sha256') != sha:
+                    coverage[message['message_id']].update(status='failed', reason='load_failed')
+                    return
+                size = asset.get('size')
+                if type(size) is not int or size <= 0:
+                    coverage[message['message_id']].update(status='failed', reason='invalid_asset')
+                    return
+                if total_bytes + size > batch_mib * 1024 * 1024:
+                    coverage[message['message_id']].update(status='pending', reason='byte_budget')
+                    raise ServiceError('photo_preparation_budget', '图片总大小超过预算，本轮图片尚未全部读取')
+                total_bytes += size
+                bindings[message['message_id']] = (message, sha)
+                coverage[message['message_id']].update(status='ready', reason='awaiting_request_read')
+
+        def finish_one():
+            message, preview_id, future = pending.pop(0)
+            try:
+                while True:
+                    check_budget()
+                    try:
+                        asset = future.result(timeout=min(.1, max(.001, deadline - time.monotonic())))
+                        loaded = (asset, None)
+                        break
+                    except FutureTimeout as failure:
+                        if future.done():
+                            loaded = (None, failure)
+                            break
+                        continue
+                    except Exception as failure:
+                        loaded = (None, failure)
+                        break
+                params = {'conversation_id': cid, 'message_id': message['message_id'],
+                          'source_version': photo_version(message)}
+                result = self._task_load_message_image(params, preview_id, epoch, facade, loaded=loaded)
+                status = result.pop('_job_status', 'succeeded')
+                self._job_update(preview_id, status=status, stage='complete', completed_at=now_ms(), message=result['message'])
+            except BaseException:
+                self._job_update(preview_id, status='cancelled', stage='cancelled', completed_at=now_ms(), message='图片读取已取消')
+                raise
+            bind(message)
+            publish_coverage()
+
+        try:
+            publish_coverage()
+            for message in candidate_order:
+                check_budget()
+                self._yield_to_ready_work()
+                with self._lock:
+                    guard()
+                    state = self._photo_state(message)
+                if state.get('status') == 'not_loaded':
+                    try:
+                        self._enqueue_photo({'conversation_id': cid, 'message_id': message['message_id'],
+                                             'source_version': photo_version(message)})
+                    except ServiceError as error:
+                        coverage[message['message_id']].update(reason='queue_unavailable')
+                        raise ServiceError('photo_preparation_pending', '图片尚未准备完成，请稍后重试') from error
+                    with self._lock:
+                        state = self._photo_state(message)
+                if state.get('status') != 'loading':
+                    bind(message)
+                    publish_coverage()
+                    continue
+                preview_id = state.get('job_id')
+                with self._lock:
+                    queued = self.repo.get('job', preview_id, {}).get('status') == 'queued'
+                    if queued:
+                        self._job_update(preview_id, status='running', stage='load_message_image', started_at=now_ms())
+                if not queued:
+                    coverage[message['message_id']].update(reason='loading_elsewhere')
+                    publish_coverage()
+                    while True:
+                        check_budget()
+                        with self._lock:
+                            guard()
+                            state = self._photo_state(message)
+                        if state.get('status') != 'loading':
+                            bind(message)
+                            publish_coverage()
+                            break
+                        if cancel_event is not None:
+                            cancel_event.wait(min(.05, max(.001, deadline - time.monotonic())))
+                        else:
+                            time.sleep(min(.05, max(.001, deadline - time.monotonic())))
+                    continue
+                if split:
+                    try:
+                        source = facade.read_photo_source(copy.deepcopy(message))
+                        future = pool.submit(facade.fetch_photo_source, source)
+                    except Exception as failure:
+                        future = Future()
+                        future.set_exception(failure)
+                else:
+                    future = Future()
+                    try:
+                        future.set_result(facade.load_photo(copy.deepcopy(message)))
+                    except Exception as failure:
+                        future.set_exception(failure)
+                pending.append((message, preview_id, future))
+                if len(pending) >= (parallelism if split else 1):
+                    finish_one()
+            while pending:
+                finish_one()
+            check_budget()
+            return guard
+        except ServiceError as error:
+            for item in coverage.values():
+                if item['status'] == 'pending' and item['reason'] == 'not_prepared':
+                    item['reason'] = error.code
+            raise
+        finally:
+            for message, preview_id, future in pending:
+                future.cancel()
+                self._job_update(preview_id, status='cancelled', stage='cancelled', completed_at=now_ms(), message='图片读取已取消')
+            if pool is not None:
+                pool.shutdown(wait=False, cancel_futures=True)
+            publish_coverage()
+
+    def _direct_photo_inputs(self, context):
+        """Private arguments for an owned integration, never an RPC/image DTO."""
+        photo = context.get('photo_context') or {}
+        result = []
+        with self._lock:
+            for ref in photo.get('direct_images', []):
+                message = self._photo_target(ref['conversation_id'], ref['message_id'], ref['source_version'])
+                asset = self.repo.get('image_asset', ref['image_sha256'])
+                state = self._photo_state(message)
+                if (ref.get('role') != message.get('role') or not asset
+                        or state.get('sha256') != ref['image_sha256'] or asset.get('sha256') != ref['image_sha256']):
+                    raise ServiceError('source_changed', '图片内容已变化，请重新生成')
+                result.append({'message': copy.deepcopy(message), 'asset': copy.deepcopy(asset)})
+        return result
 
     def _observe_draft_photos(self, case, job_id, epoch, facade, prior_drafts, automatic):
         """Prepare at most four images on this worker, then return a stale guard.
@@ -323,7 +555,7 @@ class MessagePhotosMixin:
             guard()
         return guard
 
-    def _task_load_message_image(self, params, job_id, epoch, facade):
+    def _task_load_message_image(self, params, job_id, epoch, facade, *, loaded=None):
         with self._lock:
             job = self._require('job', job_id)
             if job.get('photo_generation') != self._monitor_generation:
@@ -334,9 +566,15 @@ class MessagePhotosMixin:
         error = None
         asset = None
         try:
-            asset = facade.load_photo(message)
-        except Exception:
+            if loaded is None:
+                asset = facade.load_photo(message)
+            elif loaded[1] is not None:
+                raise loaded[1]
+            else:
+                asset = loaded[0]
+        except Exception as failure:
             error = '图片读取失败，暂未取得可显示的原图'
+            self._job_update(job_id, diagnostics=read_diagnostics(failure))
         with self._lock, self.repo.transaction():
             self._require_current_read(token)
             current = self.repo.get('message', encoded([params['conversation_id'], params['message_id']]))

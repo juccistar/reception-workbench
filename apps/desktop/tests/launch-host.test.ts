@@ -4,6 +4,9 @@ import { waitFor } from '@testing-library/react';
 import { pathToFileURL } from 'node:url';
 
 vi.mock('../src/main/installation-guard', () => ({ acquireInstallationStartGuard: vi.fn(async () => async () => {}) }));
+vi.mock('../src/main/translation-host', () => ({ TranslationHost: class {
+  start = vi.fn(async () => {}); stop = vi.fn();
+} }));
 
 const host = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => any>(), window: null as any,
@@ -43,6 +46,7 @@ vi.mock('../src/main/service-client', () => ({
   ServiceClient: class { invoke = host.invoke; on = vi.fn(); shutdown = vi.fn(async () => {}); },
 }));
 vi.mock('electron', () => ({
+  safeStorage: { isEncryptionAvailable: () => false, encryptString: vi.fn(), decryptString: vi.fn() },
   app: { isPackaged: false, setName: vi.fn(), setPath: vi.fn(), requestSingleInstanceLock: () => true, whenReady: async () => {}, on: vi.fn(), quit: vi.fn(), exit: vi.fn() },
   BrowserWindow: class {
     webContents = { mainFrame: { url: '' }, setWindowOpenHandler: vi.fn(), on: vi.fn(), send: vi.fn(), session: { setPermissionRequestHandler: vi.fn() } };

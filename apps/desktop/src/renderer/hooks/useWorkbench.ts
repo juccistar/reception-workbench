@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { ApiMethod, ChatSendParams, ConversationDetail, Draft, Job, JobAck, Outbox, Preferences, ReceptionBridge, ServiceEvent, Snapshot, Supplement } from '../../shared/api';
 
-export type Page = 'home' | 'reception' | 'handoff' | 'customers' | 'policies' | 'settings' | 'activity';
+export type Page = 'home' | 'reception' | 'handoff' | 'customers' | 'policies' | 'settings' | 'activity' | 'products' | 'suppliers' | 'procurement';
 type SendStatus = Job['status'] | 'requesting' | 'retry' | 'accepted' | 'rejected';
 export interface ChatSend {
   params: ChatSendParams;
@@ -172,7 +172,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
       if (!mounted.current || sequence !== snapshotSequence.current) return null;
       connectedRef.current = true; setConnected(true);
       setSnapshot(result); snapshotRef.current = result;
-      for (const item of [...result.conversations, ...(result.handoff_cases ?? [])]) caseOwners.current.set(item.case_id, item.conversation_id);
+      for (const item of [...result.conversations, ...(result.handoff_cases ?? [])]) if (item.case_id) caseOwners.current.set(item.case_id, item.conversation_id);
       updateJobs(result.jobs);
       setError(''); return result;
     } catch (failure) {
@@ -188,11 +188,10 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     try {
       const result = await bridge.invoke<ConversationDetail>('get_conversation', { conversation_id: conversationId, ...(caseId ? { case_id: caseId } : {}), ...(refreshEmpty ? { refresh_empty: true } : {}) });
       if (!mounted.current || sequence !== detailSequence.current || selectionRef.current.conversationId !== conversationId) return false;
-      if (!result.case) result.case = { case_id: '', seller_id: '', buyer_id: result.conversation.buyer_id, conversation_id: conversationId, customer_name: result.conversation.customer_name, procurement_key: '', revision: 0, state: 'clarifying', facts: {}, missing: [], questions: {}, summary: '', updated_at: 0 };
-      if (caseId && result.case.case_id !== caseId) throw new Error('此采购事项暂时无法读取，当前正文已保留。');
+      if (caseId && result.case?.case_id !== caseId) throw new Error('此采购事项暂时无法读取，当前正文已保留。');
       mergeDraft(result);
       setDetail(result); detailRef.current = result;
-      const nextSelection = { conversationId, caseId: result.case.case_id };
+      const nextSelection = { conversationId, caseId: result.case?.case_id ?? '' };
       selectionRef.current = nextSelection; setSelection(nextSelection); setDetailError(''); return true;
     } catch (failure) {
       if (sequence === detailSequence.current && mounted.current) setDetailError(errorText(failure));
@@ -218,7 +217,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   useEffect(() => {
     if (!selection.conversationId && snapshot?.conversations.length) {
       const first = snapshot.conversations[0];
-      const next = { conversationId: first.conversation_id, caseId: first.case_id };
+      const next = { conversationId: first.conversation_id, caseId: first.case_id ?? '' };
       selectionRef.current = next; setSelection(next); void loadDetail(next.conversationId, next.caseId);
     }
   }, [snapshot, selection.conversationId, loadDetail]);
@@ -233,6 +232,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
         setLoading(false); setDetailLoading(false); setError(''); setNotice(''); return;
       }
       if (closingRef.current) return;
+      if (event.event === 'translation.settings_changed') { void refreshSnapshot(); return; }
       if (event.event === 'job.updated' && (event.data as Job)?.kind === 'translation') return;
       if (event.event === 'state.changed' && (event.data as { reason?: string } | null)?.reason === 'translations_updated') return;
       if (event.event === 'backend.disconnected') {
@@ -391,7 +391,8 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     return true;
   }, [saveDraft]);
 
-  const selectConversation = useCallback(async (conversationId: string, caseId = '') => {
+  const selectConversation = useCallback(async (conversationId: string, caseId: string | null = '') => {
+    caseId ??= '';
     // Only an explicit customer selection may retry empty history; passive detail refreshes stay local.
     if (selectionRef.current.conversationId === conversationId && (!caseId || selectionRef.current.caseId === caseId)) {
       setPage('reception'); return loadDetail(conversationId, selectionRef.current.caseId, true, true);
@@ -476,13 +477,30 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     const blocked = generationBlocker(snapshotRef.current, detailRef.current);
     if (blocked) { setNotice(blocked); return; }
     const conversationId = selectionRef.current.conversationId;
+    const selectedCaseId = selectionRef.current.caseId;
+    const entry = editors.current.get(conversationId);
+    const frozen = entry?.body.trim() ? { body: entry.body, version: entry.editVersion } : null;
     if (!(await saveSupplement(conversationId))) return;
+    if (frozen && !(await saveDraft(conversationId))) return;
     const current = detailRef.current;
-    if (!current || selectionRef.current.conversationId !== conversationId) return;
+    if (!current || selectionRef.current.conversationId !== conversationId || selectionRef.current.caseId !== selectedCaseId) return;
     const latestBlocker = generationBlocker(snapshotRef.current, current);
     if (latestBlocker) { setNotice(latestBlocker); return; }
-    await runJob('generate_manual_suggestion', { conversation_id: conversationId, case_id: selectionRef.current.caseId || null, client_request_id: mutationId() });
-  }, [saveSupplement, runJob]);
+    const params: Record<string, unknown> = { conversation_id: conversationId, case_id: selectedCaseId || null, client_request_id: mutationId() };
+    if (frozen) {
+      const saved = entry?.server;
+      if (!entry || entry.editVersion !== frozen.version || entry.body !== frozen.body || entry.dirty || entry.saving ||
+          saved?.body !== frozen.body || saved?.conversation_id !== conversationId || !saved.revision) {
+        setNotice('润色期间正文已变化，请以当前输入重新点击润色。'); return;
+      }
+      if (!globalThis.crypto?.subtle) { setNotice('无法核对当前回复正文摘要，请稍后重试。'); return; }
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(frozen.body));
+      if (entry.editVersion !== frozen.version || entry.body !== frozen.body || selectionRef.current.conversationId !== conversationId) return;
+      Object.assign(params, { input_body: frozen.body, input_revision: saved.revision,
+        input_hash: [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('') });
+    }
+    await runJob('generate_manual_suggestion', params);
+  }, [saveSupplement, saveDraft, runJob]);
 
   // The optional native preview belongs to the AI suggestion, never to manual chat.
   const preview = useCallback(async () => {

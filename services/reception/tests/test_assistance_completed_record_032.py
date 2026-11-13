@@ -22,6 +22,8 @@ class CompletedRecordIntegrationTests(unittest.TestCase):
             cli.touch()
             mcp.touch()
             facade = LiveIntegration.__new__(LiveIntegration)
+            facade._query_state = threading.local()
+            facade._visual_workspace_identity = None
             facade.native = SimpleNamespace(cli=str(cli), data_dir=root / 'state', process=None)
             facade.settings = {'ai': {'agent_id': 'synthetic-agent'}}
             facade.resolve_identity = lambda seller: seller
@@ -71,7 +73,9 @@ class CompletedRecordIntegrationTests(unittest.TestCase):
                                                   'conversation_id': '10001-20002#icbu', 'case_id': None,
                                                   'recent_messages': [], 'supplement': ''},
                                                  'synthetic-manual', cancel_event=cancel)
-                self.assertEqual(result, answer)
+                self.assertEqual(result['reply'], answer['reply'])
+                self.assertEqual(result['verified_image_reads'], [])
+                self.assertEqual(result['reply_sources'], [])
                 self.assertEqual(len(calls), 2)
                 self.assertNotEqual(calls[0][calls[0].index('--conversation-name') + 1],
                                     calls[1][calls[1].index('--conversation-name') + 1])

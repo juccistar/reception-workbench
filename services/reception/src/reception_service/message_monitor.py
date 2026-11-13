@@ -46,7 +46,8 @@ class MessageMonitorMixin:
 
     def _read_current(self, token):
         return (not self._closing and not self._stop.is_set()
-                and token[0] is self.integrations and token[1] == self._monitor_generation and token[2] is self.repo)
+                and (token[0] is self.integrations or self._execution_read_current(token))
+                and token[1] == self._monitor_generation and token[2] is self.repo)
 
     def _require_current_read(self, token):
         if not self._read_current(token):
@@ -162,6 +163,9 @@ class MessageMonitorMixin:
             self._read_summary_page(facade, token, None)
             with self._lock:
                 self._require_current_read(token)
+                # Dispatch the fresh head immediately; optional older pages
+                # must not delay an already discovered customer message.
+                self._dispatch_message_syncs(audit=False)
                 sweep = self.repo.get('message_monitor', 'summary', {})
                 cursor = sweep.get('next_cursor')
                 scan_due = now_ms() >= sweep.get('next_scan_at', 0)

@@ -1,0 +1,63 @@
+{
+  "status": "source_changed_targeted_tests_passed",
+  "release_state": "unreleased",
+  "base_release": "0.3.7",
+  "source_committed": false,
+  "scope": "Keep all ordinary automatic business checks; submit ordinary replies and continuations using direct chat without pre-submit platform history, Ready or Seal",
+  "business_check_files_identical_to_base": ["service.py", "continuity.py", "context.py", "manual_chat.py"],
+  "changed_runtime_files": [
+    "services/reception/src/reception_service/integrations/accio_native/gateway.py",
+    "services/reception/src/reception_service/integrations/accio_native/chat.py",
+    "services/reception/src/reception_service/integrations/live.py"
+  ],
+  "tests": {
+    "full_suite_run": false,
+    "unique_passed": 202,
+    "skipped": 0,
+    "files": {
+      "test_native_automatic_chat.py": 12,
+      "test_native_chat.py": 14,
+      "test_native_continuation.py": 9,
+      "test_incoming_permission.py": 13,
+      "test_integrations.py": 33,
+      "test_native_workflow_receipts.py": 11,
+      "test_manual_receipts.py": 20,
+      "test_manual_chat.py": 34,
+      "test_continuity_service.py": 3,
+      "test_continuity_end_to_end.py": 17,
+      "test_send_retry_policy.py": 5,
+      "test_business_supplements.py": 5,
+      "test_photo_reception.py": 15,
+      "test_service_reconciliation.py": 11
+    },
+    "initial_isolated_run": "artifacts/verification/direct-auto-send-20261112-a/targeted-tests.json",
+    "initial_isolated_unique_passed": 201,
+    "final_direct_transport_recheck_passed": 48,
+    "additional_receipt_write_regression": "Message ID retained after a transient final receipt write failure; original operation reconciles without resend",
+    "execution_note": "Affected files ran in separate processes to isolate legacy test mocks. The final four native transport files also passed together after the receipt-write fix; repeated cases are not counted twice."
+  },
+  "behavior": {
+    "normal_automatic_ready_or_seal_required": false,
+    "presubmit_platform_message_reads": false,
+    "postsubmit_exact_id_bounded_readback": true,
+    "service_business_authorization_callback_preserved": true,
+    "legacy_source_dedupe_key_preserved": true,
+    "legacy_unknowns_replayed": false,
+    "submission_journal_precedes_platform_call": true,
+    "returned_message_id_survives_receipt_write_error": true,
+    "continuation_phase_checked_with_local_accepted_receipts": true,
+    "explicit_legacy_preview_compatibility_retained": true,
+    "unsynchronized_remote_activity_can_arrive_after_reply": true
+  },
+  "repository_schema": 2,
+  "adapter_ledger": 1,
+  "boundaries": {
+    "real_model_calls": 0,
+    "real_customer_sends": 0,
+    "production_data_accessed_for_implementation_tests": false,
+    "packaged": false,
+    "published": false,
+    "installed_program_replaced": false,
+    "merchant_windows_modified": false
+  }
+}

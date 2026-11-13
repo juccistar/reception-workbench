@@ -1,0 +1,231 @@
+{
+  "version": "0.3.11",
+  "status": "published_and_verified",
+  "date": "2026-11-12",
+  "source_branch": "feat/chat-translation-0.3.4",
+  "source_committed": false,
+  "prompt_version": "reception-0.3.11.1",
+  "model_payload_version": "reception-payload-0.3.11.1",
+  "tests": {
+    "full_suite_run": false,
+    "backend_unique_tests_passed": 322,
+    "backend_files": 24,
+    "desktop_host_tests_passed": 133,
+    "desktop_host_files": 7,
+    "typecheck": "passed",
+    "build": "passed_in_final_packaging",
+    "evidence": [
+      "artifacts/verification/reception-0.3.11/targeted-final.json",
+      "artifacts/verification/reception-0.3.11/backend-agent.json",
+      "artifacts/verification/reception-0.3.11/media-agent.json",
+      "artifacts/verification/reception-0.3.11/frontend-agent.json",
+      "artifacts/verification/reception-0.3.11/typecheck.log",
+      "artifacts/verification/reception-0.3.11/package-build.log",
+      "artifacts/verification/reception-0.3.11/monitor-recheck.json"
+    ],
+    "retained_initial_failures": [
+      "artifacts/verification/reception-0.3.11/targeted-main-backend.json",
+      "artifacts/verification/reception-0.3.11/test_message_monitor.py.log"
+    ],
+    "test_file_recovery": {
+      "status": "restored_and_verified",
+      "detail": "Test statistics command overwrote an untracked test; exact original Write plus two Edits restored from tool history, four cases passed.",
+      "evidence": "artifacts/verification/reception-0.3.11/frontend-agent.json"
+    }
+  },
+  "business_progress": {
+    "states": [
+      "needs_reply",
+      "needs_input",
+      "waiting_customer",
+      "idle",
+      "pending_analysis"
+    ],
+    "per_issue_evidence_validated": true,
+    "new_standalone_state_ai_call": false,
+    "receipt_required_for_draft_to_be_answered": true,
+    "partial_reply_preserves_other_issues": true,
+    "daily_assistance_forms_required": false,
+    "old_records_and_receipts_preserved": true
+  },
+  "supplement_continuation": {
+    "phase": "supplement",
+    "current_grant_and_exact_source_required": true,
+    "latest_seller_requires_existing_local_accepted_receipt": true,
+    "stable_issue_request_excludes_note_revision": true,
+    "overlapping_issue_attempts_share_retry_budget": true,
+    "different_issues_can_follow_up_separately": true,
+    "maximum_total_attempts": 3,
+    "retry_backoff_seconds": [
+      5,
+      15
+    ],
+    "unknown_prepared_sending_fence_entire_conversation": true,
+    "paused_or_human_owned_does_not_restore_authorization": true
+  },
+  "media": {
+    "native_product_card_schema_verified": false,
+    "real_inquiry_card_raw_sample_obtained": false,
+    "live_sku_image_ingestion_verified": false,
+    "parser_structure_origin": "Local contract and synthetic fixtures; not a verified platform-native SKU card schema.",
+    "display_only_by_default": [
+      "reference_images",
+      "product_links",
+      "product_images",
+      "sku_images"
+    ],
+    "model_images": "Only current-case product-source message images or unambiguous sole buyer-image candidates; seller requires buyer selection.",
+    "product_value_remains_text": true,
+    "ordinary_polish_reads_history_images": false,
+    "product_card_json_url_sku_projection_filtered": true,
+    "display_cache_or_cover_changes_generation_fingerprint": false,
+    "display_workers": 2,
+    "display_total_admitted_tasks": 4,
+    "download_trigger": "User requests loading of an existing structured-card image; renderer supplies case/media IDs, not arbitrary URLs.",
+    "arbitrary_product_link_can_supply_all_sku_images": false,
+    "public_product_page_result": "metadata_unavailable, login required; no script/login bypass",
+    "official_product_interface_sample": "Text properties; no verified main image, SKU entities or SKU images",
+    "capability_evidence": [
+      "artifacts/verification/reception-0.3.11/product-capabilities.json",
+      "artifacts/verification/reception-0.3.11/product-response-shape.json",
+      "artifacts/verification/reception-0.3.11/public-product-page-review.json"
+    ],
+    "image_transport": "read_compat",
+    "native_attachment_interface_added": false,
+    "preparation_is_not_model_read": true
+  },
+  "actual_windows": {
+    "status": "passed",
+    "evidence": {
+      "requirements_progress_and_media": "artifacts/verification/requirements-0311-package-0311-a/report.json",
+      "translation_and_suggestion": "artifacts/verification/demo-package-0311-base-a/result.json"
+    },
+    "packaged": true,
+    "all_test_windows_closed": true,
+    "screenshots_reviewed": true,
+    "screenshots_reviewed_count": 11,
+    "business_ipc_mocked": false,
+    "progress_labels_preseeded_fixture_only": true,
+    "pixels_local_synthetic_cache_only": true,
+    "requirements_checks": [
+      "synthetic-business-progress-labels",
+      "two-sections-supplement-progress-media-draft",
+      "synthetic-cached-customer-product-sku-pixels-and-cover",
+      "narrow-drawer-reopen"
+    ]
+  },
+  "package": {
+    "directory": "relase/release-0.3.11-a",
+    "candidate": true,
+    "status": "passed",
+    "staging": "artifacts/build/package-input-1794489913367",
+    "portable_files": 164,
+    "portable_zip_entries": 165,
+    "python_source_inputs": 73,
+    "frozen_backend_files": 75,
+    "app_asar_sha256": "5fcbce0997a10a2a581e642eb1be8a62bf02f66c9bdeb98be9ae88ea6caf9b27",
+    "source_manifest_sha256": "043f70c896cda81de2bc314ec929b7a1c1d3db880400e37aac90dc6ce79c8f75",
+    "release_signature": "ed25519",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "windows_authenticode_signed": false,
+    "both_bundles_guides_match_frozen_source": true,
+    "guides_publication_status": "Neutral version-specific text points to final release and verification record.",
+    "installer": {
+      "name": "ReceptionWorkbench-Setup-0.3.11.exe",
+      "asset_id": 739603752,
+      "bytes": 136110186,
+      "sha256": "e4f6b2279f2c2856635864b25408772de334e1c8fcc9db80cad4d4d06093391c",
+      "server_digest_verified": true,
+      "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.11/ReceptionWorkbench-Setup-0.3.11.exe",
+      "anonymous_full_download_verified": true
+    },
+    "portable_zip": {
+      "name": "ReceptionWorkbench-0.3.11.zip",
+      "asset_id": 739603758,
+      "bytes": 177892042,
+      "sha256": "0e90a0670e458c37138736ebd4f417b7fbd5809ab1ea2e3db34c264870ada455",
+      "server_digest_verified": true,
+      "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.11/ReceptionWorkbench-0.3.11.zip",
+      "anonymous_full_download_verified": true
+    },
+    "default_runtime_promoted": false,
+    "inspected_smoke_debug_logs_archived": "artifacts/verification/reception-0.3.11/smoke-log-archives.json"
+  },
+  "release": {
+    "status": "passed",
+    "version": "0.3.11",
+    "repository": "juccistar/reception-workbench-releases",
+    "release_url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.11",
+    "release_id": 442989388,
+    "published_at": "2026-11-12T13:33:45Z",
+    "draft": false,
+    "prerelease": false,
+    "latest": true,
+    "metadata_access": "existing_authorization",
+    "anonymous_asset_downloads": true,
+    "download_directory": "artifacts/downloads/release-0311-public-95cy5szv",
+    "assets": [
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.11.exe",
+        "asset_id": 739603752,
+        "bytes": 136110186,
+        "sha256": "e4f6b2279f2c2856635864b25408772de334e1c8fcc9db80cad4d4d06093391c",
+        "server_digest_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.11/ReceptionWorkbench-Setup-0.3.11.exe",
+        "anonymous_full_download_verified": true
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.11.zip",
+        "asset_id": 739603758,
+        "bytes": 177892042,
+        "sha256": "0e90a0670e458c37138736ebd4f417b7fbd5809ab1ea2e3db34c264870ada455",
+        "server_digest_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.11/ReceptionWorkbench-0.3.11.zip",
+        "anonymous_full_download_verified": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.11.exe.blockmap",
+        "asset_id": 739603751,
+        "bytes": 142121,
+        "sha256": "5f51045a876a7555fe3c752251124556299e8d0a3357e86913113b3b9fe7b8ea",
+        "server_digest_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.11/ReceptionWorkbench-Setup-0.3.11.exe.blockmap",
+        "anonymous_full_download_verified": true
+      },
+      {
+        "name": "latest.yml",
+        "asset_id": 739603759,
+        "bytes": 726,
+        "sha256": "526f61b6b486e26a49bac76cec573f7aa4bc3bc54b759ceeee1ae9293baa51c8",
+        "server_digest_verified": true,
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.11/latest.yml",
+        "anonymous_full_download_verified": true
+      }
+    ],
+    "uploaded": true,
+    "public": true,
+    "all_server_digests_verified": true,
+    "all_anonymous_full_downloads_verified": true
+  },
+  "known_limits": [
+    "Current-version follow-up semantic behavior has synthetic offline verification; no real-model or real-customer acceptance is claimed.",
+    "Only recognized structured-card image fields are supported; arbitrary product-link/SKU image discovery is not available.",
+    "Image transport remains read_compat, and each request needs its own exact native read evidence.",
+    "No new latency percentage or stable performance quantile is claimed.",
+    "AI cancellation does not prove immediate remote cancellation or stopped billing.",
+    "Real customer sessions, actual NSIS installation and continuous platform acceptance remain separate verification tasks."
+  ],
+  "boundaries": {
+    "real_customer_sends": 0,
+    "real_business_ai_calls": 0,
+    "real_customer_data_sent_to_ai": false,
+    "read_only_public_product_schema_sample": true,
+    "merchant_business_db_opened_for_release_checks": false,
+    "installed_program_replaced": false,
+    "nsis_installer_executed": false,
+    "business_data_migrated": false,
+    "running_merchant_windows_modified": false,
+    "feishu_business_registration_writes": 0,
+    "source_git_committed_or_pushed": false
+  }
+}

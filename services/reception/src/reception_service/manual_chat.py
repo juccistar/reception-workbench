@@ -139,10 +139,10 @@ class ManualChatMixin:
             self.repo.put('operation', operation_id, operation, history=True)
             self.repo.put('job', job_id, job, history=True)
             self.repo.put('chat_request', rid, {'request': request, 'ack': ack, 'operation_id': operation_id})
+            # The worker takes the same lock before claiming the job, so a full
+            # queue rolls the durable send claim back before it can be observed.
+            self._queue.put((job_id, 'send_chat', {'operation_id': operation_id}, self._epoch, False))
             self._chat_facades[operation_id] = self.integrations
-        # Publish only after all durable claims commit. The worker never reconstructs
-        # text from mutable input, nor reclaims a request when the RPC reply was lost.
-        self._queue.put((job_id, 'send_chat', {'operation_id': operation_id}, self._epoch, False))
         self._emit('job.updated', job)
         self._changed(cid)
         return ack

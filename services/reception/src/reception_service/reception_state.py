@@ -84,9 +84,9 @@ class ReceptionProjection:
             block('human_owned', '客户已由人工接管')
         case_valid = bool(case and case.get('seller_id') == s.seller_id and
                           case.get('buyer_id') == conversation.get('buyer_id') and case.get('conversation_id') == cid)
-        if not case_valid:
+        if conversation.get('case_id') is not None and not case_valid:
             block('case', '当前客户事项或归属不可用')
-        elif case.get('state') == 'closed':
+        elif case and case.get('state') == 'closed':
             block('closed', '客户会话已关闭')
         if not s._running or s._manual_only:
             block('paused', '自动接待已暂停' if not s._running else '当前为仅人工模式')

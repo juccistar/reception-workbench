@@ -1,0 +1,334 @@
+{
+  "version": "0.3.13",
+  "date": "2026-11-13",
+  "status": "published_and_verified",
+  "published": true,
+  "latest_public_version": "0.3.13",
+  "scope": [
+    "AI-authored Chinese requirements and grounded customer-media references; 13 stored canonical keys include the program-derived product_url",
+    "Numeric product IDs produce a program-derived Alibaba URL; local custom IDs remain stable and avoid accidental cross-demand collisions",
+    "Independent product image for display and sourcing only, excluded with the derived URL from designated reception payloads and fingerprints",
+    "Merchant/conversation-bound summary including genuinely null-case conversations; polish isolation",
+    "Reception layout redesign and independent product, supplier and procurement pages",
+    "Durable one-time sourcing, supplier/offer persistence, explicit selection, new-binding defaults and version fingerprints",
+    "Exact owned-request recovery without new search on unknown outcome",
+    "Backup-first offline allowlist cleanup of retired reminders with operational evidence preserved"
+  ],
+  "tests": {
+    "full_suite_run": false,
+    "backend_distinct_passed": 138,
+    "desktop_distinct_passed": 114,
+    "counting_note": "Cumulative distinct targeted cases across development stages; subsequent subset reruns are included rather than added. This does not claim a full-suite run or a simultaneous rerun of all groups after every edit.",
+    "backend": [
+      {
+        "scope": "core requirements/summary, manual chat/receipts, supplement continuation, no-case ownership and images",
+        "passed": 62,
+        "report": "artifacts/verification/reception-0.3.13/core-backend.json"
+      },
+      {
+        "file": "services/reception/tests/test_product_library_0313.py",
+        "passed": 16,
+        "report": "artifacts/verification/reception-0.3.13/product-backend.json",
+        "latest_related_rerun": "passed"
+      },
+      {
+        "file": "services/reception/tests/test_product_main_image_0313.py",
+        "passed": 6,
+        "report": "artifacts/verification/reception-0.3.13/product-main-image.json",
+        "latest_related_rerun": "passed with image provenance retained"
+      },
+      {
+        "file": "services/reception/tests/test_product_display_0313.py",
+        "passed": 9,
+        "report": "artifacts/verification/reception-0.3.13/product-main-image.json",
+        "mode": "fake-process"
+      },
+      {
+        "file": "services/reception/tests/test_reminder_cleanup_0313.py",
+        "passed": 6
+      },
+      {
+        "file": "services/reception/tests/test_storage_maintenance.py",
+        "passed": 10,
+        "report": "artifacts/verification/reception-0.3.13/reminder-cleanup.json"
+      },
+      {
+        "file": "services/reception/tests/test_sourcing_runner_0313.py",
+        "passed": 12,
+        "report": "artifacts/verification/reception-0.3.13/sourcing-runner.json"
+      },
+      {
+        "file": "services/reception/tests/test_native_automatic_chat.py",
+        "passed": 12
+      },
+      {
+        "file": "services/reception/tests/test_send_retry_policy.py",
+        "passed": 5
+      }
+    ],
+    "desktop": {
+      "files": [
+        "apps/desktop/tests/product-pages-0313.test.tsx",
+        "apps/desktop/tests/product-protocol.test.ts",
+        "apps/desktop/tests/renderer-workbench.test.tsx",
+        "apps/desktop/tests/chat-host.test.ts",
+        "apps/desktop/tests/message-images.test.tsx"
+      ],
+      "passed": 114,
+      "latest_related_rerun": {
+        "files": [
+          "apps/desktop/tests/product-pages-0313.test.tsx",
+          "apps/desktop/tests/renderer-workbench.test.tsx"
+        ],
+        "passed": 86,
+        "included_in_total": true,
+        "reason": "Reference-image caption and nullable custom-product URL contract"
+      },
+      "report": "artifacts/verification/reception-0.3.13/frontend.json"
+    }
+  },
+  "static_and_build": {
+    "typecheck": "passed",
+    "desktop_build": "passed_in_final_packaging",
+    "renderer_backend_method_allowlists": "passed with dedicated native confirmation and host translation routes accounted for",
+    "method_contract_report": "artifacts/verification/reception-0.3.13/method-contracts.json",
+    "source_product_internal_only": true,
+    "confirm_send_requires_dedicated_native_confirmation": true,
+    "shutdown_internal_only": true,
+    "git_diff_check": "passed",
+    "notes": [
+      "Vite configuration compatibility and lucide module-directive messages were emitted without build failure",
+      "Earlier targeted desktop tests emitted existing React act warnings"
+    ]
+  },
+  "product_display": {
+    "link_template": "https://www.alibaba.com/product-detail/_<product_id>.html",
+    "numeric_ids_only": true,
+    "custom_id_example": "定制-6262662",
+    "custom_id_has_platform_url_or_image_query": false,
+    "ai_or_sourcing_original_url_ignored": true,
+    "excluded_from_designated_reception_payloads_and_fingerprints": [
+      "product_url",
+      "product_main_image"
+    ],
+    "customer_product_images_independent": true,
+    "image_background_work_uses_reception_ai_slot": false,
+    "image_component": {
+      "command": "workctl icbu product list-information --json-file <params.json> --format json",
+      "params": {
+        "productId": 1601902417143,
+        "queryType": "trunk",
+        "componentList": [
+          "images"
+        ]
+      },
+      "response_path": "data(JSON string) -> basicInfo.images[] -> imageIndex, originalImageUrl",
+      "image_count_observed": 6,
+      "product_binding": "verified identity and exact request parameters",
+      "response_product_id_present": false,
+      "primary_verified": false,
+      "selection_rule": "lowest_image_index",
+      "on_sale_status": "unknown",
+      "report": "artifacts/verification/reception-0.3.13/product-image-component-accio.json"
+    },
+    "public_image_download": {
+      "status": "passed",
+      "original_mime": "image/webp",
+      "width": 1000,
+      "height": 1000,
+      "bytes": 190830,
+      "sha256": "dd49c11f6fe8fc3a6e30720379affd526b71a081fe4a50d0bbce6a259ca1234a",
+      "safe_local_jpeg_preview_bytes": 188312,
+      "preview_visually_inspected": true,
+      "report": "artifacts/verification/reception-0.3.13/product-image-download.json"
+    },
+    "limitations": [
+      "No echoed product ID or explicit platform primary-image flag",
+      "A program-derived link does not prove page existence, sale status or business facts",
+      "An actual image download does not validate live image search or SKU coverage"
+    ]
+  },
+  "window": {
+    "mode": "demo",
+    "actual_electron": true,
+    "isolated_temporary_data_bootstrap_shared_settings": true,
+    "image_fixture": "synthetic; live public-image download is verified separately",
+    "report": "artifacts/verification/workbench-0313-main-image-e/report.json",
+    "result": "passed",
+    "page_errors": [],
+    "normal_close_and_reopen": true,
+    "screenshots_visually_inspected_by_coordinator": [
+      "artifacts/verification/workbench-0313-main-image-e/summary-demand.png",
+      "artifacts/verification/workbench-0313-main-image-e/summary-no-demand.png",
+      "artifacts/verification/workbench-0313-main-image-e/product.png",
+      "artifacts/verification/workbench-0313-main-image-e/supplier.png",
+      "artifacts/verification/workbench-0313-main-image-e/product-offer-selected.png",
+      "artifacts/verification/workbench-0313-main-image-e/procurement.png",
+      "artifacts/verification/workbench-0313-main-image-e/narrow.png",
+      "artifacts/verification/workbench-0313-main-image-e/reopen.png"
+    ],
+    "interactions": [
+      "Canonical demand and independent summary",
+      "Summary with genuinely null case and usable manual composer",
+      "Derived product URL, safe independent image preview and unchanged customer image field",
+      "Supplier create/edit",
+      "Offer create/default/current-demand selection",
+      "Procurement navigation and blocked inquiry status",
+      "Narrow drawer keyboard focus and no horizontal overflow",
+      "Saved supplement, supplier, default and selected offer after reopen"
+    ],
+    "earlier_runs": [
+      "artifacts/verification/workbench-0313-layout-a/report.json",
+      "artifacts/verification/workbench-0313-final-b/report.json",
+      "artifacts/verification/workbench-0313-final-c/report.json",
+      "artifacts/verification/workbench-0313-main-image-d/report.json"
+    ],
+    "visual_issue_found_and_fixed": "First assertions passed but screenshot review found a no-case placeholder and false ownership wording; fixed nullable state and backend projection before later runs"
+  },
+  "inquiry": {
+    "available": false,
+    "state": "blocked",
+    "technical_schema_report": "artifacts/verification/reception-0.3.13/inquiry-capabilities.json",
+    "known": [
+      "Inquiry/reply tool schemas exist",
+      "Observed candidate products do not establish reliable platform supplier account identity",
+      "No verified remote request-id idempotency guarantee"
+    ],
+    "unverified": [
+      "Current seller account permission",
+      "Channel schema/documentation difference",
+      "Reply domain and association",
+      "Controlled submission, accepted evidence and unknown-operation recovery"
+    ],
+    "suppliers_contacted": 0,
+    "real_inquiries_sent": 0,
+    "real_quote_collection": false
+  },
+  "protected_boundaries": {
+    "real_merchant_databases_opened_for_regression": false,
+    "real_data_migrated_or_cleaned": false,
+    "real_customer_messages_sent": 0,
+    "real_reception_or_sourcing_ai_calls_in_this_development_validation": 0,
+    "authorized_readonly_platform_product_queries_performed": true,
+    "authorized_public_product_image_downloads": 1,
+    "rfq_orders_or_payments": 0,
+    "installation_or_default_entry_changed": false,
+    "git_commit_or_push": false,
+    "credentials_copied_or_reported": false,
+    "repository_schema": 2,
+    "adapter_ledger_schema": 1
+  },
+  "limitations": [
+    "Supplier inquiry and automatic quote collection remain blocked",
+    "Only the observed sourcing result format is supported; live image search and full SKU collection remain unverified",
+    "Post-execution tool validation is not a pre-execution sandbox",
+    "Demo summaries and suppliers are synthetic and do not prove live semantic quality",
+    "Sourcing shares the merchant AI slot, so later model requests can wait; image preparation itself does not claim that slot",
+    "Historical tests for retired reminder/card APIs have not all been replaced; targeted results are not a full-suite pass",
+    "Published artifacts and packaged Demo checks do not establish real NSIS installation, data migration, live sourcing or supplier inquiry acceptance"
+  ],
+  "source_branch": "feat/chat-translation-0.3.4",
+  "source_committed": false,
+  "package": {
+    "directory": "relase/release-0.3.13-a",
+    "status": "passed",
+    "candidate": true,
+    "staging": "artifacts/build/package-input-1794538958075",
+    "python_source_inputs": 81,
+    "frozen_backend_files": 75,
+    "portable_files": 164,
+    "portable_zip_entries": 165,
+    "app_asar_sha256": "567968079578036c620c7b2cab05d143966f52fa82eca312081cce02b5319efa",
+    "source_manifest_sha256": "40df68e2476c618b3f28c549c0f8629ec303a59b6c0991e4e6d07a4daabbacd4",
+    "release_signature": "ed25519",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "windows_authenticode_signed": false,
+    "both_bundles_guides_match_source": true,
+    "both_bundles_asar_match": true,
+    "update_source": "https://github.com/juccistar/reception-workbench-releases/",
+    "actual_installer_executed": false,
+    "evidence": [
+      "artifacts/verification/reception-0.3.13/package-source.json",
+      "artifacts/verification/reception-0.3.13/portable-zip.json",
+      "artifacts/verification/reception-0.3.13/portable-integrity.json",
+      "artifacts/verification/reception-0.3.13/update-release-integrity.json",
+      "artifacts/verification/reception-0.3.13/local-release-assets.json"
+    ]
+  },
+  "actual_windows": {
+    "status": "passed",
+    "packaged": true,
+    "business_ipc_mocked": false,
+    "reports": [
+      "artifacts/verification/workbench-0313-package-final-a/report.json",
+      "artifacts/verification/demo-package-0313-base-a/result.json"
+    ],
+    "screenshots_reviewed": true,
+    "screenshots_reviewed_count": 11,
+    "screenshots_visually_inspected_by_coordinator": [
+      "artifacts/verification/workbench-0313-package-final-a/summary-demand.png",
+      "artifacts/verification/workbench-0313-package-final-a/summary-no-demand.png",
+      "artifacts/verification/workbench-0313-package-final-a/product.png",
+      "artifacts/verification/workbench-0313-package-final-a/supplier.png",
+      "artifacts/verification/workbench-0313-package-final-a/product-offer-selected.png",
+      "artifacts/verification/workbench-0313-package-final-a/procurement.png",
+      "artifacts/verification/workbench-0313-package-final-a/narrow.png",
+      "artifacts/verification/workbench-0313-package-final-a/reopen.png",
+      "artifacts/verification/demo-package-0313-base-a/translation-settings.png",
+      "artifacts/verification/demo-package-0313-base-a/window.png",
+      "artifacts/verification/demo-package-0313-base-a/reopened-cache.png"
+    ],
+    "all_test_windows_closed": true,
+    "temporary_demo_data_only": true,
+    "product_image_fixture_synthetic": true,
+    "real_product_image_read_verified_separately": true
+  },
+  "release": {
+    "repository": "juccistar/reception-workbench-releases",
+    "tag": "v0.3.13",
+    "id": 443768284,
+    "url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.13",
+    "published_at": "2026-11-13T03:12:42Z",
+    "draft": false,
+    "prerelease": false,
+    "latest": true,
+    "assets": [
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.13.exe",
+        "id": 742062394,
+        "bytes": 136166152,
+        "sha256": "a403a8f4dedcf319e8a2d30550ab5a822074f9b754164642f52ba63993d3a1fd",
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.13/ReceptionWorkbench-Setup-0.3.13.exe"
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.13.zip",
+        "id": 742062400,
+        "bytes": 177948361,
+        "sha256": "2b53335f954b0760f31b47a339b4d6409ebce56784b93b5b0813fa24e4d7849b",
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.13/ReceptionWorkbench-0.3.13.zip"
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.13.exe.blockmap",
+        "id": 742062403,
+        "bytes": 142472,
+        "sha256": "cfc4f00b8e1ec8eda7f42eedfaaf6cf0190580f07b56ab1fa13dd0d15d7604f4",
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.13/ReceptionWorkbench-Setup-0.3.13.exe.blockmap"
+      },
+      {
+        "name": "latest.yml",
+        "id": 742062393,
+        "bytes": 726,
+        "sha256": "f5ce42f9e5765025721af0d36d337c79f6bfae53a59a81fa61affa27d44c1e16",
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.13/latest.yml"
+      }
+    ],
+    "server_digests_match_local": true,
+    "anonymous_complete_downloads_verified": true,
+    "downloaded_update_signature_verified": true,
+    "evidence": [
+      "artifacts/verification/reception-0.3.13/draft-verified.json",
+      "artifacts/verification/reception-0.3.13/github-publication.json",
+      "artifacts/verification/reception-0.3.13/public-download.json"
+    ]
+  }
+}

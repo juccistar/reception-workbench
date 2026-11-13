@@ -22,18 +22,12 @@ class NativeContinuationTests(unittest.TestCase):
         self.rows = [dict(messageId='buyer-1', senderAliId=BUYER, content='Question', timestamp=100)]
         self.calls = []
         self.after_token = None
-        self.after_history = None
         self.visible = True
         def body():
             return dict(conversationId=CID, sellerAliId=SELLER, contactAliId=BUYER, hasMore=False,
                         messages=deepcopy(self.rows if self.visible else self.rows[:1]))
         self.gateway._read = lambda name, args: body()
-        def history(*args):
-            messages = self.gateway._messages(body(), SELLER, BUYER, CID)
-            if self.after_history:
-                self.after_history()
-            return messages
-        self.gateway._history = history
+        self.gateway._history = lambda *args: self.fail('Continuations must not reread history before submission')
         def call(name, arguments, *, before_submit=None):
             self.calls.append(name)
             if name == 'get_communication_chatToken':
@@ -72,17 +66,16 @@ class NativeContinuationTests(unittest.TestCase):
 
     def test_unproved_seller_and_wrong_phase_are_rejected(self):
         self.rows.append(dict(messageId='external', senderAliId=SELLER, content='else', timestamp=101))
-        for phase in ('final', 'assistance', 'ack'):
+        for phase in ('final', 'assistance', 'supplement', 'ack'):
             self.assertEqual(self.send(self.intent(phase))['status'], 'rejected')
         self.assertEqual(self.calls, [])
 
-    def test_revoke_new_message_and_callback_during_read_block_submit(self):
-        for change in ('revoke', 'message', 'callback'):
+    def test_revoke_and_local_callback_changes_block_submit(self):
+        for change in ('revoke', 'callback'):
             with self.subTest(change=change):
                 allowed = [True]
                 def mutate():
                     if change == 'revoke': self.gateway.revoke()
-                    elif change == 'message': self.rows.append(dict(messageId='buyer-2', senderAliId=BUYER, content='new', timestamp=102))
                     else: allowed[0] = False
                 self.after_token = mutate
                 result = self.send(self.intent(operation='op-' + change), lambda: allowed[0])
@@ -127,15 +120,77 @@ class NativeContinuationTests(unittest.TestCase):
         self.assertEqual(self.send(self.intent('final'))['status'], 'rejected')
         self.assertEqual(self.calls.count('send_msg'), 1)
 
-    def test_source_time_scope_and_read_revocation(self):
-        for key, value in [('source_timestamp_ms', 99), ('source_text_sha256', sha('wrong')),
+    def test_source_time_hash_and_scope_contracts(self):
+        for key, value in [('source_timestamp_ms', 0), ('source_text_sha256', sha('wrong')),
                            ('frozen_scope', {'mode': 'selected', 'conversation_ids': []})]:
             intent = self.intent(operation='bad-' + key)
             intent[key] = value
             self.assertEqual(self.send(intent)['status'], 'rejected')
-        self.after_history = self.gateway.revoke
-        self.assertEqual(self.send(self.intent(operation='read-revoked'))['status'], 'rejected')
         self.assertFalse(self.calls)
+
+    def own_manual_receipt(self):
+        manual = dict(purpose='chat', send_mode='manual', seller_id=SELLER, buyer_id=BUYER,
+                      conversation_id=CID, reply='We will check.', operation_id='manual', client_request_id='manual')
+        self.assertEqual(self.send(manual)['status'], 'accepted')
+
+    def test_supplement_uses_accepted_seller_receipt_and_is_idempotent(self):
+        self.own_manual_receipt()
+        intent = self.intent('supplement')
+        self.assertEqual(self.send(intent)['status'], 'accepted')
+        self.assertEqual(self.send(intent)['status'], 'accepted')
+        self.assertEqual(self.calls.count('send_msg'), 2)
+        # A new operation or edited body cannot replay the same stable issue request.
+        changed = self.intent('supplement', operation='edited-note')
+        changed['reply'] = 'An edited answer for the same issue.'
+        self.assertEqual(self.send(changed)['status'], 'rejected')
+        self.assertEqual(self.send(dict(intent, reply='changed frozen body'))['status'], 'rejected')
+        self.assertEqual(self.calls.count('send_msg'), 2)
+
+    def test_distinct_supplement_issue_requests_each_use_latest_exact_receipt(self):
+        self.own_manual_receipt()
+        for issue in ('price', 'freight'):
+            intent = self.intent('supplement', operation='op-' + issue)
+            intent.update(client_request_id='stable-issue-' + issue, reply='Answer for ' + issue)
+            self.assertEqual(self.send(intent)['status'], 'accepted')
+        self.assertEqual(self.calls.count('send_msg'), 3)
+
+    def test_supplement_rejects_wrong_seller_body_or_receipt_time(self):
+        self.own_manual_receipt()
+        for key, value in [('latest_text_sha256', sha('not the accepted body')),
+                           ('source_timestamp_ms', 999)]:
+            intent = self.intent('supplement', operation='wrong-' + key)
+            intent[key] = value
+            self.assertEqual(self.send(intent)['status'], 'rejected')
+        self.assertEqual(self.calls.count('send_msg'), 1)
+
+    def test_supplement_unknown_blocks_other_issue_and_reconciles_original(self):
+        self.own_manual_receipt()
+        self.visible = False
+        intent = self.intent('supplement')
+        self.assertEqual(self.send(intent)['status'], 'unknown')
+        other = self.intent('supplement', operation='other-issue')
+        other['client_request_id'] = 'stable-other-issue'
+        self.assertEqual(self.send(other)['status'], 'rejected')
+        self.visible = True
+        self.assertEqual(self.gateway.reconcile_chat(intent['operation_id'])['status'], 'accepted')
+        self.assertEqual(self.calls.count('send_msg'), 2)
+
+    def test_supplement_definite_rejection_can_retry_same_stable_issue(self):
+        self.own_manual_receipt()
+        self.after_token = self.gateway.revoke
+        first = self.send(self.intent('supplement'))
+        self.assertEqual(first['status'], 'rejected')
+        self.assertIs(first['submission_started'], False)
+        self.after_token = None
+        self.assertEqual(self.send(self.intent('supplement', operation='retry-supplement'))['status'], 'accepted')
+        self.assertEqual(self.calls.count('send_msg'), 2)
+
+    def test_remote_only_activity_does_not_add_a_pre_submit_history_read(self):
+        intent = self.intent()
+        self.after_token = lambda: self.rows.append(dict(messageId='remote-new', senderAliId=BUYER,
+                                                        content='not yet synchronized', timestamp=102))
+        self.assertEqual(self.send(intent)['status'], 'accepted')
+        self.assertEqual(self.calls, ['get_communication_chatToken', 'send_msg'])
 
 if __name__ == '__main__':
     unittest.main()

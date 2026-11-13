@@ -1,6 +1,6 @@
 {
   "name": "inquiry-reception-workbench",
-  "version": "0.3.3",
+  "version": "0.3.13",
   "private": true,
   "description": "Customer reception desktop workbench",
   "repository": {
@@ -11,7 +11,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "start": "node scripts/start.mjs",
-    "test:ui": "vitest run --config apps/desktop/vitest.config.ts",
+    "test:ui": "node scripts/test-ui.mjs",
     "test:backend": "node scripts/test-backend.mjs",
     "test:tools": "node --test scripts/tests/*.test.mjs",
     "test": "npm run test:backend && npm run test:ui && npm run test:tools",

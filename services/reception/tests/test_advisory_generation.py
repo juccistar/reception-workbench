@@ -1,5 +1,6 @@
 """Synthetic-only coverage of content isolation and recoverable generation."""
 import json
+import threading
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -45,6 +46,7 @@ class AdvisoryGenerationTests(unittest.TestCase):
 
     def test_fenced_response_and_call_start(self):
         facade = LiveIntegration.__new__(LiveIntegration)
+        facade._query_state = threading.local()
         facade.native = SimpleNamespace(data_dir='synthetic', cli='synthetic-cli', process=object())
         facade._visual_workspace_identity = None
         facade.resolve_identity = lambda seller: seller
@@ -63,6 +65,7 @@ class AdvisoryGenerationTests(unittest.TestCase):
 
     def test_truncated_model_json_is_retryable_format_error(self):
         facade = LiveIntegration.__new__(LiveIntegration)
+        facade._query_state = threading.local()
         facade.native = SimpleNamespace(data_dir='synthetic', cli='synthetic-cli', process=object())
         facade.resolve_identity = lambda seller: seller
         facade._agent_args = lambda: ['--agent-id', 'synthetic']

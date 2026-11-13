@@ -26,9 +26,11 @@ def chain_attempts(repo, seller_id, conversation_id, source_id, phase='reply', r
         op_phase = intent.get('continuity_phase', 'reply') if op.get('purpose') == 'continuity' else 'reply'
         if op_phase != phase:
             continue
-        if phase == 'assistance':
+        if phase in ('assistance', 'supplement'):
             plan = repo.get('continuity_plan', op.get('plan_id')) or {}
-            if plan.get('result_version') != result_version:
+            if phase == 'assistance' and plan.get('result_version') != result_version:
+                continue
+            if phase == 'supplement' and not set(plan.get('supplement_issue_ids', [])) & set(result_version or []):
                 continue
         attempts.append(op)
     attempts.sort(key=lambda o: o.get('updated_at', 0))
@@ -45,7 +47,9 @@ def decision(repo, seller_id, conversation_id, source_id, phase='reply', result_
                 or job.get('job_id') in operation_jobs):
             continue
         plan = repo.get('continuity_plan', job.get('plan_id')) or {}
-        if plan.get('phase', 'reply') == phase and (phase != 'assistance' or plan.get('result_version') == result_version):
+        if (plan.get('phase', 'reply') == phase
+                and (phase != 'assistance' or plan.get('result_version') == result_version)
+                and (phase != 'supplement' or set(plan.get('supplement_issue_ids', [])) & set(result_version or []))):
             return 'blocked', len(attempts), None
     if not attempts:
         return 'ready', 0, None
@@ -98,7 +102,8 @@ def restore_retry_job_states(repo, update_job, seller_id):
             continue
         phase = (operation.get('intent') or {}).get('continuity_phase', 'reply') if operation.get('purpose') == 'continuity' else 'reply'
         plan = repo.get('continuity_plan', operation.get('plan_id')) or {}
-        version = plan.get('result_version') if phase == 'assistance' else None
+        version = (plan.get('result_version') if phase == 'assistance' else
+                   tuple(plan.get('supplement_issue_ids', [])) if phase == 'supplement' else None)
         chains.add((cid, source, phase, version))
     for cid, source, phase, version in chains:
         settle_waiting_jobs(repo, update_job, seller_id, cid, source, phase, version)

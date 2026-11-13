@@ -1,0 +1,66 @@
+{
+  "status": "source_fixed_targeted_tests_and_window_passed",
+  "release_state": "unreleased",
+  "base_release": "0.3.7",
+  "scope": "Seller image previews and original image inputs for automatic reception, manual suggestions and polish, with sender roles preserved",
+  "tests": {
+    "full_suite_run": false,
+    "backend_passed": 78,
+    "backend_files": {
+      "test_photo_source.py": 13,
+      "test_message_photos.py": 11,
+      "test_business_images.py": 7,
+      "test_photo_reception.py": 18,
+      "test_photo_observations.py": 9,
+      "test_photo_vision.py": 6,
+      "test_conversation_assistance_031.py": 9,
+      "test_031_ai_integration.py": 5
+    },
+    "backend_initial_report": "artifacts/verification/seller-images-20261112-a/backend-tests.json",
+    "backend_final_reception_log": "artifacts/verification/seller-images-20261112-a/test_photo_reception-final.log",
+    "backend_final_note": "The initial run had one new manual test wrapper failure; preserving its callable signature fixed the fixture. Final test_photo_reception.py rerun passed all 18; production code did not change after the initial run.",
+    "desktop_passed": 9,
+    "desktop_file": "apps/desktop/tests/message-images.test.tsx",
+    "typecheck": "passed",
+    "build": "passed"
+  },
+  "actual_window": {
+    "report": "artifacts/verification/seller-images-seller-source-001/result.json",
+    "status": "passed",
+    "mode": "demo",
+    "business_ipc_mocked": false,
+    "seller_preview_and_dialog": true,
+    "both_roles_in_context": true,
+    "image_cache_reopened": true,
+    "screenshots_reviewed": true,
+    "screenshots": [
+      "artifacts/verification/seller-images-seller-source-001/seller-image-dialog.png",
+      "artifacts/verification/seller-images-seller-source-001/both-images.png",
+      "artifacts/verification/seller-images-seller-source-001/reopened.png"
+    ],
+    "windows_closed": true,
+    "renderer_errors": [],
+    "synthetic_sends": 1
+  },
+  "behavior": {
+    "seller_and_buyer_preview_supported": true,
+    "original_sender_checked": true,
+    "source_version_and_image_hash_checked": true,
+    "roles_in_context_and_model_manifest": true,
+    "seller_image_confirms_buyer_facts": false,
+    "image_limit_total_both_roles": 4,
+    "separate_observation_job_required": false,
+    "unread_images_claimed_visible": false,
+    "original_bytes_or_urls_exposed_to_renderer": false,
+    "image_cache_preserved_across_restart": true
+  },
+  "boundaries": {
+    "production_data_accessed_for_tests": false,
+    "real_ai_calls": 0,
+    "real_customer_sends": 0,
+    "real_accio_seller_image_acceptance": "not_run",
+    "packaged": false,
+    "published": false,
+    "installed_program_replaced": false
+  }
+}

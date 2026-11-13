@@ -230,6 +230,18 @@ class NativeGateway(LiveGateway):
                 self._authorization = authorization
                 self._active_intent = deepcopy(intent)
             try:
+                if intent.get('send_mode') == 'automatic':
+                    from .chat import execute_chat
+                    # Old snapshot operations keep their original request and receipt.
+                    # Replaying one must never turn an unknown submit into a new send.
+                    previous = self.ledger.get(intent.get('operation_id'))
+                    if previous and previous[0] == 'send' and previous[1] == self._active_intent:
+                        return previous[2]
+                    direct = deepcopy(self._active_intent)
+                    direct.update(purpose='reception', client_request_id=direct.get('operation_id'))
+                    return execute_chat(self, direct, authorization)
+                # Explicit legacy manual confirmation/preview remains compatible;
+                # ordinary human chat already uses send_chat directly.
                 return self._execute_send(self._active_intent)
             finally:
                 with self._permission_lock:

@@ -51,7 +51,7 @@ def _url(content):
     return value
 
 
-def _window(gateway, name, seller, buyer, cid, when, mid):
+def _window(gateway, name, seller, buyer, cid, when, mid, sender_id):
     cursor = when + 1
     body = gateway._read(name, dict(conversationId=cid, selfAliId=int(seller), domain='icbu',
                                     count=100, limitTimeStamp=cursor, forward=False))
@@ -91,9 +91,9 @@ def _window(gateway, name, seller, buyer, cid, when, mid):
         row_id = row.get('messageId')
         if row_id is not None and (type(row_id) not in (str, int) or not str(row_id)):
             _fail()
-        if row_id is not None and str(row_id) == mid and (sender != buyer or ts != when):
+        if row_id is not None and str(row_id) == mid and (sender != sender_id or ts != when):
             _fail()
-        if sender == buyer and ts == when:
+        if sender == sender_id and ts == when:
             if row_id is not None and str(row_id) != mid:
                 _fail()
             matches.append(row)
@@ -117,12 +117,14 @@ def read_photo_source(gateway, expected_message):
         _identities(expected_message, seller, buyer, cid)
         when = _timestamp(expected_message.get('timestamp_ms'))
         mid = expected_message.get('message_id')
+        role = expected_message.get('role')
         if (when >= _MAX or not isinstance(mid, str) or not mid or mid.startswith('missing-id-')
-                or expected_message.get('role') != 'buyer' or expected_message.get('own') is not False
+                or role not in ('buyer', 'seller') or expected_message.get('own') is not (role == 'seller')
                 or not is_photo_placeholder(expected_message.get('text')) or not isinstance(expected_message.get('attachments'), list)):
             _fail()
         gateway._identity(seller)
-        body, row = _window(gateway, 'query_conversation_msg', seller, buyer, cid, when, mid)
+        sender_id = seller if role == 'seller' else buyer
+        body, row = _window(gateway, 'query_conversation_msg', seller, buyer, cid, when, mid, sender_id)
         if row.get('messageId') is None or str(row['messageId']) != mid:
             _fail()
         normalized = gateway._messages(body, seller, buyer, cid)
@@ -130,10 +132,10 @@ def read_photo_source(gateway, expected_message):
         if len(verified) != 1:
             _fail()
         message = verified[0]
-        if (message.role != 'buyer' or message.timestamp_ms != when or message.text != expected_message['text']
+        if (message.role != role or message.timestamp_ms != when or message.text != expected_message['text']
                 or message.attachments != expected_message['attachments']):
             _fail()
-        _, photo = _window(gateway, 'query_conversation_msg_for_aimode', seller, buyer, cid, when, mid)
+        _, photo = _window(gateway, 'query_conversation_msg_for_aimode', seller, buyer, cid, when, mid, sender_id)
         return dict(resource_url=_url(photo.get('content')), source='query_conversation_msg_for_aimode',
                     association='unique_sender_timestamp')
     except Exception:

@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from test_core import MockFacade
+from reception_service import __version__
 from reception_service.errors import ServiceError
 from reception_service.repository import encoded, now_ms
 from reception_service.service import ReceptionService
@@ -242,16 +243,64 @@ class MessageMonitorTests(unittest.TestCase):
             watermark = self.service.repo.get('message_watermark', 'customer-a')
             watermark['recheck_at'] = 0
             self.service.repo.put('message_watermark', 'customer-a', watermark)
+            before = self.service.get_context(case['case_id'])
             self.tick()
-            self.assertTrue(self.service.repo.get('message_sync_task', 'customer-a')['pending'])
             self.assertFalse(self.service._message_sync_pending('customer-a'))
+            self.until(lambda: self.service.repo.get('message_watermark', 'customer-a').get('recheck_at') is None)
+            after = self.service.get_context(case['case_id'])
+            self.assertEqual(before['fingerprint'], after['fingerprint'])
+            self.assertEqual(self.service.repo.get('job', ack['job_id'])['status'], 'running')
         finally:
             self.facade.release.set()
-        self.assertEqual(self.wait_job(ack)['status'], 'succeeded')
+        job = self.wait_job(ack)
+        self.assertEqual(job['status'], 'succeeded', job)
         self.idle()
         self.assertIsNone(self.service.repo.get('message_watermark', 'customer-a')['recheck_at'])
         self.assertEqual(self.facade.generate_calls, 1)
         self.assertEqual(self.facade.send_calls, 0)
+
+    def test_coverage_fingerprint_ignores_only_observation_time(self):
+        from reception_service.reception_context import semantic_fingerprint
+        context = {'history_coverage': {'status': 'partial', 'next_cursor': 20,
+                                        'earliest_ms': 10, 'latest_ms': 30, 'updated_at': 1}}
+        same = copy.deepcopy(context)
+        same['history_coverage']['updated_at'] = 2
+        self.assertEqual(semantic_fingerprint(context), semantic_fingerprint(same))
+        same['history_coverage']['next_cursor'] = 10
+        self.assertNotEqual(semantic_fingerprint(context), semantic_fingerprint(same))
+        same['history_coverage']['next_cursor'] = 20
+        same['history_coverage']['status'] = 'complete'
+        self.assertNotEqual(semantic_fingerprint(context), semantic_fingerprint(same))
+
+    def test_no_change_recheck_keeps_inflight_manual_suggestion_current(self):
+        self.connect([self.info()])
+        self.service.checks['ai']['status'] = 'passed'
+        started, release = threading.Event(), threading.Event()
+        case = self.service.get_conversation('customer-a')['case']
+        def generate_manual(context, request_id, *, on_call_start, cancel_event):
+            on_call_start()
+            started.set()
+            if not release.wait(3):
+                raise AssertionError('synthetic AI release missing')
+            return {'reply': 'Thank you for your message.'}
+        self.facade.generate_manual = generate_manual
+        ack = self.service.generate_manual_suggestion('customer-a', 'manual-recheck', case['case_id'])
+        try:
+            self.assertTrue(started.wait(2))
+            watermark = self.service.repo.get('message_watermark', 'customer-a')
+            watermark['recheck_at'] = 0
+            self.service.repo.put('message_watermark', 'customer-a', watermark)
+            _, before = self.service._manual_context('customer-a', case['case_id'])
+            self.tick()
+            self.until(lambda: self.service.repo.get('message_watermark', 'customer-a').get('recheck_at') is None)
+            _, after = self.service._manual_context('customer-a', case['case_id'])
+            self.assertEqual(before, after)
+            self.assertEqual(self.service.repo.get('job', ack['job_id'])['status'], 'running')
+        finally:
+            release.set()
+        job = self.wait_job(ack)
+        self.assertEqual(job['status'], 'succeeded', job)
+        self.assertEqual(self.service.get_conversation('customer-a')['manual_suggestion']['status'], 'ready')
 
     def test_only_changed_customer_reads_body_and_preserves_takeover(self):
         self.connect([self.info(), self.info('customer-b')])
@@ -550,20 +599,28 @@ class MessageMonitorTests(unittest.TestCase):
         self.assertEqual({c[0] for c in self.facade.read_calls}, {'customer-a', 'older-customer'})
         self.assertEqual(self.service.repo.get('message_watermark', 'older-customer')['latest_timestamp'], 800)
 
-    def test_newly_synced_reply_gets_worker_turn_before_other_customer_body(self):
+    def test_newly_synced_reply_and_other_customer_body_both_progress(self):
         self.connect([self.info(), self.info('customer-b')])
         self.service.checks['ai']['status'] = 'passed'
         self.service.settings['merge_seconds'] = 0
         self.service.set_scope('selected', ['customer-a', 'customer-b'])
         start = self.service.set_reception(True)['reception']['started_at_ms']
         events = []
+        ai_started, ai_release, other_read = threading.Event(), threading.Event(), threading.Event()
         generate = self.facade.generate
         def ai(context, request_id):
-            events.append('generate-' + context['case']['conversation_id'])
+            cid = context['case']['conversation_id']
+            events.append('generate-' + cid)
+            if cid == 'customer-a':
+                ai_started.set()
+                if not ai_release.wait(3):
+                    raise AssertionError('synthetic AI release missing')
             return generate(context, request_id)
         self.facade.generate = ai
         def body(cid, cursor):
             events.append('read-' + cid)
+            if cid == 'customer-b':
+                other_read.set()
             return {'messages': [self.message(cid, start + 1, 'fresh', 'I am interested in ceramic mugs.')],
                     'has_more': False, 'next_cursor': None}
         self.facade.body_hook = body
@@ -572,19 +629,27 @@ class MessageMonitorTests(unittest.TestCase):
         self.scheduler_patch.stop()
         try:
             self.tick()
-            self.idle()
+            self.assertTrue(ai_started.wait(2), events)
+            self.assertTrue(other_read.wait(2), events)
         finally:
+            ai_release.set()
             self.scheduler_patch.start()
-        self.assertLess(events.index('generate-customer-a'), events.index('read-customer-b'))
+        self.idle()
+        self.assertIn('generate-customer-a', events)
+        self.assertIn('read-customer-b', events)
         self.assertEqual(self.facade.send_calls, 0)
 
     def test_explicit_ai_check_does_not_wait_for_all_pending_customer_bodies(self):
         self.connect([self.info(), self.info('customer-b')])
         started, release = threading.Event(), threading.Event()
+        ai_started, ai_release, other_read = threading.Event(), threading.Event(), threading.Event()
         events = []
         generate = self.facade.generate
         def ai(context, request_id):
             events.append('ai-check')
+            ai_started.set()
+            if not ai_release.wait(3):
+                raise AssertionError('synthetic AI release missing')
             return generate(context, request_id)
         self.facade.generate = ai
         def body(cid, cursor):
@@ -593,6 +658,8 @@ class MessageMonitorTests(unittest.TestCase):
                 started.set()
                 if not release.wait(3):
                     raise AssertionError('synthetic body release missing')
+            if cid == 'customer-b':
+                other_read.set()
             return {'messages': [self.message(cid, 2000, 'fresh')], 'has_more': False, 'next_cursor': None}
         self.facade.body_hook = body
         self.facade.summaries[None] = self.facade.summary_page([self.info(stamp=2000), self.info('customer-b', 2000)])
@@ -600,11 +667,16 @@ class MessageMonitorTests(unittest.TestCase):
         try:
             self.assertTrue(started.wait(2))
             checked = self.service.call('check_ai')
+            release.set()
+            self.assertTrue(ai_started.wait(2), events)
+            self.assertTrue(other_read.wait(2), events)
         finally:
             release.set()
+            ai_release.set()
         self.assertEqual(self.wait_job(checked)['status'], 'succeeded')
         self.idle()
-        self.assertLess(events.index('ai-check'), events.index('read-customer-b'))
+        self.assertIn('ai-check', events)
+        self.assertIn('read-customer-b', events)
         self.assertEqual(self.facade.send_calls, 0)
 
     def test_summary_activity_during_automatic_ai_makes_result_stale(self):
@@ -725,7 +797,7 @@ class MessageMonitorTests(unittest.TestCase):
         self.assertTrue(self.service._closed)
 
     def test_settings_validate_probe_bounds_and_snapshot_is_fixed_content_free_dto(self):
-        self.assertEqual(self.service.get_snapshot()['settings']['probe_seconds'], 5)
+        self.assertEqual(self.service.get_snapshot()['settings']['probe_seconds'], 2)
         for invalid in (True, 1, 61, '5', float('nan')):
             with self.subTest(value=invalid), self.assertRaises(ServiceError):
                 self.service.save_settings(probe_seconds=invalid)
@@ -736,7 +808,7 @@ class MessageMonitorTests(unittest.TestCase):
                                      'summary_requests', 'body_syncs', 'failed_checks', 'last_body_sync_at',
                                      'waiting_activity_count', 'background_pending_count', 'active_read_count'})
         self.assertEqual(sync['poll_seconds'], 2.5)
-        self.assertEqual(self.service.get_snapshot()['app']['version'], '0.3.3')
+        self.assertEqual(self.service.get_snapshot()['app']['version'], __version__)
 
     def test_pending_activity_blocks_old_automatic_source_after_reception_pause(self):
         self.connect([self.info()])

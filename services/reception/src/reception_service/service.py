@@ -10,13 +10,20 @@ import re
 import threading
 import time
 
-from .context import FIELDS, build_context, missing_fields, validate_reply, validated_facts, reply_validation_reason
-from .errors import ServiceError, safe_diagnostics
+from . import __version__
+from .context import FIELDS, build_context, missing_fields_for_case, validate_reply, validated_facts, reply_validation_reason
+from .procurement import ProcurementMixin, merge_fact, invalidate_case_sources, evidence_snapshot, fact_change
+from .product_library import ProductLibraryMixin
+from .errors import ServiceError, safe_diagnostics, read_diagnostics
+from .execution import ExecutionMixin, BusinessQueue, AI_JOBS
 from .integrations import build_integrations
 from .integrations.live import LiveIntegration, SNAPSHOT_ERROR_MESSAGES
 from .continuity import ContinuityMixin, text_hash
 from .manual_chat import ManualChatMixin
 from .conversation_assistance import ConversationAssistanceMixin
+from .business_supplement import supplement_fingerprint
+from . import policy_library
+from .integrations.generation_metadata import applied_policy_summaries, checked_metadata
 from .translation_service import TranslationMixin
 from .message_monitor import MessageMonitorMixin
 from .conversation_style import social_intent
@@ -25,7 +32,9 @@ from .synthetic_check import synthetic_context
 from .sync_activity import visible_jobs
 from . import unread
 from .reception_state import ReceptionProjection
-from .photos import is_photo_placeholder, photo_fingerprint
+from .business_progress import apply_progress, project_progress
+from .requirement_media import RequirementMediaMixin, get_product_source_images
+from .photos import is_photo_placeholder, photo_fingerprint, with_direct_photo_reads
 from .message_photos import MessagePhotosMixin
 from .storage_guard import preflight_workspace
 from .workspace_lock import WorkspaceLock, native_children_stopped
@@ -33,19 +42,38 @@ from .seller_guard import SellerGuard, SellerBusyError
 from .send_retry_policy import (decision as send_retry_decision, retry_message as send_retry_message,
                                 settle_waiting_jobs, restore_retry_job_states)
 
-SLOW = frozenset({'sync_messages', 'fill_history', 'generate_draft', 'check_connection', 'check_ai',
+SLOW = frozenset({'sync_messages', 'fill_history', 'generate_draft', 'check_connection', 'check_ai', 'refresh_company_profile',
                   'preview_send', 'confirm_send', 'send_chat', 'run_outbox', 'check_feishu', 'reconcile_operation', 'load_message_image'})
-FAST = frozenset({'get_snapshot', 'get_conversation', 'get_messages', 'get_message_image', 'get_context', 'list_jobs',
-                  'list_outbox', 'save_draft', 'save_policy', 'save_settings', 'set_scope',
+FAST = frozenset({'get_snapshot', 'get_conversation', 'get_messages', 'get_message_image', 'get_requirement_media',
+                  'set_requirement_media_cover', 'set_product_image_source', 'load_requirement_media', 'get_context', 'list_jobs',
+                  'list_outbox', 'save_draft', 'save_policy', 'list_builtin_policies', 'adopt_builtin_policy', 'save_settings', 'set_scope',
                   'set_reception', 'takeover', 'begin_manual_edit', 'save_chat_draft', 'prepare_send', 'inject_demo', 'mark_messages_read',
-                  'list_assistance_tasks', 'save_assistance_result', 'save_conversation_supplement',
-                  'generate_manual_suggestion', 'get_translations', 'request_translations', 'shutdown'})
-DEFAULT_SETTINGS = {'workctl_path': '', 'poll_seconds': 30, 'probe_seconds': 5, 'merge_seconds': 3,
+                  'save_conversation_supplement',
+                  'generate_manual_suggestion', 'get_translations', 'request_translations',
+                  'get_translation_info', 'get_translation_config', 'save_translation_settings',
+                  'configure_translation_credential', 'validate_translation_settings',
+                  'check_translation_provider', 'clear_translation_cache', 'set_case_category', 'create_procurement_case',
+                  'list_products', 'get_product', 'get_product_main_image', 'list_suppliers', 'get_supplier', 'save_supplier', 'save_product_offer',
+                  'select_supplier_offer', 'bind_requirement_product', 'set_product_default_offer', 'get_procurement_settings',
+                  'save_procurement_settings', 'set_procurement_enabled', 'list_procurement_tasks', 'request_procurement',
+                  'reconcile_procurement', 'shutdown'})
+DEFAULT_SETTINGS = {'workctl_path': '', 'poll_seconds': 30, 'probe_seconds': 2, 'merge_seconds': 1,
                     'required_fields': ['product', 'quantity', 'specifications', 'destination'],
+                    'image_batch_mib': 64, 'image_prepare_seconds': 60, 'image_parallelism': 2,
+                    'generation_retry_limit': 3, 'translation_parallelism': 2,
+                    'translation_context_messages': 2, 'translation_context_bytes': 300,
+                    'max_questions_per_reply': 2, 'max_questions_per_field': 2,
+                    'required_fields_by_category': {},
                     'feishu': {'enabled': False, 'write_enabled': False}}
 CHECK_NAMES = ('runtime', 'identity', 'messages', 'ai', 'send_preview', 'feishu')
 SYNC_PAGE_LIMIT = 10
 HISTORY_PAGE_LIMIT = 1000
+ADVANCED_INTEGER_SETTINGS = {
+    'image_batch_mib': (8, 256), 'image_prepare_seconds': (10, 300), 'image_parallelism': (1, 4),
+    'generation_retry_limit': (1, 10), 'translation_parallelism': (1, 4),
+    'translation_context_messages': (0, 10), 'translation_context_bytes': (0, 6000),
+    'max_questions_per_reply': (1, 2), 'max_questions_per_field': (1, 10),
+}
 
 
 def blank_check():
@@ -58,7 +86,7 @@ def coverage():
             'next_cursor': None, 'message': '尚未读取历史消息'}
 
 
-class ReceptionService(ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
+class ReceptionService(ProductLibraryMixin, RequirementMediaMixin, ExecutionMixin, ProcurementMixin, ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
     def __init__(self, data_root: Path, mode='demo', seller_id='', emit=None):
         if mode not in ('demo', 'live'):
             raise ServiceError('invalid_mode', '运行模式无效')
@@ -73,6 +101,8 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             # threads before releasing the data-root lock and storage handles.
             if hasattr(self, '_stop'):
                 self._stop.set()
+            if hasattr(self, '_generation_active'):
+                self._join_generation_tasks()
             for name in ('_worker', '_monitor_thread', '_translation_worker'):
                 thread = getattr(self, name, None)
                 if thread and thread.ident is not None and thread is not threading.current_thread():
@@ -97,7 +127,8 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
         self._closing = False
         self._closed = False
         self._epoch = 0
-        self._queue = queue.Queue()
+        self._queue = BusinessQueue()
+        self._init_execution()
         self._chat_facades = {}
         self._running = False
         self._auto_send = False
@@ -128,13 +159,14 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
         self.integrations = build_integrations(mode, self.data_root / mode, copy.deepcopy(self.settings))
         self.repo = Repository(self.data_root / 'demo' / 'workspace.sqlite3', self.seller_id) if mode == 'demo' else Repository(None)
         self.checks = {name: blank_check() for name in CHECK_NAMES}
+        self._init_requirement_media()
         self._init_message_monitor()
         self._recover()
+        self._init_product_library()
         self._initialize_unread()
         if mode == 'demo' and not self.repo.list('conversation'):
             self._seed()
         self._hydrate_demo_messages()
-        self._translation_facade = build_integrations(mode, self.data_root / mode, copy.deepcopy(self.settings))
         self._init_translation()
         self._worker = threading.Thread(target=self._work_loop, name='reception-external-worker', daemon=True)
         self._worker.start()
@@ -159,6 +191,11 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
 
     def _recover(self):
         with self.repo.transaction():
+            self.repo.compact_supplements()
+            for product in self.repo.list('product_catalog'):
+                if (product.get('lookup') or {}).get('status') == 'querying':
+                    product['lookup'] = {'status': 'unknown', 'reason': '进程中断', 'queried_at': None}
+                    self.repo.put('product_catalog', product['catalog_product_id'], product, history=True)
             for case in self.repo.list('case'):
                 if case.get('state') not in ('needs_human', 'human_owned'):
                     continue
@@ -170,9 +207,6 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                     # model's needs_human signal. Preserve ownership separately.
                     conversation.update(human_owned=True, manual_chat=True, revision=conversation['revision'] + 1)
                     self.repo.put('conversation', conversation['conversation_id'], conversation, history=True)
-                elif not any(t.get('case_id') == case['case_id'] and t.get('status') == 'open'
-                             for t in self.repo.list('assistance_task', case_id=case['case_id'])):
-                    self._create_assistance(case, self._latest_buyer(case['conversation_id']), None, 'model_request', [])
                 case.update(state='waiting_quote' if not case.get('missing') else 'clarifying',
                             revision=case['revision'] + 1, updated_at=now_ms())
                 self.repo.put('case', case['case_id'], case, history=True)
@@ -213,6 +247,10 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                     item.update(status='unknown', message='上次同步结果未知；保留操作编号，等待核对', updated_at=now_ms())
                     self.repo.put('outbox', item['operation_id'], item, history=True)
             self._restore_continuity()
+            for work in self.repo.list('supplement_followup'):
+                if work.get('status') == 'generating':
+                    work.update(status='pending', due_at=now_ms() + 1500)
+                    self.repo.put('supplement_followup', work['conversation_id'], work)
             restore_retry_job_states(self.repo, self._job_update, self.seller_id)
 
     def _initialize_unread(self):
@@ -277,22 +315,59 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
         return {'limit': None, 'used': self._budget_used, 'remaining': None,
                 'ai_used': self._ai_budget_used, 'ai_remaining': None, 'unlimited': True}
 
+    def _company_name(self):
+        if self.mode == 'demo':
+            return '演示商家公司'
+        if not self.account_verified:
+            return None
+        profile = self.repo.get('meta', 'company_profile', {})
+        return profile.get('company_name') if profile.get('seller_id') == self.seller_id else None
+
+    def _task_refresh_company_profile(self, params, job_id, epoch, facade):
+        self._ensure_identity(facade)
+        seller = self.seller_id
+        try:
+            profile = facade.company_profile(seller)
+            if (not isinstance(profile, dict) or profile.get('seller_id') != seller
+                    or not isinstance(profile.get('company_name'), str) or not profile['company_name'].strip()
+                    or len(profile['company_name']) > 400 or any(ord(c) < 32 for c in profile['company_name'])):
+                raise ServiceError('company_profile_unavailable', '公司名称读取失败')
+        except Exception as error:
+            self._job_update(job_id, diagnostics=read_diagnostics(error))
+            with self._lock, self.repo.transaction():
+                if epoch != self._epoch or self._closing or self.seller_id != seller:
+                    raise ServiceError('cancelled', '公司名称读取期间来源已变化')
+                previous = self.repo.get('meta', 'company_profile', {})
+                if previous.get('seller_id') != seller or not previous.get('company_name'):
+                    self.repo.put('meta', 'company_profile', {'seller_id': seller, 'company_name': '', 'updated_at': now_ms()})
+            self._changed()
+            return {'_job_status': 'failed', 'message': '公司名称读取失败，可重试'}
+        with self._lock, self.repo.transaction():
+            if epoch != self._epoch or self._closing or self.seller_id != seller:
+                raise ServiceError('cancelled', '公司名称读取期间来源已变化')
+            self.repo.put('meta', 'company_profile', {'seller_id': seller,
+                'company_name': profile['company_name'].strip(), 'updated_at': now_ms()})
+        self._changed()
+        return {'message': '公司名称已更新'}
+
     def get_snapshot(self):
+        from .product_catalog import project_case
         with self._lock:
             projection = ReceptionProjection(self)
             conversations = [self._summary(c, projection) for c in self.repo.list('conversation')]
             conversations.sort(key=lambda c: c['last_timestamp'] or 0, reverse=True)
-            return {'app': {'version': '0.3.3', 'mode': self.mode, 'seller_id': self.seller_id,
-                            'seller_suffix': self.seller_id[-6:], 'account_verified': self.account_verified},
+            return {'app': {'version': __version__, 'mode': self.mode, 'seller_id': self.seller_id,
+                            'seller_suffix': self.seller_id[-6:], 'account_verified': self.account_verified,
+                            'company_name': self._company_name()},
                     'reception': {'running': self._running, 'auto_send': self._auto_send,
                                   'manual_only': self._manual_only, 'started_at_ms': self._started_at_ms,
                                   'scope': copy.deepcopy(self._scope), 'budget': self._budget()},
                     'checks': copy.deepcopy(self.checks), 'conversations': conversations,
-                    'handoff_cases': sorted([case for case in self.repo.list('case') if case['state'] == 'waiting_quote'],
+                    'handoff_cases': sorted([project_case(self.repo, case) for case in self.repo.list('case') if case['state'] == 'waiting_quote'],
                                             key=lambda case: case['updated_at'], reverse=True),
-                    'policies': self.repo.list('policy'), 'jobs': self.list_jobs(), 'outbox': self.list_outbox(),
-                    'assistance_tasks': self.list_assistance_tasks()['items'],
-                    'settings': copy.deepcopy(self.settings), 'message_sync': self._message_sync_snapshot()}
+                    'policies': [policy_library.normalize_policy(p) for p in self.repo.list('policy')], 'jobs': self.list_jobs(), 'outbox': self.list_outbox(),
+                    'settings': copy.deepcopy(self.settings), 'message_sync': self._message_sync_snapshot(),
+                    'translation': self.get_translation_info()}
 
     def list_assistance_tasks(self, conversation_id=None, status=None):
         if conversation_id is not None and not isinstance(conversation_id, str):
@@ -309,11 +384,41 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
         return self._save_assistance_result(task_id, expected_revision, result, result_public,
                                             schedule_followup, client_mutation_id)
 
+    def start_assistance_task(self, task_id, expected_revision, client_mutation_id):
+        if (not isinstance(task_id, str) or not task_id or type(expected_revision) is not int or expected_revision < 1
+                or not isinstance(client_mutation_id, str) or not 1 <= len(client_mutation_id.strip()) <= 200):
+            raise ServiceError('invalid_params', '协助处理参数无效')
+        request_hash = text_hash(encoded([task_id, expected_revision]))
+        with self._lock, self.repo.transaction():
+            task = self._require('assistance_task', task_id)
+            conversation = self._chat_owner(task['conversation_id'])
+            if any(task.get(key) != conversation.get(key) for key in ('seller_id', 'buyer_id', 'conversation_id')):
+                raise ServiceError('operation_owner_mismatch', '协助任务不属于当前客户')
+            prior = self.repo.get('assistance_start_mutation', client_mutation_id)
+            if prior:
+                if prior.get('request_hash') != request_hash:
+                    raise ServiceError('mutation_conflict', '操作编号已用于其他协助处理')
+                return task
+            if task['revision'] != expected_revision:
+                raise ServiceError('revision_conflict', '协助任务已变化，请刷新后再操作')
+            if task['status'] != 'open':
+                raise ServiceError('assistance_closed', '该协助任务已结束')
+            if not task.get('processing_started_at'):
+                task.update(processing_started_at=now_ms(), updated_at=now_ms(), revision=task['revision'] + 1)
+                self.repo.put('assistance_task', task_id, task, history=True)
+                conversation['revision'] += 1
+                self.repo.put('conversation', task['conversation_id'], conversation)
+                self._invalidate(task['conversation_id'])
+            self.repo.put('assistance_start_mutation', client_mutation_id, {'request_hash': request_hash, 'task_id': task_id})
+        self._changed(task['conversation_id'], task['case_id'])
+        return task
+
     def _create_assistance(self, case, source, job_id, kind, fact_keys, detail=None):
         fact_keys = sorted(set(key for key in fact_keys if key in FIELDS))
         existing = next((t for t in self.repo.list('assistance_task', case_id=case['case_id'])
                          if t.get('seller_id') == self.seller_id and t['status'] == 'open'
-                         and t['kind'] == kind and sorted(t.get('fact_keys', [])) == fact_keys), None)
+                         and t['kind'] == kind and sorted(t.get('fact_keys', [])) == fact_keys
+                         and (not detail or t.get('detail') == detail[:2000])), None)
         if existing:
             return existing
         stamp = now_ms()
@@ -324,7 +429,8 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 'detail': detail[:2000] if isinstance(detail, str) and detail.strip() else '请核实相关信息，接待可继续进行。',
                 'source_message_id': source['message_id'] if source else None,
                 'source_job_id': job_id, 'fact_keys': fact_keys, 'revision': 1, 'created_at': stamp,
-                'updated_at': stamp, 'resolution': '', 'result_public': False, 'followup_status': 'not_scheduled'}
+                'updated_at': stamp, 'resolution': '', 'result_public': False, 'followup_status': 'not_scheduled',
+                'processing_started_at': None}
         self.repo.put('assistance_task', task['task_id'], task, history=True)
         return task
 
@@ -339,10 +445,10 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 'state': case['state'] if case else 'clarifying', 'pending_count': pending,
                 'human_owned': conversation.get('human_owned') is True,
                 'reply_pending': projection.reply_pending(conversation),
-                'assistance_open_count': sum(t['status'] == 'open' for t in self.repo.list('assistance_task', conversation_id=conversation['conversation_id'])),
                 'reception_status': projection.status(conversation)}
 
     def get_conversation(self, conversation_id, case_id=None, refresh_empty=False):
+        from .product_catalog import project_case
         if type(refresh_empty) is not bool:
             raise ServiceError('invalid_params', '读取选项必须为布尔值')
         with self._lock:
@@ -356,16 +462,27 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 self._request_empty_history(conversation_id)
             drafts = self.repo.list('draft', case_id=case['case_id']) if case else []
             drafts.sort(key=lambda d: (d['updated_at'], d['created_at']))
-            return {'conversation': self._summary(conversation), 'case': case,
-                    'cases': [c for c in self.repo.list('case') if c['conversation_id'] == conversation_id],
+            for draft in drafts:
+                draft.pop('quality_warnings', None)
+                if isinstance(draft.get('validation'), dict):
+                    draft['validation'].pop('warnings', None)
+            summary = self.repo.get('conversation_summary', conversation_id)
+            if summary and (summary.get('seller_id') != conversation.get('seller_id')
+                            or summary.get('buyer_id') != conversation.get('buyer_id')):
+                summary = None
+            summary = ({key: summary[key] for key in ('conversation_id', 'body', 'revision', 'updated_at')}
+                       if summary else None)
+            return {'conversation': {**self._summary(conversation), 'revision': conversation['revision']}, 'case': project_case(self.repo, case),
+                    'cases': [project_case(self.repo, c) for c in self.repo.list('case') if c['conversation_id'] == conversation_id],
                     'messages': self.get_messages(conversation_id, limit=100)['items'],
                     'reading': unread.reading(self.repo, conversation_id),
                     'history': self.repo.get('coverage', conversation_id, coverage()),
                     'draft': drafts[-1] if drafts else None,
                     'chat_draft': self.repo.get('chat_draft', conversation_id),
                     'supplement': self._supplement(conversation_id),
-                    'manual_suggestion': self._manual_suggestion(conversation_id),
-                    'assistance_tasks': self.list_assistance_tasks(conversation_id=conversation_id)['items']}
+                    'conversation_summary': summary,
+                    'requirement_media': self.get_requirement_media(case['case_id']) if case else None,
+                    'manual_suggestion': self._manual_suggestion(conversation_id)}
 
     def get_messages(self, conversation_id, before_id=None, limit=50):
         if type(limit) is not int or not 1 <= limit <= 200:
@@ -397,18 +514,9 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             case = self._require('case', case_id)
             context = build_context(self.repo, case, self.settings, self._budget(),
                                     continuation=self._generation_continuation(case))
-            verified = [dict(policy_id='verification_' + t['task_id'], revision=t.get('result_version', 1),
-                             title=t['title'], content=t['resolution'], kind='verification',
-                             confirmed=True, public=True, product_scope='', expires_at=None)
-                        for t in self.repo.list('assistance_task', case_id=case_id)
-                        if t.get('seller_id') == self.seller_id and t.get('buyer_id') == case['buyer_id']
-                        and t.get('conversation_id') == case['conversation_id'] and t.get('result_public') is True
-                        and t.get('resolution')]
-            if verified:
-                context['knowledge'].extend(verified)
-                if len(encoded(context)) > 120_000:
-                    raise ServiceError('context_too_large', '当前核实资料与上下文超出单次预算，请检查待处理事项', stage='context')
-                context['fingerprint'] = text_hash(encoded([context['fingerprint'], verified]))
+            context.update(self._product_context_for_case(case))
+            from .reception_context import semantic_fingerprint
+            context['fingerprint'] = semantic_fingerprint(context)
             return context
 
     def list_jobs(self, include_background=False):
@@ -434,6 +542,7 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             return sorted(items, key=lambda o: o.get('updated_at') or 0, reverse=True)
 
     def _invalidate(self, conversation_id=None, policy_id=None):
+        self._cancel_generation_tasks(conversation_id, reason='source_changed')
         for draft in self.repo.list('draft'):
             if draft['status'] not in ('pending', 'stale'):
                 continue
@@ -454,7 +563,8 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
         case = {'case_id': new_id('case'), 'seller_id': self.seller_id, 'buyer_id': conversation['buyer_id'],
                 'conversation_id': conversation['conversation_id'], 'customer_name': conversation['customer_name'],
                 'procurement_key': procurement_key, 'revision': 1, 'state': 'clarifying', 'facts': {},
-                'missing': list(self.settings['required_fields']), 'questions': {}, 'summary': '', 'updated_at': now_ms()}
+                'missing': [], 'questions': {}, 'updated_at': now_ms()}
+        case['missing'] = missing_fields_for_case(case['facts'], self.settings, case)
         self.repo.put('case', case['case_id'], case, history=True)
         self.repo.put('case_origin', case['case_id'], {'seller_id': self.seller_id, 'buyer_id': case['buyer_id'],
                       'conversation_id': case['conversation_id'], 'message_id': source_message_id,
@@ -551,17 +661,26 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 if new_buyer:
                     conversation['last_buyer_at'] = now_ms()
                     case = self._require('case', conversation['case_id'])
-                    # Raw message corrections revoke derived facts that cited that message.
-                    case['facts'] = {k: f for k, f in case['facts'].items()
-                                     if not any(s in edited_ids for s in f['evidence_ids'])}
                     case.update(revision=case['revision'] + 1, updated_at=now_ms())
-                    case['missing'] = missing_fields(case['facts'], self.settings['required_fields'])
+                    case['missing'] = missing_fields_for_case(case['facts'], self.settings, case)
                     latest_buyer = self._latest_buyer(cid)
                     if latest_buyer and self._stop_requested(latest_buyer['text']):
                         case['state'] = 'closed'
                     elif not conversation['human_owned'] and case['state'] not in ('closed', 'waiting_quote'):
                         case['state'] = 'clarifying'
                     self.repo.put('case', case['case_id'], case, history=True)
+                if edited_ids:
+                    for affected in self.repo.list('case', conversation_id=cid):
+                        requirements = affected.get('requirements') or {}
+                        invalid = [key for key, row in requirements.items() if isinstance(row, dict)
+                                   and edited_ids.intersection(row.get('evidence_ids') or [])]
+                        if invalid:
+                            for key in invalid:
+                                requirements[key] = {'value': [] if key == 'product_images' else None, 'evidence_ids': []}
+                            if 'product_id' in invalid:
+                                self.repo.db.execute("DELETE FROM entities WHERE kind='requirement_product_binding' AND id=?", (affected['case_id'],))
+                            affected.update(revision=affected['revision'] + 1, updated_at=now_ms())
+                            self.repo.put('case', affected['case_id'], affected, history=True)
                 self.repo.put('conversation', cid, conversation)
                 self._invalidate(cid)
             existing = self.repo.get('coverage', cid, coverage())
@@ -640,7 +759,7 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 raise ServiceError('send_unresolved', '草稿仍有发送结果待核对')
             context = self.get_context(case_id)
             source = self._latest_buyer(case['conversation_id'])
-            policies = {p['policy_id']: p['revision'] for p in context['knowledge']}
+            policies = {**{p['policy_id']: p['revision'] for p in context['knowledge']}, **context.get('policy_versions', {})}
             if (previous and previous['status'] == 'pending' and previous['origin'] == 'manual'
                     and previous['body'] == body and previous['case_id'] == case_id
                     and previous['conversation_id'] == case['conversation_id']
@@ -679,38 +798,35 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 'origin': origin, 'created_at': previous['created_at'] if previous else stamp, 'updated_at': stamp,
                 'validation': validate_reply(body, sources, context), 'context_fingerprint': context['fingerprint'],
                 'photo_fingerprint': photo_fingerprint(context),
-                'policy_versions': {p['policy_id']: p['revision'] for p in context['knowledge']}}
+                'photo_read_images': copy.deepcopy(context.get('photo_context', {}).get('read_images', [])),
+                'supplement_fingerprint': supplement_fingerprint(context),
+                'policy_versions': {**{p['policy_id']: p['revision'] for p in context['knowledge']}, **context.get('policy_versions', {})},
+                'applied_policies': applied_policy_summaries(context)}
 
     def save_policy(self, kind, title, content, product_scope, confirmed, public, policy_id=None,
-                    expected_revision=None, valid_until=None):
-        if not self.account_verified:
-            raise ServiceError('identity_required', '请先核验卖家身份再保存该卖家的资料')
-        if (kind not in ('policy', 'product') or not isinstance(title, str) or not title.strip()
-                or not isinstance(content, str) or not content.strip() or len(content) > 50_000
-                or not isinstance(product_scope, list) or any(not isinstance(s, str) or not s.strip() for s in product_scope)
-                or type(confirmed) is not bool or type(public) is not bool
-                or (valid_until is not None and (type(valid_until) is not int or valid_until < 0))):
-            raise ServiceError('invalid_params', '资料字段无效')
-        with self._lock, self.repo.transaction():
-            previous = self.repo.get('policy', policy_id) if policy_id else None
-            if policy_id and not previous:
-                raise ServiceError('not_found', '资料不存在')
-            if previous and previous['revision'] != expected_revision:
-                raise ServiceError('revision_conflict', '资料版本已变化')
-            policy = {'policy_id': policy_id or new_id('policy'), 'kind': kind, 'title': title.strip(), 'content': content,
-                      'product_scope': product_scope, 'confirmed': confirmed, 'public': public,
-                      'revision': previous['revision'] + 1 if previous else 1, 'updated_at': now_ms(), 'valid_until': valid_until}
-            self.repo.put('policy', policy['policy_id'], policy, history=True)
-            # New or newly applicable policies can change the answer too.
-            self._invalidate()
-        self._changed()
-        return policy
+                    expected_revision=None, valid_until=None, *, category=None, enabled=None, usage=None,
+                    customer_wording=None, internal_notes=None, priority=None):
+        return policy_library.save_policy(self, kind, title, content, product_scope, confirmed, public,
+                    policy_id, expected_revision, valid_until, category=category, enabled=enabled, usage=usage,
+                    customer_wording=customer_wording, internal_notes=internal_notes, priority=priority)
+
+    def list_builtin_policies(self):
+        return policy_library.list_builtin_policies(self)
+
+    def adopt_builtin_policy(self, template_id, content=None, product_scope=None, enabled=None,
+                             confirmed=None, expected_revision=None, update=False):
+        return policy_library.adopt_builtin_policy(self, template_id, content, product_scope, enabled,
+                                                   confirmed, expected_revision, update)
 
     def save_settings(self, **changes):
         if any(k not in DEFAULT_SETTINGS for k in changes):
             raise ServiceError('invalid_settings', '仅允许已知设置字段')
         updated = copy.deepcopy(self.settings)
         for key, value in changes.items():
+            if key in ADVANCED_INTEGER_SETTINGS:
+                lower, upper = ADVANCED_INTEGER_SETTINGS[key]
+                if type(value) is not int or not lower <= value <= upper:
+                    raise ServiceError('invalid_settings', '高级处理设置超出允许范围')
             if key == 'workctl_path' and (not isinstance(value, str) or '\x00' in value or len(value) > 4096):
                 raise ServiceError('invalid_settings', 'workctl 路径无效')
             if key == 'poll_seconds' and (type(value) not in (int, float) or not 5 <= value <= 3600):
@@ -723,6 +839,15 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 if not isinstance(value, list) or any(f not in FIELDS for f in value):
                     raise ServiceError('invalid_settings', '必填字段无效')
                 value = list(dict.fromkeys(['product'] + value))
+            if key == 'required_fields_by_category':
+                if (not isinstance(value, dict) or len(value) > 100 or any(
+                        not isinstance(label, str) or not label.strip() or label != label.strip()
+                        or len(label) > 8 or any(ord(char) < 32 for char in label)
+                        or not isinstance(fields, list) or len(fields) > len(FIELDS)
+                        or any(not isinstance(field, str) or field not in FIELDS for field in fields)
+                        for label, fields in value.items())):
+                    raise ServiceError('invalid_settings', '品类条件需要简短品类及有效需求字段')
+                value = {label: list(dict.fromkeys(['product'] + fields)) for label, fields in value.items()}
             if key == 'feishu':
                 allowed = {'enabled', 'write_enabled', 'cli_path', 'base_token', 'table', 'table_id',
                            'form_share_token', 'account_option', 'initial_status', 'fields'}
@@ -755,7 +880,7 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             self.checks = {name: blank_check() for name in CHECK_NAMES}
             with self.repo.transaction():
                 for case in self.repo.list('case'):
-                    missing = missing_fields(case['facts'], updated['required_fields'])
+                    missing = missing_fields_for_case(case['facts'], updated, case)
                     if missing != case['missing']:
                         case.update(missing=missing, revision=case['revision'] + 1, updated_at=now_ms())
                         if case['state'] == 'waiting_quote' and missing:
@@ -764,10 +889,8 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 self._invalidate()
         # Factory is local; credentials/runtime discovery belongs to explicit checks.
         replacement = build_integrations(self.mode, self.data_root / self.mode, copy.deepcopy(updated))
-        translation_replacement = build_integrations(self.mode, self.data_root / self.mode, copy.deepcopy(updated))
         with self._lock:
             self.integrations = replacement
-            self._translation_facade = translation_replacement
             self._hydrate_demo_messages()
             self._monitor_wake.set()
         self._changed()
@@ -799,6 +922,7 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             self._auto_send = False
             self._frozen_scope = None
             self._epoch += 1
+            self._cancel_generation_tasks(reason='shutdown' if closing else 'paused')
             if closing:
                 self._closing = True
                 self._stop.set()
@@ -902,18 +1026,30 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             raise ServiceError('human_owned', '当前客户由人工接管，不能自动发送')
         if draft['source_case_revision'] != case['revision'] or draft['source_conversation_revision'] != conversation['revision']:
             raise ServiceError('stale_draft', '需求或新消息已变化，请重新生成或编辑')
-        context = self.get_context(case['case_id'])
+        context = with_direct_photo_reads(self.get_context(case['case_id']), draft.get('photo_read_images', []))
+        if (draft.get('supplement_fingerprint') != supplement_fingerprint(context)
+                and (draft.get('supplement_fingerprint') is not None or context['supplement'].get('body'))):
+            raise ServiceError('stale_supplement', '业务补充已变化，请重新生成或复核正文')
         expected_photo = draft.get('photo_fingerprint')
         if ((expected_photo is not None and expected_photo != photo_fingerprint(context))
                 or expected_photo is None and context['photo_context']['events']):
             raise ServiceError('stale_photo', '图片依据已变化，请重新生成或复核正文')
-        policy_versions = {p['policy_id']: p['revision'] for p in context['knowledge']}
+        policy_versions = {**{p['policy_id']: p['revision'] for p in context['knowledge']}, **context.get('policy_versions', {})}
         if draft.get('policy_versions', {}) != policy_versions:
             raise ServiceError('stale_policy', '适用资料或有效期已变化')
         validation = validate_reply(draft['body'], draft['validation']['sources'], context)
         if not validation['ready']:
             raise ServiceError('validation_blocked', '正文存在未核实依据，请先修订', stage='validation')
+        supplement = draft.get('continuation', {}).get('phase') == 'supplement'
+        if supplement and (draft.get('continuation') != self._supplement_continuation(case)
+                           or not draft.get('supplement_issue_ids')
+                           or not set(draft['supplement_issue_ids']) <= set(draft['continuation']['issue_ids'])):
+            raise ServiceError('stale_supplement', '业务补充续答来源或关联问题已变化')
         operations = [o for o in self.repo.list('operation') if o.get('purpose') != 'chat'
+                      and not (supplement and o.get('status') == 'accepted'
+                               and (o.get('intent', {}).get('continuity_phase') != 'supplement'
+                                    or not set((self.repo.get('continuity_plan', o.get('plan_id')) or {}).get('supplement_issue_ids', []))
+                                    & set(draft.get('supplement_issue_ids', []))))
                       and not (o.get('purpose') == 'continuity' and o.get('intent', {}).get('continuity_phase') == 'ack')
                       and o['case_id'] == case['case_id'] and o['source_message_id'] == draft['source_message_id']
                       and o['status'] in ('sending', 'accepted', 'unknown')]
@@ -1108,7 +1244,8 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
         if kind == 'load_message_image':
             return self._enqueue_photo(params)
         allowed = {'sync_messages': {'conversation_id'}, 'fill_history': {'conversation_id'},
-                   'generate_draft': {'case_id', 'expected_case_revision'}, 'check_connection': set(), 'check_ai': set(),
+                   'generate_draft': {'case_id', 'expected_case_revision', 'supplement_followup'}, 'check_connection': set(), 'check_ai': set(),
+                   'refresh_company_profile': set(),
                    'preview_send': {'draft_id', 'expected_revision'}, 'confirm_send': {'confirmation_id'},
                    'run_outbox': set(), 'check_feishu': set(), 'reconcile_operation': {'operation_id'}}
         if automatic and kind == 'automatic_send':
@@ -1118,6 +1255,8 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                     'reconcile_operation': {'operation_id'}}
         if set(params) - allowed[kind] or required.get(kind, set()) - set(params):
             raise ServiceError('invalid_params', '任务参数不完整或含未知字段')
+        if 'supplement_followup' in params and (not automatic or params['supplement_followup'] is not True):
+            raise ServiceError('invalid_params', '业务补充续答只能由自动调度发起')
         if kind == 'check_ai':
             self._pause()
         with self._lock, self.repo.transaction():
@@ -1162,8 +1301,13 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 if existing:
                     return {'job_id': existing['job_id']}
                 if automatic:
-                    if (not self._running or not self._in_scope(cid) or not self._automatic_source(cid)
-                            or self._generation_attempted(cid, case, source)):
+                    supplement = self._supplement_continuation(case) if params.get('supplement_followup') else None
+                    work = self.repo.get('supplement_followup', cid) or {}
+                    available_source = self._supplement_source(case) if supplement else self._automatic_source(cid)
+                    if (not self._running or not self._in_scope(cid) or not available_source
+                            or params.get('supplement_followup') and (not supplement or work.get('status') != 'pending'
+                                or work.get('due_at', 0) > now_ms())
+                            or not params.get('supplement_followup') and self._generation_attempted(cid, case, source)):
                         raise ServiceError('cancelled', '自动生成来源、范围或额度已失效')
             if kind == 'confirm_send':
                 confirmation = self.repo.get('confirmation', params['confirmation_id'])
@@ -1180,10 +1324,11 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             if kind in ('generate_draft', 'check_ai'):
                 job['external_started'] = False
             if kind == 'generate_draft':
-                reserved = 1 + self._vision_needed(cid) if automatic else 0
+                reserved = 1 if automatic else 0
                 previous = [j for j in self.repo.list('job', conversation_id=cid) if j['kind'] == 'generate_draft'
                             and j.get('source_message_id') == (source['message_id'] if source else None)]
                 job.update(source_case_revision=params['expected_case_revision'], epoch=self._epoch,
+                           supplement_followup=params.get('supplement_followup') is True,
                            source_message_id=source['message_id'] if source else None,
                            source_text_sha256=text_hash(source['text']) if source else None,
                            retry_attempt=max((j.get('retry_attempt', 0) for j in previous), default=0),
@@ -1193,6 +1338,9 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 if cid:
                     self._bind_message_sync(job)
             self.repo.put('job', job['job_id'], job, history=not job.get('background_sync'))
+            if kind == 'generate_draft' and params.get('supplement_followup'):
+                work.update(status='generating', job_id=job['job_id'])
+                self.repo.put('supplement_followup', cid, work)
             self._queue.put((job['job_id'], kind, copy.deepcopy(params), self._epoch, automatic))
         if not job.get('background_sync'):
             self._emit('job.updated', job)
@@ -1218,6 +1366,14 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
         job_id, kind, params, _, _ = item
         if kind == 'load_message_image' and self._require('job', job_id).get('status') not in ('queued', 'running'):
             return  # A generation prephase may already have completed this item.
+        if kind == 'product_lookup':
+            from .product_catalog import key_for
+            with self.repo.transaction():
+                key = key_for(self.seller_id, 'alibaba', params['expected_product_id'])
+                row = self.repo.get('product_catalog', key)
+                if row and row.get('request_id') == job_id and row['lookup']['status'] == 'querying':
+                    row['lookup'] = {'status': 'unknown', 'reason': 'cancelled', 'queried_at': None}
+                    self.repo.put('product_catalog', key, row, history=True)
         if kind == 'send_chat':
             with self._lock, self.repo.transaction():
                 operation = self.repo.get('operation', params.get('operation_id'))
@@ -1229,20 +1385,33 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                     self._chat_facades.pop(operation['operation_id'], None)
         self._job_update(job_id, status='cancelled', completed_at=now_ms(), stage='cancelled', message='服务已关闭；排队任务未执行')
 
-    def _run_queued(self, item):
+    def _run_queued(self, item, *, facade=None):
         job_id, kind, params, epoch, automatic = item
+        measured_at = None
         try:
             if self._stop.is_set():
                 self._cancel_queued(item)
                 return
-            if kind == 'load_message_image' and self._require('job', job_id).get('status') not in ('queued', 'running'):
-                return
-            self._job_update(job_id, status='running', stage=kind, started_at=now_ms(), message='后台处理中')
+            with self._lock:
+                current_job = self._require('job', job_id)
+                # Preview preparation and dispatch share this atomic claim. A
+                # completed inline preview must never execute a second time.
+                if current_job.get('status') != 'queued':
+                    return
+                if kind in AI_JOBS and self._generation_cancel_event(job_id).is_set():
+                    self._job_update(job_id, status='cancelled', stage='cancelled', completed_at=now_ms(),
+                                     message='来源或任务已更新，旧生成未执行')
+                    return
+                stamp = now_ms()
+                measured_at = time.monotonic()
+                self._job_update(job_id, status='running', stage=kind, started_at=stamp, message='后台处理中',
+                                 diagnostics={'queue_wait_ms': max(0, stamp - current_job['created_at'])})
             if (automatic and (epoch != self._epoch or not self._running)
                     or kind in ('generate_draft', 'check_ai', 'run_outbox')
                     and (epoch != self._epoch or self._manual_only and (kind != 'check_ai' or self._running))):
                 raise ServiceError('cancelled', '接待权限已撤销')
-            result = getattr(self, '_task_' + kind)(params, job_id, epoch, self.integrations)
+            result = getattr(self, '_task_' + kind)(params, job_id, epoch,
+                                                   self.integrations if facade is None else facade)
             status = result.pop('_job_status', 'succeeded') if isinstance(result, dict) else 'succeeded'
             message = result.get('message', '任务完成') if isinstance(result, dict) else '任务完成'
             failure = result.get('error') if isinstance(result, dict) and status in ('failed', 'deferred', 'stale') else None
@@ -1254,6 +1423,8 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                              **({'result': result} if result is not None else {}),
                              **({'error': failure, 'diagnostics': result.get('diagnostics', {})} if isinstance(failure, dict) else {}))
         except ServiceError as error:
+            if kind == 'product_lookup':
+                self._finish_product_claim(job_id, error.code)
             if kind == 'generate_draft' and (error.code.startswith('schema_') or error.code in ('invalid_ai_output', 'unverified_reply', 'answer_non_json', 'answer_missing', 'answer_schema', 'native_error', 'native_failed', 'timeout', 'native_timeout', 'task_failed', 'connection_error', 'channel_unavailable')):
                 self._defer_generation_retry(job_id, error.code)
                 return
@@ -1288,6 +1459,8 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                              completed_at=now_ms(), message=str(error), error={'code': error.code, 'message': str(error)},
                              diagnostics=error.diagnostics)
         except Exception:
+            if kind == 'product_lookup':
+                self._finish_product_claim(job_id, 'task_failed')
             if kind == 'generate_draft':
                 self._defer_generation_retry(job_id, 'task_failed')
                 return
@@ -1304,58 +1477,83 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             self._job_update(job_id, status='failed', completed_at=now_ms(), stage=kind, message=str(error),
                              error={'code': error.code, 'message': str(error)})
         finally:
-            self._queue.task_done()
-            self._changed()
+            try:
+                if kind == 'generate_draft' and params.get('supplement_followup'):
+                    with self._lock, self.repo.transaction():
+                        job = self.repo.get('job', job_id) or {}
+                        work = self.repo.get('supplement_followup', job.get('conversation_id')) or {}
+                        if work.get('job_id') == job_id and work.get('status') == 'generating' and job.get('status') in ('cancelled', 'stale', 'failed'):
+                            work.update(status='blocked' if job['status'] == 'failed' else 'pending', due_at=now_ms() + 1500)
+                            self.repo.put('supplement_followup', job['conversation_id'], work)
+                if measured_at is not None:
+                    self._job_update(job_id, diagnostics={'task_elapsed_ms': int((time.monotonic() - measured_at) * 1000)})
+            finally:
+                if kind in AI_JOBS:
+                    with self._lock:
+                        if job_id not in self._generation_active:
+                            self._generation_events.pop(job_id, None)
+                self._queue.task_done()
+                self._changed()
 
     def _defer_generation_retry(self, job_id, code, *, replan=False):
         with self._lock, self.repo.transaction():
             job = self._require('job', job_id)
             previous = [j for j in self.repo.list('job', conversation_id=job['conversation_id'])
                         if j.get('kind') == 'generate_draft' and j.get('source_message_id') == job.get('source_message_id')]
+            if self._generation_cancel_event(job_id).is_set():
+                self._job_update(job_id, status='cancelled', stage='cancelled', completed_at=now_ms(),
+                                 message='旧生成已取消，等待当前来源重新规划', ai_reserved_remaining=0,
+                                 retry_at=None, retry_status='cancelled')
+                return
             attempt = max((j.get('retry_attempt', 0) for j in previous), default=0) + 1
-            retry_at = now_ms() + (0 if replan else min(60000, 2000 * 2 ** min(attempt - 1, 5)))
+            same_version = [j for j in previous if not job.get('source_text_sha256')
+                            or j.get('source_text_sha256') == job['source_text_sha256']]
+            failures = max((j.get('generation_failure_count',
+                                 j.get('retry_attempt', 0) if j.get('retry_status') != 'replan' else 0)
+                            for j in same_version), default=0) + (0 if replan else 1)
+            if not replan and failures >= self.settings.get('generation_retry_limit', 3):
+                self._job_update(job_id, status='failed', stage='retry', completed_at=now_ms(),
+                                 message='本条消息生成已达到连续失败预算，请处理待办后明确重试',
+                                 retry_at=None, retry_attempt=attempt, generation_failure_count=failures,
+                                 ai_reserved_remaining=0, last_error_code=code, retry_status='exhausted',
+                                 error={'code': 'generation_retry_limit', 'message': '本条消息生成连续失败'})
+                return
+            retry_at = now_ms() + (0 if replan else min(60000, 2000 * 2 ** min(max(0, failures - 1), 5)))
             job = self._job_update(job_id, status='deferred', stage='retry', completed_at=now_ms(),
                                   message='正在合并最新消息重新规划' if replan else '生成暂时不可用，等待自动重试',
-                                  retry_at=retry_at, retry_attempt=attempt, ai_reserved_remaining=0,
-                                  last_error_code=code, retry_status='replan' if replan else 'waiting')
+                                  retry_at=retry_at, retry_attempt=attempt, generation_failure_count=failures,
+                                  ai_reserved_remaining=0, last_error_code=code, retry_status='replan' if replan else 'waiting')
             if not replan:
                 self._maybe_acknowledge(job, code)
 
     def _yield_to_ready_work(self, *, replies=False):
-        # Stay on the one business worker. Human intents take precedence between
-        # pages; a newly synced automatic reply also gets a turn between customers.
-        deferred, urgent, priority = [], None, 2
-        for _ in range(self._queue.qsize()):
-            try:
-                item = self._queue.get_nowait()
-            except queue.Empty:
-                break
-            rank = (0 if item[1] == 'send_chat' else
-                    1 if replies and (item[1] in ('check_ai', 'preview_send', 'reconcile_operation') or
-                                      item[4] and item[1] in ('generate_draft', 'automatic_send')) else 2)
-            if rank < priority:
-                if urgent is not None:
-                    deferred.append(urgent)
-                    self._queue.task_done()
-                urgent, priority = item, rank
-            else:
-                deferred.append(item)
-                self._queue.task_done()
-        for item in deferred:
-            self._queue.put(item)
-        if urgent is not None:
-            self._run_queued(urgent)
+        # Only the coordinator dispatches business work. Image preparation in
+        # the AI slot must never recursively execute unrelated native sends.
+        if threading.current_thread() is not self._worker:
+            return
+        with self._lock:
+            def eligible(item):
+                if item[1] in AI_JOBS and self._generation_active:
+                    return False
+                return item[1] == 'send_chat' or replies and item[1] in (
+                    'automatic_send', 'continuity_send', 'reconcile_operation', 'check_ai', 'preview_send', 'generate_draft')
+            item = self._queue.take_ready(eligible, self._work_priority)
+        if item is not None:
+            self._dispatch_work(item)
 
     def _work_loop(self):
+        next_schedule = 0.0
         while not self._stop.is_set():
-            try:
-                item = self._queue.get(timeout=0.15)
-            except queue.Empty:
+            if time.monotonic() >= next_schedule:
                 self._schedule()
+                next_schedule = time.monotonic() + .15
+            item = self._take_ready_work()
+            if item is None:
+                self._stop.wait(.03)
                 continue
             self._business_enter()
             try:
-                self._run_queued(item)
+                self._dispatch_work(item)
                 if item[1] == 'load_message_image' and not self._stop.is_set():
                     self._yield_to_ready_work(replies=True)
                 if self.mode == 'live' and item[1] == 'sync_messages' and not self._stop.is_set():
@@ -1372,6 +1570,9 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             try:
                 self._cancel_queued(item)
             finally:
+                if item[1] in AI_JOBS:
+                    with self._lock:
+                        self._generation_events.pop(item[0], None)
                 self._queue.task_done()
 
     def _schedule(self):
@@ -1379,6 +1580,7 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
         with self._lock:
             if self._closing:
                 return
+            self._schedule_procurement()
             self._schedule_continuity()
             self._schedule_generation_retries()
             with self.repo.lock:
@@ -1395,6 +1597,22 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                     cid = conversation['conversation_id']
                     case = self.repo.get('case', conversation['case_id'])
                     source = self._automatic_source(cid)
+                    supplement = self._supplement_continuation(case)
+                    work = self.repo.get('supplement_followup', cid) or {}
+                    if supplement and work.get('status') == 'pending':
+                        source = self._supplement_source(case)
+                        retry_state, _, retry_at = send_retry_decision(self.repo, self.seller_id, cid, supplement['source_message_id'], 'supplement', supplement['issue_ids'])
+                        existing_drafts = self.repo.list('draft', case_id=case['case_id'])
+                        ready = (retry_state == 'ready' or retry_state == 'waiting' and retry_at <= now_ms())
+                        if (source and self.account_verified and (self.mode == 'demo' or self.checks['ai']['status'] == 'passed')
+                                and not conversation.get('human_owned') and case['state'] not in ('human_owned', 'closed')
+                                and self._in_scope(cid) and not self._conversation_unresolved(cid)
+                                and work.get('due_at', 0) <= now_ms() and ready
+                                and not any(d.get('status') in ('pending', 'sending', 'unknown') for d in existing_drafts)
+                                and ('generate_draft', case['case_id']) not in active):
+                            requests.append(('generate_draft', {'case_id': case['case_id'],
+                                             'expected_case_revision': case['revision'], 'supplement_followup': True}, True))
+                        continue
                     if (conversation['human_owned'] or self._conversation_unresolved(cid) or case['state'] in ('human_owned', 'closed')
                             or not self._in_scope(cid) or not source or not conversation['last_buyer_at']
                             or not self._post_quote_analysis_allowed(case, source)
@@ -1413,6 +1631,7 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                         pending.update(status=retry_state, updated_at=now_ms())
                         self.repo.put('draft', pending['draft_id'], pending, history=True)
                     if (pending and retry_ready and not continuation_pending and pending.get('retry_after', 0) <= now_ms()
+                            and (pending.get('continuation', {}).get('phase') != 'supplement' or pending.get('supplement_issue_ids'))
                             and self._auto_send and ('automatic_send', case['case_id']) not in active):
                         requests.append(('automatic_send', {'draft_id': pending['draft_id'],
                                                           'expected_revision': pending['revision']}, True))
@@ -1562,6 +1781,7 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             raise
         self._set_check('identity', job_id, 'demo' if simulated else 'passed',
                         '演示卖家（合成数据）' if simulated else '已核验当前卖家', simulated)
+        self._task_refresh_company_profile({}, job_id, epoch, facade)
         result = self._sync({'_bootstrap': self.mode == 'live'}, job_id, facade)
         if epoch != self._epoch or self._closing:
             raise ServiceError('cancelled', '读取期间授权或设置已变化')
@@ -1793,19 +2013,35 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                         '本地模拟 AI 检查，不代表真实 AI 验收' if self.mode == 'demo' else '单次 AI 正文与来源检查通过', self.mode == 'demo')
         return {'message': '演示 AI 检查完成' if self.mode == 'demo' else 'AI 检查完成'}
 
+    def _save_ai_conversation_state(self, conversation, case, output, context):
+        from .context import validated_requirements, REQUIREMENT_FIELDS
+        summary = output.get('conversation_summary')
+        if isinstance(summary, str) and summary.strip() and len(summary) <= 10000:
+            prior = self.repo.get('conversation_summary', conversation['conversation_id']) or {}
+            self.repo.put('conversation_summary', conversation['conversation_id'], {
+                'conversation_id': conversation['conversation_id'], 'seller_id': conversation['seller_id'],
+                'buyer_id': conversation['buyer_id'], 'body': summary.strip(),
+                'revision': prior.get('revision', 0) + 1, 'updated_at': now_ms(),
+                'source_fingerprint': context.get('fingerprint')}, history=True)
+        if case is not None:
+            requirements = validated_requirements(output.get('requirements'), context)
+            if requirements:
+                defaults = {key: {'value': [] if key == 'product_images' else None, 'evidence_ids': []}
+                            for key in REQUIREMENT_FIELDS}
+                case['requirements'] = {**defaults, **case.get('requirements', {}), **requirements}
+                case['requirements_format'] = 'ai-v1'
+                return True
+        return False
+
     def _validate_ai_output(self, output, context):
         if (not isinstance(output, dict) or not isinstance(output.get('reply'), str)
                 or not isinstance(output.get('facts', {}), dict) or not isinstance(output.get('reply_sources', []), list)
                 or not isinstance(output.get('question_keys', []), list)
                 or not isinstance(output.get('conflicts', []), list)):
             raise ServiceError('invalid_ai_output', 'AI 返回的业务结构无效', stage='validation')
-        warnings = list(output['warnings']) if isinstance(output.get('warnings'), list) else []
-        for issue in output.get('fact_issues', []) if isinstance(output.get('fact_issues'), list) else []:
-            if isinstance(issue, dict) and isinstance(issue.get('code'), str) and isinstance(issue.get('message'), str):
-                warnings.append({'code': issue['code'][:100], 'message': issue['message'][:500],
-                                 **({'field': issue['field'][:100]} if isinstance(issue.get('field'), str) else {})})
-        facts = validated_facts(output, context, warnings=warnings)
-        output['warnings'] = warnings
+        from .context import validated_requirements
+        output['requirements'] = validated_requirements(output.get('requirements'), context)
+        facts = {}
         validation = validate_reply(output['reply'], output.get('reply_sources', []), context)
         if not validation['ready'] and output.get('action') not in ('stop', 'skip', 'no_reply'):
             raise ServiceError('unverified_reply', 'AI 正文缺少有效来源或包含未核实承诺', stage='validation',
@@ -1816,7 +2052,8 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
         with self._lock:
             if epoch != self._epoch or self._closing or self._manual_only:
                 raise ServiceError('cancelled', 'AI 生成权限已撤销')
-        self._ensure_identity(facade)
+        with self._job_phase(job_id, 'identity_ms'):
+            self._ensure_identity(facade)
         with self._lock:
             if epoch != self._epoch or self._closing or self._manual_only:
                 raise ServiceError('cancelled', 'AI 生成权限已撤销')
@@ -1834,13 +2071,18 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                     or job['source_case_revision'] != case['revision']
                     or job['source_message_id'] != (latest['message_id'] if latest else None)):
                 raise ServiceError('source_changed', '生成任务的原文归属或版本已变化', stage='context')
-            if not self._post_quote_analysis_allowed(case, latest, excluding=job_id):
+            supplement = self._supplement_continuation(case) if params.get('supplement_followup') else None
+            work = self.repo.get('supplement_followup', case['conversation_id']) or {}
+            if params.get('supplement_followup') and (not supplement or work.get('job_id') != job_id or work.get('status') != 'generating'):
+                raise ServiceError('source_changed', '业务补充续答来源已变化')
+            if not supplement and not self._post_quote_analysis_allowed(case, latest, excluding=job_id):
                 return {'message': '等待报价；没有新的实质买家消息，未调用 AI 或发送'}
             automatic = job.get('automatic') is True
             if automatic and (epoch != self._epoch or not self._running or self._closing
                               or conversation['case_id'] != case['case_id']
-                              or not self._in_scope(case['conversation_id']) or not self._automatic_source(case['conversation_id'])
-                              or self._generation_attempted(case['conversation_id'], case, latest, excluding=job_id)):
+                              or not self._in_scope(case['conversation_id'])
+                              or not (self._supplement_source(case) if supplement else self._automatic_source(case['conversation_id']))
+                              or not supplement and self._generation_attempted(case['conversation_id'], case, latest, excluding=job_id)):
                 raise ServiceError('cancelled', '自动生成来源、范围或额度已失效')
             prior_drafts = {d['draft_id']: d['revision'] for d in self.repo.list('draft', case_id=case['case_id'])}
             if latest and self._stop_requested(latest['text']):
@@ -1850,8 +2092,9 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                     self._invalidate(case['conversation_id'])
                     self._queue_outbox(case)
                 return {'message': '客户已要求停止联系；未调用 AI 或发送'}
-            has_photos = bool(self._vision_candidates(case['conversation_id']))
-        photo_guard = self._observe_draft_photos(case, job_id, epoch, facade, prior_drafts, automatic) if has_photos else None
+            has_photos = bool(get_product_source_images(self.repo, case, self.repo.list('message', conversation_id=case['conversation_id'])))
+        with self._job_phase(job_id, 'photo_prepare_ms'):
+            photo_guard = self._prepare_direct_photos(case['conversation_id'], job_id, epoch, facade) if has_photos else None
         with self._lock:
             if (epoch != self._epoch or self._closing or self._manual_only
                     or self._require('case', case['case_id']) != case
@@ -1865,7 +2108,9 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             budget = self._budget()
             if automatic:
                 budget['ai_used'] += 1  # Context reflects the call when it actually starts.
-            context = self.get_context(case['case_id'])
+            with self._job_phase(job_id, 'context_ms'):
+                context = self.get_context(case['case_id'])
+        found_product, catalog_product = None, None
         started = [False]
         def on_call_start():
             with self._lock, self.repo.transaction():
@@ -1875,6 +2120,7 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 if (started[0] or epoch != self._epoch or self._closing or self._manual_only
                         or current['revision'] != case['revision'] or conversation_now.get('human_owned')
                         or (latest_now['message_id'] if latest_now else None) != job['source_message_id']
+                        or supplement_fingerprint(self.get_context(case['case_id'])) != supplement_fingerprint(context)
                         or automatic and (not self._running or not self._in_scope(case['conversation_id']))):
                     raise ServiceError('cancelled', '生成前来源或权限已变化')
                 if photo_guard is not None:
@@ -1887,11 +2133,22 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             self._emit('job.updated', current_job)
         target = getattr(facade.generate, 'side_effect', None)
         parameters = inspect.signature(target if callable(target) else facade.generate).parameters
+        arguments = {'request_id': job_id}
+        if 'photo_inputs' in parameters:
+            arguments['photo_inputs'] = self._direct_photo_inputs(context)
+        if 'cancel_event' in parameters:
+            arguments['cancel_event'] = self._generation_cancel_event(job_id)
+        if 'photo_deadline' in parameters:
+            arguments['photo_deadline'] = getattr(photo_guard, 'photo_deadline', None)
         if 'on_call_start' in parameters:
-            output = facade.generate(context, request_id=job_id, on_call_start=on_call_start)
+            arguments['on_call_start'] = on_call_start
         else:
             on_call_start()
-            output = facade.generate(context, request_id=job_id)
+        with self._job_phase(job_id, 'ai_elapsed_ms'):
+            output = facade.generate(context, **arguments)
+        image_reads = output.get('verified_image_reads', []) if isinstance(output, dict) else []
+        self._job_update(job_id, diagnostics={'image_reads': len(image_reads)})
+        context = with_direct_photo_reads(context, image_reads)
         diagnostics = getattr(facade, 'last_ai_diagnostics', None)
         if isinstance(diagnostics, dict):
             self._job_update(job_id, diagnostics=copy.deepcopy(diagnostics))
@@ -1903,7 +2160,7 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             # Keep the AI's natural reply; constrain only procurement side effects.
             facts = {}
             output = dict(output, facts={}, question_keys=[], new_case=False,
-                          procurement_key=case['procurement_key'], summary=case['summary'])
+                          procurement_key=case['procurement_key'])
         with self._lock, self.repo.transaction():
             current = self._require('case', case['case_id'])
             current_conversation = self._require('conversation', case['conversation_id'])
@@ -1930,28 +2187,9 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                                          source_message_id=self._latest_buyer(conversation['conversation_id'])['message_id'])
                 conversation['case_id'] = current['case_id']
                 self.repo.put('conversation', conversation['conversation_id'], conversation)
-            for key, fact in facts.items():
-                previous = current['facts'].get(key)
-                if previous and previous['value'].casefold() != fact['value'].casefold():
-                    compatible = (set(previous['evidence_ids']) & set(fact['evidence_ids']) and
-                                  (previous['value'].casefold() in fact['value'].casefold() or
-                                   fact['value'].casefold() in previous['value'].casefold()))
-                    if compatible and len(previous['value']) > len(fact['value']):
-                        fact['value'] = previous['value']
-                        fact.pop('display_value', None)
-                        if previous.get('display_value'):
-                            fact['display_value'] = previous['display_value']
-                    if not compatible:
-                        fact['status'] = 'conflict'
-                        fact.pop('display_value', None)
-                    fact['evidence_ids'] = list(dict.fromkeys(previous['evidence_ids'] + fact['evidence_ids']))
-                current['facts'][key] = fact
-            for key in output.get('conflicts', []):
-                if isinstance(key, str) and key in current['facts']:
-                    current['facts'][key]['status'] = 'conflict'
-                    current['facts'][key].pop('display_value', None)
-            current['missing'] = missing_fields(current['facts'], self.settings['required_fields'])
-            current['summary'] = str(output.get('summary', ''))[:10_000]
+            source_messages = {message['message_id']: message for message in self._messages(current['conversation_id'])}
+            requirements_changed = self._save_ai_conversation_state(current_conversation, None if social_reply else current, output, context)
+            current['missing'] = missing_fields_for_case(current['facts'], self.settings, current)
             current['procurement_key'] = str(output.get('procurement_key') or current['procurement_key'])
             action = {'human': 'needs_human', 'skip': 'no_reply', 'ask': 'reply', 'wait_quote': 'reply'}.get(output.get('action'), output.get('action', 'reply'))
             latest = self._latest_buyer(current['conversation_id'])
@@ -1964,40 +2202,38 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 current['state'] = 'waiting_quote'
             else:
                 current['state'] = 'clarifying'
-            conflict_keys = [key for key, fact in current['facts'].items() if fact.get('status') == 'conflict']
-            if action == 'needs_human':
-                self._create_assistance(current, latest, job_id, 'model_request', [])
-            if conflict_keys:
-                self._create_assistance(current, latest, job_id, 'fact_conflict', conflict_keys)
-            for request in output.get('assistance_requests', []):
-                if isinstance(request, dict) and request.get('kind') in ('verify_followup', 'model_request', 'fact_conflict'):
-                    self._create_assistance(current, latest, job_id, request['kind'],
-                                            request.get('fact_keys', []), detail=request.get('detail'))
             current.update(revision=current['revision'] + 1, updated_at=now_ms())
             self.repo.put('case', current['case_id'], current, history=True)
+            if requirements_changed:
+                self._sync_requirement_product(current)
             self._invalidate(current['conversation_id'])
             if not social_reply or current['facts'] or current['state'] == 'waiting_quote':
                 self._queue_outbox(current)
             if current['state'] == 'closed' or action == 'no_reply':
+                if supplement:
+                    work.update(status='complete', updated_at=now_ms())
+                    self.repo.put('supplement_followup', current['conversation_id'], work)
                 return {'message': '事项已停止自动回复，需求与依据已保存'}
-            new_context = self.get_context(current['case_id'])
+            new_context = with_direct_photo_reads(self.get_context(current['case_id']), output.get('verified_image_reads', []))
             draft = self._draft(current, output['reply'], output.get('reply_sources', []), new_context,
                                 'demo' if self.mode == 'demo' else 'ai')
             draft['question_keys'] = [key for key in output.get('question_keys', []) if key in FIELDS]
             draft['social_reply'] = social_reply
-            warnings = [w for w in output.get('warnings', []) if isinstance(w, dict)
-                        and isinstance(w.get('code'), str) and isinstance(w.get('message'), str)]
-            draft['quality_warnings'] = warnings
-            known = {encoded(w) for w in draft['validation'].get('warnings', [])}
-            draft['validation'].setdefault('warnings', []).extend(w for w in warnings if encoded(w) not in known)
             if new_context.get('continuation'):
                 draft['continuation'] = copy.deepcopy(new_context['continuation'])
-            self._job_update(job_id, repair_count=len(output.get('repairs', [])), warnings=warnings)
+            self._job_update(job_id, repair_count=len(output.get('repairs', [])))
             self.repo.put('draft', draft['draft_id'], draft, history=True)
+            if supplement:
+                work.update(status='generated', draft_id=draft['draft_id'], updated_at=now_ms())
+                self.repo.put('supplement_followup', current['conversation_id'], work)
+            if supplement:
+                draft['supplement_issue_ids'] = list(supplement['issue_ids'])
+                self.repo.put('draft', draft['draft_id'], draft, history=True)
             self.repo.put('ai_result', job_id, {'case_id': current['case_id'], 'reply': output['reply'],
                                               'context_fingerprint': context['fingerprint'], 'status': 'applied'}, history=True)
         self._changed(current['conversation_id'], current['case_id'])
-        if self._auto_send and self._running and self._in_scope(current['conversation_id']) and draft['validation']['ready']:
+        if (self._auto_send and self._running and self._in_scope(current['conversation_id']) and draft['validation']['ready']
+                and (not supplement or draft.get('supplement_issue_ids'))):
             self._enqueue('automatic_send', {'draft_id': draft['draft_id'], 'expected_revision': draft['revision']}, automatic=True)
         return {'message': '已保存自然回复正文与需求依据', 'draft_id': draft['draft_id'], 'case_id': current['case_id']}
 
@@ -2022,7 +2258,9 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
         return source
 
     def _automatic_send_source(self, draft, case, *, excluding=None):
-        source = self._automatic_source(draft['conversation_id'], excluding=excluding)
+        source = (self._supplement_source(case, excluding=excluding)
+                  if draft.get('continuation', {}).get('phase') == 'supplement'
+                  else self._automatic_source(draft['conversation_id'], excluding=excluding))
         conversation = self._require('conversation', draft['conversation_id'])
         return (source is not None and source['message_id'] == draft['source_message_id']
                 and case['case_id'] == conversation['case_id']
@@ -2088,7 +2326,8 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
         if draft.get('continuation'):
             with self._lock, self.repo.transaction():
                 source = self._intent_source(draft, case)
-                plan = self._new_continuity_plan(case, source, 'final', draft['body'], draft=draft)
+                phase = 'supplement' if draft['continuation'].get('phase') == 'supplement' else 'final'
+                plan = self._new_continuity_plan(case, source, phase, draft['body'], draft=draft)
                 self._job_update(job_id, plan_id=plan['plan_id'])
             return self._task_continuity_send({'plan_id': plan['plan_id']}, job_id, epoch, facade)
         return self._perform_send(draft, case, epoch, facade, automatic=True, job_id=job_id)
@@ -2139,7 +2378,7 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                         return False
                 try:
                     source = self._intent_source(current, current_case)
-                    context = self.get_context(case['case_id'])
+                    context = with_direct_photo_reads(self.get_context(case['case_id']), draft.get('photo_read_images', []))
                 except ServiceError:
                     return False
                 if source['timestamp_ms'] != intent['source_timestamp_ms'] or self._stop_requested(source['text']):
@@ -2155,11 +2394,14 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                        and o['source_message_id'] == current['source_message_id']
                        and o['status'] in ('sending', 'accepted', 'unknown') for o in self.repo.list('operation')):
                     return False
-                policies = {p['policy_id']: p['revision'] for p in context['knowledge']}
+                policies = {**{p['policy_id']: p['revision'] for p in context['knowledge']}, **context.get('policy_versions', {})}
                 expected_photo = draft.get('photo_fingerprint')
                 photo_current = (expected_photo == photo_fingerprint(context) if expected_photo is not None
                                  else not context['photo_context']['events'])
                 return (photo_current and current.get('photo_fingerprint') == expected_photo
+                        and current.get('supplement_fingerprint') == draft.get('supplement_fingerprint')
+                        and (draft.get('supplement_fingerprint') == supplement_fingerprint(context)
+                             or draft.get('supplement_fingerprint') is None and not context['supplement'].get('body'))
                         and policies == draft.get('policy_versions', {})
                         and validate_reply(current['body'], current['validation']['sources'], context)['ready'])
         try:
@@ -2363,10 +2605,6 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
                 self._ingest(info, [message], has_more=False, full=True)
                 conversation = self._require('conversation', cid)
                 case = self._require('case', conversation['case_id'])
-                case['facts'] = {field: {'value': value, 'evidence_ids': [mid], 'status': 'confirmed'} for field, value in facts.items()}
-                case['missing'] = missing_fields(case['facts'], self.settings['required_fields'])
-                case['summary'] = '合成演示客户；非真实询盘'
-                self.repo.put('case', case['case_id'], case, history=True)
             policy = {'policy_id': 'demo-sample-logo-policy', 'kind': 'policy', 'title': '演示：样品与 Logo 政策',
                       'content': 'DEMO POLICY: Samples and custom logos can be requested for evaluation. Sample cost, logo setup cost, stock and delivery time must be checked before confirmation. No price or delivery commitment is approved.',
                       'product_scope': [], 'confirmed': True, 'public': True, 'revision': 1, 'updated_at': now_ms(), 'valid_until': None}
@@ -2379,7 +2617,7 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
         def stopped():
             return (all(not thread or not thread.is_alive() for thread in
                         (getattr(self, '_worker', None), getattr(self, '_monitor_thread', None)))
-                    and native_children_stopped())
+                    and not getattr(self, '_generation_active', {}) and native_children_stopped())
         def release_when_stopped():
             while not stopped():
                 time.sleep(0.1)
@@ -2390,15 +2628,21 @@ class ReceptionService(ConversationAssistanceMixin, TranslationMixin, Continuity
             threading.Thread(target=release_when_stopped, name='seller-guard-drain', daemon=True).start()
 
     def close(self):
+        with self._close_lock:
+            return self._close_execution()
+
+    def _close_execution(self):
         with self._lock:
             if self._closed:
                 return
         self._pause(closing=True)
         self._stop_translation()
+        self._stop_requirement_media()
         if self._monitor_thread and threading.current_thread() != self._monitor_thread:
             self._monitor_thread.join()
         if threading.current_thread() != self._worker:
             self._worker.join()
+        self._join_generation_tasks()
         with self._lock:
             if not self._closed:
                 self._closed = True

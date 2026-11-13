@@ -1,4 +1,7 @@
 vi.mock('../src/main/installation-guard', () => ({ acquireInstallationStartGuard: vi.fn(async () => async () => {}) }));
+vi.mock('../src/main/translation-host', () => ({ TranslationHost: class {
+  start = vi.fn(async () => {}); stop = vi.fn();
+} }));
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/react';
 import { pathToFileURL } from 'node:url';
@@ -58,6 +61,7 @@ vi.mock('../src/main/service-client', () => ({
   },
 }));
 vi.mock('electron', () => ({
+  safeStorage: { isEncryptionAvailable: () => false, encryptString: vi.fn(), decryptString: vi.fn() },
   app: { isPackaged: false, setName: vi.fn(), setPath: vi.fn(), requestSingleInstanceLock: () => true, whenReady: async () => {}, on: vi.fn(), quit: (...args: any[]) => host.quit(...args), relaunch: (...args: any[]) => host.relaunch(...args), exit: vi.fn() },
   BrowserWindow: class {
     webContents = { mainFrame: { url: '' }, setWindowOpenHandler: vi.fn(), on: vi.fn(), send: vi.fn(), session: { setPermissionRequestHandler: vi.fn() }, executeJavaScript: vi.fn(async () => !host.dirty) };

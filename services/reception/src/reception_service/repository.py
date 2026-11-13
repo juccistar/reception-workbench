@@ -95,6 +95,26 @@ class Repository:
             return [json.loads(row[0]) for row in self.db.execute(
                 'SELECT data FROM revisions WHERE kind=? AND id=? ORDER BY sequence', (kind, key))]
 
+    def compact_supplements(self):
+        """Remove only note history; deduplication retains hashes, never old bodies."""
+        import hashlib
+        with self.transaction():
+            if self.get('meta', 'supplement_storage', {}).get('format') == 2:
+                return
+            self.db.execute("DELETE FROM revisions WHERE kind IN ('conversation_supplement','supplement_mutation')")
+            rows = self.db.execute("SELECT id,data FROM entities WHERE kind='supplement_mutation'").fetchall()
+            for key, payload in rows:
+                record = json.loads(payload)
+                request, result = record.get('request'), record.get('result')
+                if isinstance(request, dict) and isinstance(result, dict):
+                    self.put('supplement_mutation', key, {
+                        'request_hash': hashlib.sha256(encoded(request).encode('utf-8')).hexdigest(),
+                        'conversation_id': request.get('conversation_id'),
+                        'revision': result.get('revision'), 'updated_at': result.get('updated_at')})
+                elif not isinstance(record.get('request_hash'), str):
+                    self.db.execute("DELETE FROM entities WHERE kind='supplement_mutation' AND id=?", (key,))
+            self.put('meta', 'supplement_storage', {'format': 2})
+
     def close(self):
         from .storage_guard import StorageError
         with self.lock:

@@ -1,8 +1,9 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, screen, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, safeStorage, screen, shell, type IpcMainInvokeEvent } from 'electron';
+import { TranslationHost } from './translation-host';
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir, readFile, writeFile, rename, lstat } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { isWorkbenchPage } from './trusted-page';
 import { API_METHODS, type Mode, type Preferences, type Snapshot, type SendConfirmation } from '../shared/api';
 import { ServiceClient, BackendError } from './service-client';
 import { buildAccioLaunchInfo } from './launch-command';
@@ -107,7 +108,7 @@ let identityTitleReady = false;
 let closing = false;
 let canDestroy = false;
 let receptionIntent = 0;
-let preferences: Preferences = { nav_preference:'expanded', details_preference:'expanded', list_width:272, details_width:320 };
+let preferences: Preferences = { nav_preference:'expanded', details_preference:'expanded', list_width:272, details_width:320, requirements_ratio:0.55 };
 let preferenceWrites = Promise.resolve();
 let storageBusy = false;
 let storageTask: StorageRequest | null = null;
@@ -118,13 +119,18 @@ let updateRecoveryStarted = false;
 let cancelUpdateRestart: (() => Promise<void>) | null = null;
 let updateHostPromise: Promise<UpdateHost> | null = null;
 const methods = new Set<string>(API_METHODS);
+let translationCoordinator: TranslationHost | null = null;
+function translations(): TranslationHost {
+  return translationCoordinator ??= new TranslationHost({
+    mode, dataRoot, legacyDirectory: path.join(bootstrapPaths.stateDir, 'translation-credentials', mode),
+    encryption: safeStorage, invoke: call, confirm,
+    canWrite: () => !!backend && !closing && !storageBusy && !updateTask,
+  });
+}
 
 function validSender(event: IpcMainInvokeEvent) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('无效的操作来源。');
-  const url = event.senderFrame.url;
-  let trusted = false;
-  try { trusted = new URL(url).protocol === 'file:' && path.resolve(fileURLToPath(url)) === path.resolve(rendererFile); } catch { /* not our page */ }
-  if (!trusted) throw new Error('当前页面不允许访问接待服务。');
+  if (!isWorkbenchPage(event.senderFrame.url, rendererFile)) throw new Error('当前页面不允许访问接待服务。');
 }
 function parameters(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value) || JSON.stringify(value).length > 262144) throw new Error('操作参数无效或超过限制。');
@@ -351,10 +357,29 @@ function cleanPreferences(value: Record<string,unknown>): Partial<Preferences> {
   if (value.nav_preference==='expanded'||value.nav_preference==='icons') result.nav_preference=value.nav_preference;
   if (value.details_preference==='expanded'||value.details_preference==='rail') result.details_preference=value.details_preference;
   if (typeof value.list_width==='number'&&Number.isFinite(value.list_width)) result.list_width=Math.max(240,Math.min(360,value.list_width));
-  if (typeof value.details_width==='number'&&Number.isFinite(value.details_width)) result.details_width=Math.max(280,Math.min(380,value.details_width));
+  if (typeof value.details_width==='number'&&Number.isFinite(value.details_width)) result.details_width=Math.max(280,Math.min(600,value.details_width));
+  if (typeof value.requirements_ratio==='number'&&Number.isFinite(value.requirements_ratio)) result.requirements_ratio=Math.max(0.1,Math.min(0.9,value.requirements_ratio));
   return result;
 }
 function installIPC() {
+  ipcMain.handle('reception:translation:get', event => { validSender(event); return translations().get(); });
+  ipcMain.handle('reception:translation:save', (event, input: unknown) => {
+    validSender(event);
+    return translations().save(parameters(input));
+  });
+  ipcMain.handle('reception:translation:check', async event => {
+    validSender(event);
+    if (closing || storageBusy || updateTask) throw new Error('工作台正在退出或管理数据。');
+    if (mode === 'live' && !(await confirm('合成翻译检查', '执行一次第三方翻译检查？', '只发送固定合成文字，不读取客户聊天；服务商可能计费，失败不自动重试。', '开始检查'))) throw new Error('已取消检查。');
+    await translations().get();
+    return call('check_translation_provider');
+  });
+  ipcMain.handle('reception:translation:clear', async event => {
+    validSender(event);
+    if (closing || storageBusy || updateTask) throw new Error('工作台正在退出或管理数据。');
+    if (!(await confirm('清理聊天译文', '清除本商家的聊天译文缓存？', '原始消息、采购事实、草稿和发送回执不会删除。之后重新翻译可能产生费用。', '清除译文'))) return { removed: 0 };
+    return call('clear_translation_cache');
+  });
   ipcMain.handle('reception:launch:get', async event => { validSender(event); return accioLaunchInfo(); });
   ipcMain.handle('reception:launch:copy', async event => { validSender(event); return copyAccioLaunchInstructions(); });
   ipcMain.handle('reception:update:get', async event => { validSender(event); return (await getUpdateHost()).getInfo(); });
@@ -463,6 +488,7 @@ async function startBackend() {
       if (value?.event === 'state.changed') updateVerifiedTitle();
     });
     await backend.invoke('get_snapshot');
+    await translations().start();
     // Offline recovery may outlast the renderer's first snapshot request.
     // Announce readiness only after the new backend has answered successfully.
     if (window && !window.isDestroyed()) window.webContents.send('reception:event', { event: 'state.changed', data: { reason: 'backend_ready' } });
@@ -485,6 +511,7 @@ async function savePendingEdits(target: BrowserWindow): Promise<boolean> {
 }
 async function stopBackendForClose(target: BrowserWindow, allowForce: boolean): Promise<void> {
   closing=true; ++receptionIntent;
+  translationCoordinator?.stop();
   // Keep editing disabled through every wait/force-exit reminder after revocation.
   target.setEnabled(false);
   target.setTitle('询盘接待助手 · 正在停止后台并保存结果…');
@@ -545,7 +572,7 @@ else {
     const area=screen.getPrimaryDisplay().workArea;
     window=new BrowserWindow({width:Math.min(1440,Math.max(600,area.width-32)),height:Math.min(920,Math.max(400,area.height-32)),minWidth:Math.min(800,area.width),minHeight:Math.min(420,area.height),title:'询盘接待助手',backgroundColor:'#f7f8fa',show:false,autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'../preload/index.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}});
     window.webContents.setWindowOpenHandler(()=>({action:'deny'}));
-    window.webContents.on('will-navigate',(event,url)=>{try{if(fileURLToPath(url)!==rendererFile)event.preventDefault();}catch{event.preventDefault();}});
+    window.webContents.on('will-navigate',(event,url)=>{if(!isWorkbenchPage(url,rendererFile))event.preventDefault();});
     window.webContents.session.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
     installIPC();
     Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'文件',submenu:[{label:'退出',click:()=>window?.close()}]},{label:'帮助',submenu:[{label:'复制 Accio 启动指令',accelerator:'CommandOrControl+Shift+L',click:()=>void connectionInstructions()},{label:'打开开发者工具',visible:!app.isPackaged,click:()=>window?.webContents.openDevTools()}]}]));
@@ -569,7 +596,7 @@ else {
     }
     } finally { await releaseStart(); }
   }).catch(()=>{dialog.showErrorBox('工作台未能启动','请检查程序组件和本地目录权限，保留已有数据后重试。');app.exit(2);});
-  app.on('window-all-closed',()=>{if(!closing)void backend?.shutdown().finally(()=>app.quit());});
+  app.on('window-all-closed',()=>{translationCoordinator?.stop();if(!closing)void backend?.shutdown().finally(()=>app.quit());});
 }
 }
 void start().catch(() => app.exit(2));

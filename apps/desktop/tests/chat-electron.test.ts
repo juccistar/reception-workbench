@@ -78,7 +78,7 @@ describe('real sandboxed Electron chat bridge', () => {
       expect(output.calls.slice(4)).toEqual([{ channel: 'choose', purpose: 'backup' }, { channel: 'open', which: 'current' }, { channel: 'manage', request: { action: 'backup', target: 'synthetic-target' } }]);
       expect(output.calls[2].params).toEqual(output.calls[3].params);
       expect(output.calls[1].params.body).toBe('Literal 中文\nsecond line');
-      expect(output.result.methods.sort()).toEqual(['chooseWorkctl', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate'].sort());
+      expect(output.result.methods.sort()).toEqual(['chooseWorkctl', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate', 'getTranslationSettings', 'saveTranslationSettings', 'checkTranslationProvider', 'clearTranslationCache'].sort());
     } finally { rmSync(root, { recursive: true, force: true }); }
   }, 35000);
 });

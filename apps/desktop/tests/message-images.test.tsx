@@ -46,6 +46,21 @@ describe('消息图片', () => {
     expect(thumbnail).toHaveFocus();
   });
 
+  it('显示商家图片和直接用于生成回复的提示，可放大并关闭', async () => {
+    const fixture = setup({ ...image('ready', preview), input_mode: 'direct' });
+    fixture.details.emma.messages[0].role = 'seller';
+    fixture.details.emma.messages[0].attachments = [photo];
+    render(<App bridge={fixture.bridge} />);
+    const thumbnail = await screen.findByRole('button', { name: '放大查看商家发送的照片' });
+    expect(screen.getByText('生成回复时结合此图片')).toBeInTheDocument();
+    expect(screen.queryByText('客户发送的照片')).not.toBeInTheDocument();
+    fireEvent.click(thumbnail);
+    expect(screen.getByRole('dialog', { name: '商家发送的照片' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '关闭图片' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(thumbnail).toHaveFocus();
+  });
+
   it('区分预览、识别中和待确认观察，失败后不保留旧观察', async () => {
     const fixture = setup({ ...image('ready', preview), vision_status: 'not_started' });
     fixture.details.emma.messages[0].attachments = [photo];
@@ -98,6 +113,19 @@ describe('消息图片', () => {
     await waitFor(() => expect(fixture.imageCalls.find(call => call.method === 'load_message_image')?.params.retry).toBe(true));
   });
 
+  it('同一消息有多张图片时按图片数量限制自动加载', async () => {
+    const fixture = setup();
+    const original = fixture.details.emma.messages[0];
+    fixture.details.emma.messages = [
+      { ...original, message_id: 'older', attachments: [photo, { ...photo, attachment_id: 'older-2' }] },
+      { ...original, role: 'seller', message_id: 'newer', timestamp_ms: original.timestamp_ms + 1, attachments: [0, 1, 2].map(index => ({ ...photo, attachment_id: `newer-${index}` })) },
+    ];
+    render(<App bridge={fixture.bridge} />);
+    await waitFor(() => expect(fixture.imageCalls.filter(call => call.method === 'load_message_image')).toHaveLength(4));
+    expect(fixture.imageCalls.filter(call => call.method === 'load_message_image' && call.params.message_id === 'older')).toHaveLength(1);
+    expect(fixture.imageCalls.filter(call => call.method === 'load_message_image' && call.params.message_id === 'newer')).toHaveLength(3);
+  });
+
   it('切换会话后丢弃旧图片响应', async () => {
     const fixture = setup();
     fixture.details.emma.messages[0].attachments = [photo];
@@ -112,12 +140,12 @@ describe('消息图片', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 
-  it('只自动加载最近四条买家图片消息', async () => {
+  it('只自动加载买卖双方合计最近四张图片', async () => {
     const fixture = setup();
     const original = fixture.details.emma.messages[0];
-    fixture.details.emma.messages = Array.from({ length: 5 }, (_, index) => ({ ...original, message_id: `photo-${index}`, timestamp_ms: original.timestamp_ms + index, attachments: [photo] }));
+    fixture.details.emma.messages = Array.from({ length: 5 }, (_, index) => ({ ...original, role: index % 2 ? 'seller' : 'buyer', message_id: `photo-${index}`, timestamp_ms: original.timestamp_ms + index, attachments: [photo] }));
     render(<App bridge={fixture.bridge} />);
     await waitFor(() => expect(fixture.imageCalls.filter(call => call.method === 'load_message_image')).toHaveLength(4));
-    expect(fixture.imageCalls.filter(call => call.method === 'load_message_image').map(call => call.params.message_id)).not.toContain('photo-0');
+    expect(fixture.imageCalls.filter(call => call.method === 'load_message_image').map(call => call.params.message_id).sort()).toEqual(['photo-1', 'photo-2', 'photo-3', 'photo-4']);
   });
 });

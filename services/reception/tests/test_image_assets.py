@@ -32,6 +32,64 @@ class ImageAssetsTests(unittest.TestCase):
                     self.assertLessEqual(max(decoded.size), 1280)
                     self.assertFalse(decoded.getexif())
 
+    def test_binary_mime_requires_supported_magic_and_complete_image(self):
+        for fmt, mime in (("PNG", "image/png"), ("JPEG", "image/jpeg"), ("WEBP", "image/webp")):
+            data = image_bytes(fmt)
+            with self.subTest(fmt=fmt):
+                decoded = assets.decode_image(data, "APPLICATION/OCTET-STREAM")
+                self.assertEqual(decoded["mime"], mime)
+                self.assertEqual(base64.b64decode(decoded["original_b64"]), data)
+                with self.assertRaises(assets.ImageAssetError) as caught:
+                    assets.decode_image(data[:20], "application/octet-stream")
+                self.assertEqual((caught.exception.stage, caught.exception.category), ("decode", "invalid_image"))
+        for data in (b"<html>secret</html>", b"RIFFxxxxNOTW", b"\xff\xd8", b"GIF89a"):
+            with self.subTest(data=data), self.assertRaises(assets.ImageAssetError) as caught:
+                assets.decode_image(data, "application/octet-stream")
+            self.assertEqual((caught.exception.stage, caught.exception.category), ("validation", "unsupported_type"))
+            self.assertNotIn("secret", str(caught.exception))
+        with self.assertRaises(assets.ImageAssetError) as caught:
+            assets.decode_image(image_bytes(), "image/jpeg")
+        self.assertEqual((caught.exception.stage, caught.exception.category), ("validation", "type_mismatch"))
+        with self.assertRaises(assets.ImageAssetError):
+            assets.decode_image(image_bytes(), "text/html")
+        with self.assertRaises(assets.ImageAssetError) as caught:
+            assets.decode_image(b"x" * (assets.MAX_BYTES + 1), "application/octet-stream")
+        self.assertEqual((caught.exception.stage, caught.exception.category), ("validation", "size_limit"))
+        with self.assertRaises(assets.ImageAssetError) as caught:
+            assets.decode_image(image_bytes(size=(8193, 1)), "application/octet-stream")
+        self.assertEqual((caught.exception.stage, caught.exception.category), ("validation", "dimensions"))
+
+    def test_binary_mime_fetch_and_transport(self):
+        data = image_bytes("WEBP")
+        class Response:
+            status = 200
+            def __init__(self):
+                self.body = io.BytesIO(data)
+            def getheader(self, name, default=None):
+                return {"Content-Type": "Application/Octet-Stream; charset=binary",
+                        "Content-Length": str(len(data))}.get(name, default)
+            def read(self, size):
+                return self.body.read(size)
+        class Connection:
+            sock = None
+            def __init__(self, host, address, deadline):
+                pass
+            def request(self, method, path, headers):
+                pass
+            def getresponse(self):
+                return Response()
+            def close(self):
+                pass
+        with patch.object(assets, "_PinnedHTTPS", Connection):
+            result = assets.fetch_image("https://img.alicdn.com/a?token=private",
+                                        resolver=lambda h, d: ["8.8.8.8"])
+        self.assertEqual(result["mime"], "image/webp")
+        with self.assertRaises(assets.ImageAssetError) as caught:
+            assets.fetch_image("https://img.alicdn.com/a?token=private",
+                               resolver=lambda h, d: ["127.0.0.1"])
+        self.assertEqual((caught.exception.stage, caught.exception.category), ("source", "unsafe_address"))
+        self.assertNotIn("private", str(caught.exception))
+
     def test_invalid_mismatch_size_and_dimensions(self):
         for data, mime in ((b"bad secret", "image/png"), (image_bytes(), "image/jpeg"),
                            (b"x" * (assets.MAX_BYTES + 1), "image/png"),
@@ -47,8 +105,10 @@ class ImageAssetsTests(unittest.TestCase):
         out = io.BytesIO()
         first = Image.new("RGB", (3, 3), "red")
         first.save(out, "PNG", save_all=True, append_images=[Image.new("RGB", (3, 3), "blue")], duration=100)
-        with self.assertRaises(assets.ImageAssetError):
-            assets.decode_image(out.getvalue(), "image/png")
+        for mime in ("image/png", "application/octet-stream"):
+            with self.subTest(mime=mime), self.assertRaises(assets.ImageAssetError) as caught:
+                assets.decode_image(out.getvalue(), mime)
+            self.assertEqual((caught.exception.stage, caught.exception.category), ("validation", "animation"))
 
     def test_fetch_allowlist_and_private_dns(self):
         data = image_bytes()

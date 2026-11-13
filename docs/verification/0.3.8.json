@@ -1,0 +1,79 @@
+{
+  "version": "0.3.8",
+  "status": "local_candidate_packaged_and_verified",
+  "source_branch": "feat/chat-translation-0.3.4",
+  "source_committed": false,
+  "tests": {
+    "full_suite_run": false,
+    "direct_send_source": "docs/verification/direct-auto-send.json",
+    "direct_send_targeted_passed": 202,
+    "seller_images_source": "docs/verification/seller-images.json",
+    "seller_images_backend_passed": 78,
+    "seller_images_desktop_passed": 9,
+    "note": "Backend groups overlap and are not added together. Packaging and version changes do not request a full suite.",
+    "typecheck": "passed_before_version_bump",
+    "build": "passed"
+  },
+  "package": {
+    "directory": "relase/release-0.3.8-direct-images",
+    "candidate": true,
+    "status": "passed",
+    "final_executable_window": "passed",
+    "portable_files": 163,
+    "python_source_inputs": 62,
+    "frozen_backend_files": 74,
+    "compiled_app_files": 6,
+    "staging": "artifacts/build/package-input-1794461686184",
+    "app_asar_sha256": "294b80c2db179431fe5cd61313c0c6e4426847e5f8ae5ab5c343e6444f7a3f87",
+    "source_manifest_sha256": "d32ded586d881b082093d5e097d0b822a715a0f8b57ea7732bec3a01cf3f97eb",
+    "installer": "relase/release-0.3.8-direct-images/ReceptionWorkbench-Setup-0.3.8.exe",
+    "installer_bytes": 135976667,
+    "installer_sha256": "82f5436b1e3e8b735a70929183fde7c81e891dc7dc8292a8af43651ae12e992b",
+    "portable_zip": "relase/release-0.3.8-direct-images/ReceptionWorkbench-0.3.8.zip",
+    "portable_zip_bytes": 177752656,
+    "portable_zip_sha256": "c3935a805f626051db32d984ad3d43c217e7c9d831fcf43d93a20438cf229623",
+    "release_signature": "ed25519",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "source_matches_package": true,
+    "windows_authenticode_signed": false,
+    "default_runtime_promoted": false,
+    "evidence": [
+      "artifacts/verification/package-0.3.8/update-integrity.json",
+      "artifacts/verification/package-0.3.8/package-source.json",
+      "artifacts/verification/package-0.3.8/release-integrity.json"
+    ]
+  },
+  "actual_windows": {
+    "status": "passed",
+    "seller_images": "artifacts/verification/seller-images-package-038-seller-a/result.json",
+    "base_translation": "artifacts/verification/demo-package-038-base-a/result.json",
+    "business_ipc_mocked": false,
+    "both_image_roles_in_context": true,
+    "seller_preview_and_dialog": true,
+    "image_cache_reopened": true,
+    "translation_credentials_roundtrip": true,
+    "key_and_translation_cache_reopened": true,
+    "loopback_gateway_settings_saved": true,
+    "restart_reception_paused": true,
+    "screenshots_reviewed": true,
+    "windows_closed": true,
+    "renderer_errors": [],
+    "synthetic_sends_in_seller_image_check": 1
+  },
+  "release": {
+    "state": "local_candidate_only",
+    "public": false,
+    "uploaded": false
+  },
+  "boundaries": {
+    "real_ai_calls": 0,
+    "real_customer_sends": 0,
+    "production_data_accessed": false,
+    "installed_program_replaced": false,
+    "nsis_installer_executed": false,
+    "business_data_migrated": false,
+    "running_merchant_windows_modified": false,
+    "real_accio_automatic_direct_send": "not_run",
+    "real_accio_seller_image_read": "not_run"
+  }
+}

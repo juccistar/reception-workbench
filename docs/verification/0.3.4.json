@@ -1,0 +1,87 @@
+{
+  "version": "0.3.4",
+  "status": "published_and_verified",
+  "scope": "Third-party chat-only Chinese translation; original Accio procurement and reply paths retained",
+  "source_branch": "feat/chat-translation-0.3.4",
+  "source_committed": false,
+  "tests": {
+    "full_suite_run": false,
+    "backend": {
+      "passed": 50,
+      "files": {
+        "test_translation_provider.py": 6,
+        "test_external_translation_service.py": 12,
+        "test_conversation_assistance_031.py": 7,
+        "test_031_ai_integration.py": 5,
+        "test_manual_receipts.py": 20
+      }
+    },
+    "desktop": {
+      "passed": 40,
+      "files": {
+        "translation-credentials.test.ts": 4,
+        "translation-settings.test.tsx": 6,
+        "use-translations.test.tsx": 5,
+        "requirements-no-translation.test.tsx": 1,
+        "chat-electron.test.ts": 1,
+        "chat-service-client.test.ts": 1,
+        "trusted-page.test.ts": 1,
+        "chat-host.test.ts": 14,
+        "launch-host.test.ts": 7
+      }
+    },
+    "typecheck": "passed",
+    "python_dependencies": "passed"
+  },
+  "actual_windows": {
+    "source_demo": "artifacts/verification/demo-chat-034-source-c/result.json",
+    "final_executable": "artifacts/verification/demo-chat-034-package-a/result.json",
+    "status": "passed",
+    "business_ipc_mocked": false,
+    "renderer_errors": 0,
+    "translation_independent_of_accio_ai_check": true,
+    "encrypted_key_save_and_reopen": true,
+    "persistent_translation_read_with_remote_translation_disabled": true,
+    "original_reply_suggestion": true,
+    "restart_reception_paused": true,
+    "normal_close": true,
+    "screenshots_reviewed": true
+  },
+  "package": {
+    "directory": "relase/release-0.3.4-chat",
+    "candidate": true,
+    "portable_files": 163,
+    "python_source_inputs": 58,
+    "frozen_backend_files": 74,
+    "compiled_app_files": 6,
+    "source_manifest_sha256": "23b3b05fcb8ba864c7807923da00b2fa0cccef3f988f590e3f665a441ebdb390",
+    "app_asar_sha256": "057f9243fdc877649467307775eab2b9e21a9bc235192e445a49509b54c3bf4c",
+    "portable_zip_sha256": "7147315226a2bd05afae80d445e266bc4deb55225d2a8814cac0aa388d12c34e",
+    "installer_sha256": "1ccce23b77f2e6cfe89e1b6cffeed6e3fe7f426bb06fba46ab6ebc9c44ac7b88",
+    "release_signature": "ed25519",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "windows_authenticode_signed": false,
+    "tls_certificate_bundle_present": true,
+    "integrity": "passed",
+    "source_matches_package": true,
+    "default_runtime_promoted": false
+  },
+  "release": {
+    "repository": "juccistar/reception-workbench-releases",
+    "tag": "v0.3.4",
+    "id": 441634587,
+    "url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.4",
+    "state": "published",
+    "public": true,
+    "server_asset_digests_verified": true,
+    "anonymous_downloads_verified": true
+  },
+  "boundaries": {
+    "real_model_calls": 0,
+    "real_customer_sends": 0,
+    "production_data_accessed": false,
+    "business_data_migrated": false,
+    "installed_program_replaced": false,
+    "nsis_installer_executed": false
+  }
+}

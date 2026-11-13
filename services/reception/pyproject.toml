@@ -4,10 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reception-workbench-service"
-version = "0.3.3"
+version = "0.3.13"
 description = "Independent SQLite reception business service"
 requires-python = ">=3.12"
-dependencies = ["Pillow==11.3.0"]
+dependencies = ["Pillow==11.3.0", "httpx==0.28.1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+reception_service = ["resources/builtin_policies.json"]
