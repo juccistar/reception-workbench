@@ -1,6 +1,6 @@
 # 工作台实施契约
 
-本文维护0.3.13源码及公开发行的进程、接口和业务约束；交付范围见[发布说明](0.3.13发布说明.md)。开发验证及限制见[本版开发说明](0.3.13开发说明.md)、[验证记录](verification/0.3.13.json)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
+本文维护0.3.14源码及公开发行的进程、接口和业务约束；交付范围及附件限制见[发布说明](0.3.14发布说明.md)、[验证记录](verification/0.3.14.json)。0.3.13的需求、摘要、产品及采购契约继续沿用，见[基础开发说明](0.3.13开发说明.md)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
 
 ## 1. 进程与协议
 
@@ -50,6 +50,16 @@ Case.requirements_format为ai-v1，requirements只允许下列13键：
 ConversationDetail.conversation_summary为{conversation_id,body,revision,updated_at}或null，独立商家及会话归属；ConversationDetail.case可为null。同会话多需求共用摘要，切换需求不换摘要，无需求仍支持聊天、补充和摘要。正常接待、人工建议经来源指纹复核后同轮保存中文摘要和有效需求；润色只处理冻结正文，不写入两者，不启动采购。
 
 删除quality_notes、quality_warnings、语义validation.warnings、assistance_requests/suggestions、旧待核实/待协助及business_progress提醒生成与投影。摘要自然说明业务上仍需核实的内容，不强制每段添加提醒。真实任务错误、连接、接管、未读、unknown、报价有效期及操作证据继续保存；移除提醒不把语义问题升级为硬性issues或自动接管。
+
+## 2A. 业务补充附件（0.3.14）
+
+Supplement新增attachments，按当前商家和conversation_id保存，字段含id、name、media_type、size、sha256、status、origin=business_supplement、created_at，可含pages及错误；界面只返回受限preview_data_url/text_preview，模型只得到元数据和实际提取的text，原件及预览不进入模型JSON。
+
+renderer通过chooseSupplementAttachment(conversationId)调用专用宿主IPC，原生选择单个本地文件后由宿主读取并调用私有upload_supplement_attachment(conversation_id,name,content_b64)；该方法不在普通API_METHODS中。公开remove_supplement_attachment仅接受conversation_id和attachment_id，不提供任意文件或路径读取。
+
+支持PNG/JPEG/WebP、PDF、UTF-8 TXT/MD/CSV；单个6 MiB、最多5个、总计20 MiB。PDF最多10页、每附件提取16000字符，拒绝加密和无可提取文字的PDF；pypdf禁用外部jbig2dec并限制解压、解析工作量。专属展示缩略图最大256×256且JPEG不超过48 KiB，原始图片字节及哈希保持不变。上传JSON Lines仅为该私有方法放宽至8,400,000字符，其他方法沿用原预算。
+
+正文CAS保持，附件操作在最新补充记录上更新版本，不覆盖期间新正文；变更进入补充指纹并使旧未提交结果失效。图片以origin和attachment_id独立于聊天消息，使用同一业务任务read_compat，确切读取结果保存为supplement_image_reads并复核版本、归属及原图哈希；预览不代表已读，不以附件编号伪装聊天消息。当前明确补充图片可用于润色理解，但不补读历史聊天图或程序商品主图。文本和图片都是商家来源，不作为买家确认，也不恢复旧质量/协助提醒。
 
 ## 3. 产品、供货方案和任务
 

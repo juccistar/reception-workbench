@@ -1,16 +1,239 @@
 {
   "version": "0.3.14",
   "date": "2026-11-13",
-  "status": "in-development",
-  "published": false,
-  "latest_public_version": "0.3.13",
-  "scope": ["Restore effective reception business rules while retaining the current Chinese requirement contract", "Conversation-owned merchant business supplement attachments in automatic suggestions and polish"],
+  "status": "published_and_verified",
+  "published": true,
+  "latest_public_version": "0.3.14",
+  "source_commit": "05b0ed7",
+  "source_committed_immediately_after_build": true,
+  "source_branch": "feat/chat-translation-0.3.4",
   "prompt_version": "reception-0.3.14",
-  "prompt_regression": {"status": "passed", "tests": 6, "report": "artifacts/verification/reception-0.3.14/prompt-regression.json", "real_ai_calls": 0},
-  "attachments": {"status": "implementation-and-targeted-verification-in-progress"},
-  "full_suite_run": false,
-  "installed": false,
-  "real_business_data_migrated": false,
-  "default_entry_promoted": false,
-  "limitations": ["Offline request and prompt retention checks do not establish live model semantic quality", "Supplier inquiry and quote collection remain blocked", "Not yet packaged or published"]
+  "payload_version": "reception-payload-0.3.14",
+  "scope": [
+    "Restore effective reception rules without retired reminder fields",
+    "Conversation-owned merchant attachments in automatic, suggestion and polish inputs"
+  ],
+  "prompt_regression": {
+    "status": "passed",
+    "tests": 6,
+    "report": "artifacts/verification/reception-0.3.14/prompt-regression.json",
+    "real_ai_calls": 0,
+    "reviewed_and_generated_text_parity": "passed"
+  },
+  "attachments": {
+    "status": "passed",
+    "formats": [
+      "png",
+      "jpg",
+      "jpeg",
+      "webp",
+      "pdf",
+      "txt",
+      "md",
+      "csv"
+    ],
+    "limits": {
+      "files": 5,
+      "single_bytes": 6291456,
+      "total_bytes": 20971520,
+      "pdf_pages": 10,
+      "text_characters_per_attachment": 16000,
+      "jpeg_preview_bytes": 49152
+    },
+    "pdf_dependency": "pypdf==7.0.1",
+    "merchant_origin": true,
+    "buyer_confirmation": false,
+    "image_transport": "same-task read_compat",
+    "rendered_preview_is_read_evidence": false,
+    "text_preview_characters": 500,
+    "text_extract_characters": 16000,
+    "report": "artifacts/verification/reception-0.3.14/attachment-regression.json"
+  },
+  "tests": {
+    "full_suite_run": false,
+    "backend_distinct_passed": 70,
+    "backend": [
+      {
+        "file": "test_supplement_attachments.py",
+        "tests": 9,
+        "result": "passed",
+        "coverage": [
+          "PNG/PDF/text extraction and rejected malformed or empty PDF",
+          "Ownership, reopen, concurrent removal and stale results",
+          "6MiB upload through JSON Lines",
+          "Five 48KiB thumbnails remain below response limits while original bytes are unchanged"
+        ]
+      },
+      {
+        "file": "test_business_images.py",
+        "tests": 12,
+        "result": "passed",
+        "coverage": [
+          "Same-task chat and supplement image reads",
+          "Exact attachment provenance and tamper rejection"
+        ]
+      },
+      {
+        "file": "test_conversation_assistance_031.py",
+        "tests": 11,
+        "result": "passed"
+      },
+      {
+        "file": "test_business_supplements.py",
+        "tests": 5,
+        "result": "passed",
+        "initial_failure": "A baseline assertion indexed retired validation.warnings; updated the assertion to require a ready reply, retained source ID and absent warnings without changing validation code"
+      },
+      {
+        "file": "test_manual_reception.py",
+        "tests": 27,
+        "result": "passed",
+        "coverage": [
+          "Manual sends, current grants, sources, unknown and accepted receipt protection"
+        ]
+      },
+      {
+        "file": "test_reception_prompts_0314.py",
+        "tests": 6,
+        "result": "passed",
+        "report": "prompt-regression.json"
+      }
+    ],
+    "desktop_targeted_passed": 10,
+    "desktop": {
+      "file": "apps/desktop/tests/renderer-workbench.test.tsx",
+      "filter": "manual suggestion and supplement",
+      "tests": 10,
+      "result": "passed",
+      "coverage": [
+        "New text typed during upload is preserved",
+        "Switching customers does not show a late attachment result"
+      ]
+    },
+    "typecheck": "passed",
+    "prompt_sync": "passed",
+    "method_contracts": "artifacts/verification/reception-0.3.14/method-contracts.json",
+    "initial_failures_retained": [
+      "Supplement fixture lacked the conversation/revision-bound source fingerprint; corrected fixture",
+      "A legacy test referenced validation.warnings; updated assertion without changing reply validation"
+    ]
+  },
+  "actual_windows": {
+    "status": "passed",
+    "packaged": true,
+    "reports": [
+      "artifacts/verification/supplement-attachments-package-0314-b/report.json",
+      "artifacts/verification/demo-package-0314-base-b/result.json"
+    ],
+    "business_ipc_mocked": false,
+    "native_file_picker_mocked_only": true,
+    "synthetic_files_and_data_only": true,
+    "screenshots_reviewed_count": 7,
+    "screenshots_visually_inspected_by_coordinator": [
+      "artifacts/verification/supplement-attachments-package-0314-b/attachments.png",
+      "artifacts/verification/supplement-attachments-package-0314-b/other-customer.png",
+      "artifacts/verification/supplement-attachments-package-0314-b/suggestion.png",
+      "artifacts/verification/supplement-attachments-package-0314-b/reopened.png",
+      "artifacts/verification/demo-package-0314-base-b/translation-settings.png",
+      "artifacts/verification/demo-package-0314-base-b/window.png",
+      "artifacts/verification/demo-package-0314-base-b/reopened-cache.png"
+    ],
+    "normal_close_and_reopen": true,
+    "initial_runs": [
+      "artifacts/verification/supplement-attachments-package-0314-a/report.json",
+      "artifacts/verification/demo-package-0314-base-a/result.json"
+    ],
+    "initial_failure_note": "Concurrent starts collided with the same executable installation gate; sequential runs passed with unchanged application code"
+  },
+  "package": {
+    "status": "passed",
+    "directory": "relase/release-0.3.14-a",
+    "candidate": true,
+    "staging": "artifacts/build/package-input-1794542747110",
+    "python_source_inputs": 82,
+    "frozen_backend_files": 75,
+    "portable_files": 164,
+    "portable_zip_entries": 165,
+    "app_asar_sha256": "07117fc04468bc04beb225fc598aaf913e4dc7b28da0fb5521c7ed7edf16b0d0",
+    "source_manifest_sha256": "13c32e16dd66ae37a6f1228ae7d5d34176a2006901e3711b5ea8c1229bbafd93",
+    "release_signature": "ed25519",
+    "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+    "windows_authenticode_signed": false,
+    "update_source": "https://github.com/juccistar/reception-workbench-releases/",
+    "actual_installer_executed": false,
+    "evidence": [
+      "artifacts/verification/reception-0.3.14/package-source.json",
+      "artifacts/verification/reception-0.3.14/update-release-integrity.json",
+      "artifacts/verification/reception-0.3.14/portable-integrity.json",
+      "artifacts/verification/reception-0.3.14/portable-zip.json",
+      "artifacts/verification/reception-0.3.14/local-release-assets.json"
+    ]
+  },
+  "release": {
+    "repository": "juccistar/reception-workbench-releases",
+    "id": 443807050,
+    "tag": "v0.3.14",
+    "url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.14",
+    "published_at": "2026-11-13T04:17:22Z",
+    "draft": false,
+    "prerelease": false,
+    "latest": true,
+    "assets": [
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.14.exe",
+        "id": 742225067,
+        "bytes": 136994409,
+        "sha256": "8709573748f38602cf900e1d636bf1ceb78410124e7365f30a0e04cf4269977f",
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.14/ReceptionWorkbench-Setup-0.3.14.exe"
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.14.zip",
+        "id": 742225061,
+        "bytes": 178779302,
+        "sha256": "fa9a9117af05c55f4761069f64cc0b8ee126508eb8857b17ffcad8889322f3d5",
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.14/ReceptionWorkbench-0.3.14.zip"
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.14.exe.blockmap",
+        "id": 742225062,
+        "bytes": 143460,
+        "sha256": "1d82e47f55c63b26986c42df74ab4d795caa9924cd8ac865f99417bdae86bebf",
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.14/ReceptionWorkbench-Setup-0.3.14.exe.blockmap"
+      },
+      {
+        "name": "latest.yml",
+        "id": 742225068,
+        "bytes": 726,
+        "sha256": "cb2cbd432ab5178370b3a2228ee5b2a713873b63008e0a9944b779b754f5d47e",
+        "url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.14/latest.yml"
+      }
+    ],
+    "anonymous_complete_downloads_verified": true,
+    "server_digests_match_local": true,
+    "downloaded_update_signature_verified": true,
+    "evidence": [
+      "artifacts/verification/reception-0.3.14/draft-verified.json",
+      "artifacts/verification/reception-0.3.14/github-publication.json",
+      "artifacts/verification/reception-0.3.14/public-download.json"
+    ]
+  },
+  "protected_boundaries": {
+    "full_suite_run": false,
+    "real_ai_calls": 0,
+    "real_customer_or_supplier_sends": 0,
+    "real_merchant_databases_opened": false,
+    "installed": false,
+    "real_business_data_migrated": false,
+    "default_entry_promoted": false,
+    "source_pushed": false,
+    "credentials_reported": false,
+    "repository_schema": 2,
+    "adapter_ledger_schema": 1
+  },
+  "limitations": [
+    "Offline request checks do not prove live model semantic quality",
+    "Scanned, encrypted and textless PDFs are not OCRed",
+    "Supplier inquiry and quote collection remain blocked",
+    "Packaged Demo and public download checks do not establish actual installation or business-data migration"
+  ]
 }
