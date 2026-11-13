@@ -35,7 +35,7 @@ try {
   report.exit_code = code;
   report.version = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version;
   report.runtime_entry = path.relative(root, runtime).replaceAll('\\', '/');
-  report.packaged_sdk_resources = runtime.includes('app.asar');
+  report.packaged_sdk_resources = runtime.includes('.asar' + path.sep) || runtime.includes('.asar/');
 } finally {
   await rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   await writeFile(path.join(directory, 'report.json'), JSON.stringify(report, null, 2) + '\n');

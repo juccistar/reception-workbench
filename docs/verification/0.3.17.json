@@ -76,10 +76,19 @@
       "real_account_login": false,
       "real_reconnection": false,
       "real_message_send": false,
-      "qr_or_credentials_recorded": false
+      "qr_or_credentials_recorded": false,
+      "report": "artifacts/verification/whatsapp-native-source-c/report.json",
+      "runtime_resource_closure_tested": true
     },
     "candidate_window": "pending",
-    "full_suite_run": false
+    "full_suite_run": false,
+    "source_build_commit": "cc34d65",
+    "source_window": {
+      "status": "passed",
+      "report": "artifacts/verification/repairs-0317-whatsapp-source-a/report.json",
+      "screenshots": 6,
+      "screenshots_visually_reviewed": true
+    }
   },
   "publication": {
     "status": "pending",
@@ -92,5 +101,29 @@
   "source_pushed": false,
   "real_ai_calls": 0,
   "real_customer_sends": 0,
-  "production_data_accessed": false
+  "production_data_accessed": false,
+  "candidate": {
+    "status": "built-verification-pending",
+    "output": "relase/release-0.3.17-c",
+    "earlier_local_attempts": [
+      {
+        "output": "relase/release-0.3.17-a",
+        "status": "integrity-check-failed",
+        "reason": "Windows ASAR extractFile requires normalized separators; runtime file was present"
+      },
+      {
+        "output": "relase/release-0.3.17-b",
+        "status": "integrity-check-failed",
+        "reason": "Same verifier path issue after moving SDK into an isolated runtime archive; all 3377 runtime files later verified"
+      }
+    ],
+    "runtime_archive": "resources/whatsapp-runtime.asar",
+    "runtime_packages": 193,
+    "runtime_files": 3377,
+    "archive_sdk_fixture": "artifacts/verification/whatsapp-native-archive-b/report.json",
+    "staging": "artifacts/build/package-input-1794573043122",
+    "portable_files": 165,
+    "source_manifest_sha256": "0f3f03989375ec21cef1cd3522ced6c388f89e9c17ef843610690cf0ce5e40da",
+    "runtime_archive_sha256": "eaee2930b1140de6363549f9f1212aa0ade411b640581bb48ec18f600779f317"
+  }
 }

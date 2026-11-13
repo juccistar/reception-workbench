@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, copyFile, writeFile, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { build, Platform } from 'electron-builder';
-import { extractFile, listPackage } from '@electron/asar';
+import { createPackage, extractFile, listPackage } from '@electron/asar';
 import { verifyWhatsAppRuntime } from './whatsapp-runtime.mjs';
 import { root, pythonPath } from './paths.mjs';
 import { installWindowsIntegrityRetry } from './windows-integrity-retry.mjs';
@@ -62,20 +62,27 @@ await writeFile(path.join(staging,'source-manifest.json'),JSON.stringify({format
 const pythonDist=path.join(staging,'python-dist');
 run(pythonPath(),['-m','PyInstaller','--clean','--noconfirm','--noupx','--onedir','--console','--name','reception-backend','--paths',path.join(staging,'python/src'),'--collect-submodules','reception_service','--add-data',path.join(staging,'python/src/reception_service/resources/builtin_policies.json')+path.delimiter+'reception_service/resources','--distpath',pythonDist,'--workpath',path.join(staging,'python-work'),'--specpath',path.join(staging,'python-spec'),path.join(staging,'python/run.py')],path.join(staging,'python'));
 const appStage=path.join(staging,'app');
-for(const entry of ['main','preload','renderer'])await copyTree(path.join(root,'artifacts/app',entry),path.join(appStage,entry));
-const whatsappRuntime = await verifyWhatsAppRuntime(path.join(appStage, 'main'));
+for(const entry of ['main','preload','renderer'])await copyTree(path.join(root,'artifacts/app',entry),path.join(appStage,entry), name => name !== 'node_modules' && name !== 'whatsapp-runtime-manifest.json');
+const runtimeStage = path.join(staging, 'whatsapp-runtime');
+await copyTree(path.join(root, 'artifacts/app/main/node_modules'), path.join(runtimeStage, 'node_modules'));
+await copyFile(path.join(root, 'artifacts/app/main/whatsapp-runtime-manifest.json'), path.join(runtimeStage, 'whatsapp-runtime-manifest.json'));
+const whatsappRuntime = await verifyWhatsAppRuntime(runtimeStage);
+const runtimeArchive = path.join(staging, 'whatsapp-runtime.asar');
+await createPackage(runtimeStage, runtimeArchive);
 function verifyBundledWhatsApp(directory) {
- const archive = path.join(directory, 'resources', 'app.asar');
- const expected = new Map(whatsappRuntime.files.map(file => ['main/' + file.path, file]));
+ const archive = path.join(directory, 'resources', 'whatsapp-runtime.asar');
+ const expected = new Map(whatsappRuntime.files.map(file => [file.path, file]));
  const listed = listPackage(archive).map(file => file.replaceAll('\\', '/').replace(/^\//, ''));
- for (const entry of listed.filter(file => file.startsWith('main/node_modules/'))) {
+ const appEntries = listPackage(path.join(directory, 'resources', 'app.asar'));
+ if (appEntries.some(file => /(^|\/)node_modules(\/|$)/.test(file.replaceAll('\\', '/')))) throw new Error('Unexpected dependencies outside the WhatsApp runtime archive.');
+ for (const entry of listed.filter(file => file.startsWith('node_modules/'))) {
   if (!expected.has(entry) && ![...expected.keys()].some(file => file.startsWith(entry + '/'))) throw new Error('Unexpected WhatsApp dependency in packaged application.');
  }
  for (const [entry, file] of expected) {
-  const bytes = extractFile(archive, entry);
+  const bytes = extractFile(archive, path.normalize(entry));
   if (bytes.length !== file.size || hash(bytes) !== file.sha256) throw new Error('Missing or changed WhatsApp runtime in packaged application.');
  }
- const recorded = JSON.parse(extractFile(archive, 'main/whatsapp-runtime-manifest.json').toString('utf8'));
+ const recorded = JSON.parse(extractFile(archive, 'whatsapp-runtime-manifest.json').toString('utf8'));
  if (JSON.stringify(recorded) !== JSON.stringify(whatsappRuntime)) throw new Error('Packaged WhatsApp manifest differs from build input.');
 }
 const electronDist=path.join(staging,'electron-dist');
@@ -89,7 +96,7 @@ const launchPolicy=path.join(staging,'reception-launch.json');
 await writeFile(launchPolicy,JSON.stringify({format:1,app_id:UPDATE_APP_ID,routing:'verified-seller-v1',version:pkg.version},null,2)+'\n');
 const launchModules=['connect-live.mjs','merchant-profiles.mjs','merchant-mutex.mjs','launch-identity.mjs','windows-job.mjs','data-location.mjs','release-paths.mjs'];
 const restoreIntegrity = installWindowsIntegrityRetry(output);
-const baseConfig={appId:'local.inquiry.reception.workbench',productName:'ReceptionWorkbench',directories:{app:appStage,output},electronVersion:electronPkg.version,electronDist,asar:true,files:['main/**/*','preload/**/*','renderer/**/*','package.json'],extraFiles:[{from:path.join(root,'授权启动接待.cmd'),to:'授权启动接待.cmd'},...launchModules.map(name=>({from:path.join(root,'scripts',name),to:'scripts/'+name}))],extraResources:[{from:launchPolicy,to:'reception-launch.json'},{from:path.join(root,'docs/人工接待使用.md'),to:'人工接待使用.md'},{from:startupGuide,to:'自动接待启动与授权.md'},{from:path.join(root,'docs/自动接待连续性.md'),to:'自动接待连续性.md'},{from:path.join(root,'docs/在线升级.md'),to:'在线升级.md'},{from:path.join(pythonDist,'reception-backend'),to:'backend'},{from:path.join(sourceRoot,'src/reception_service/integrations/accio_native/vendor/SOURCE.txt'),to:'backend/SOURCE.txt'},...(existsSync(guide)?[{from:guide,to:'USER_GUIDE.md'}]:[])],npmRebuild:false,forceCodeSigning:false,win:{target:'dir',signAndEditExecutable:false,executableName:'ReceptionWorkbench'}};
+const baseConfig={appId:'local.inquiry.reception.workbench',productName:'ReceptionWorkbench',directories:{app:appStage,output},electronVersion:electronPkg.version,electronDist,asar:true,files:['main/**/*','preload/**/*','renderer/**/*','package.json','!**/node_modules{,/**/*}'],extraFiles:[{from:path.join(root,'授权启动接待.cmd'),to:'授权启动接待.cmd'},...launchModules.map(name=>({from:path.join(root,'scripts',name),to:'scripts/'+name}))],extraResources:[{from:runtimeArchive,to:'whatsapp-runtime.asar'},{from:launchPolicy,to:'reception-launch.json'},{from:path.join(root,'docs/人工接待使用.md'),to:'人工接待使用.md'},{from:startupGuide,to:'自动接待启动与授权.md'},{from:path.join(root,'docs/自动接待连续性.md'),to:'自动接待连续性.md'},{from:path.join(root,'docs/在线升级.md'),to:'在线升级.md'},{from:path.join(pythonDist,'reception-backend'),to:'backend'},{from:path.join(sourceRoot,'src/reception_service/integrations/accio_native/vendor/SOURCE.txt'),to:'backend/SOURCE.txt'},...(existsSync(guide)?[{from:guide,to:'USER_GUIDE.md'}]:[])],npmRebuild:false,forceCodeSigning:false,win:{target:'dir',signAndEditExecutable:false,executableName:'ReceptionWorkbench'}};
 try {
 await build({projectDir:root,publish:'never',targets:Platform.WINDOWS.createTarget(['dir']),config:structuredClone(baseConfig)});
 } finally { restoreIntegrity(); }

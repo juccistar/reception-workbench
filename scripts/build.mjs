@@ -6,7 +6,7 @@ import { build as bundle } from 'esbuild';
 import { build as viteBuild } from 'vite';
 import { root } from './paths.mjs';
 await mkdir(path.join(root,'artifacts/app'),{recursive:true});
-for (const entry of ['main','preload']) await bundle({entryPoints:[path.join(root,`apps/desktop/src/${entry}/index.ts`)],outfile:path.join(root,`artifacts/app/${entry}/index.js`),bundle:true,platform:'node',format:'cjs',target:'node22',external:['electron','original-fs','whatsapp-web.js','puppeteer'],sourcemap:false});
+for (const entry of ['main','preload']) await bundle({entryPoints:[path.join(root,`apps/desktop/src/${entry}/index.ts`)],outfile:path.join(root,`artifacts/app/${entry}/index.js`),bundle:true,platform:'node',format:'cjs',target:'node22',external:['electron','original-fs','whatsapp-web.js','puppeteer'],banner:entry==='main'?{js:'const __hostRequire = require; const __waRequire = __hostRequire("node:module").createRequire(__hostRequire("electron").app.isPackaged ? __hostRequire("node:path").join(process.resourcesPath, "whatsapp-runtime.asar", "entry.cjs") : __filename); require = Object.assign(function(id) { return id === "puppeteer" || id === "whatsapp-web.js" ? __waRequire(id) : __hostRequire(id); }, __hostRequire);'}:undefined,sourcemap:false});
 const whatsappRuntime = path.join(root, 'artifacts/app/main');
 if (existsSync(path.join(whatsappRuntime, 'node_modules'))) {
   await verifyWhatsAppRuntime(whatsappRuntime);

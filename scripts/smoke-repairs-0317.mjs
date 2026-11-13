@@ -61,7 +61,7 @@ try {
  const page = await application.firstWindow();
  page.on('pageerror', error => report.errors.push(error.message));
  const invoke = (method, params = {}) => page.evaluate(({method, params}) => window.reception.invoke(method, params), {method, params});
- const shot = async name => {await page.screenshot({path: path.join(output, name + '.png'), animations: 'disabled'}); report.screenshots.push(name + '.png');};
+ const shot = async name => {await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); await page.screenshot({path: path.join(output, name + '.png'), animations: 'disabled'}); report.screenshots.push(name + '.png');};
  await page.getByRole('textbox', {name: '回复正文', exact: true}).waitFor({timeout: 45000});
  await page.getByRole('button', {name: /Emma Wilson/}).click();
  await page.getByRole('main', {name: 'Emma Wilson 的客户接待'}).waitFor();

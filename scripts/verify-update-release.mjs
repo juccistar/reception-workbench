@@ -60,7 +60,7 @@ for (const name of await readdir(path.join(root, 'artifacts/build'))) {
 }
 stages.sort((a, b) => Number(b.slice(14)) - Number(a.slice(14)));
 let pythonInputs = 0;
-const mainHash = digest(asar.extractFile(path.join(installerDir, 'resources/app.asar'), 'main/index.js'));
+const mainHash = digest(asar.extractFile(path.join(installerDir, 'resources/app.asar'), path.normalize('main/index.js')));
 for (const name of stages) {
   const stage = path.join(root, 'artifacts/build', name);
   let input;
