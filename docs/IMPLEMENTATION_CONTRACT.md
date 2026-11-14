@@ -1,6 +1,6 @@
 # 工作台实施契约
 
-本文维护0.3.16源码的进程、接口和业务约束；需求增量、多事项及原图交互见[发布说明](0.3.16发布说明.md)，当前构建及公开状态见[记录](verification/0.3.16.json)。0.3.13的需求、摘要、产品及采购契约继续沿用，见[基础开发说明](0.3.13开发说明.md)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
+本文维护0.3.19源码的进程、接口和业务约束；需求补录、自然分条及WhatsApp诊断见[发布说明](0.3.19发布说明.md)，当前构建及公开状态见[记录](verification/0.3.19.json)。需求增量、多事项及原图交互继续沿用0.3.16基础。0.3.13的需求、摘要、产品及采购契约继续沿用，见[基础开发说明](0.3.13开发说明.md)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
 
 ## 1. 进程与协议
 
@@ -120,6 +120,16 @@ save_chat_draft/send_chat按会话运行，不以case、AI检查、采购齐全�
 正常自动回复及续答保留本地业务检查后直接聊天提交，不做发送前Ready、Seal或整批平台历史重读。prepared/sending/unknown保护整会话，accepted需要确切平台消息编号和提交证据，未知只核查原operation，不换事项/键或凭同文猜测重发。单条自动失败链最多3次总尝试，仅明确未提交的暂时错误按5秒/15秒退避，新job、草稿及重启不重置。旧显式预演/原生确认仅兼容，不作为普通发送前置；旧未知回执保留原通道核查。
 
 公开业务方法以API_METHODS和Python FAST/SLOW双重白名单为准。confirm_send必须走宿主专用原生确认，shutdown仅供宿主关闭。退役的旧协助、候选整理和商品解析查询方法不作为新界面接口。
+
+## 4A. 自然分条、人工编辑与回执（0.3.19）
+
+自动接待、普通人工建议与WhatsApp真实模型输出使用reply_messages:[{body,reply_sources}]，按需1至3条，正文合计最多1200字符；国际站skip允许空数组并仍可保存需求增量。reply及整轮来源并集由程序派生，仅作展示和兼容。真实Live边界严格要求数组，旧持久化和内部替身仅显式兼容；POLISH保持单个reply/reply_sources。一次生成只应用一次需求与摘要。形式校验不代替事实、承诺或更正语义验收。
+
+AI draft保存reply_messages，人工chat_draft保存可选message_parts，body必须等于条目以两个换行组合。编辑可留空条目但不能发送；最多三条，人工整轮正文预算50000字符。润色请求可带part_index，绑定整稿revision、该条确切正文及hash；采用再次核对，其他条目不变。部分成功的草稿持续携带blocked_batch_id；save_chat_draft的remaining_batch_id只按原冻结批次的连续已受理前缀释放未发送尾部，已受理条目含新编辑时拒绝静默移除。
+
+reply_batch及独立wa_reply_batch冻结稳定part_id、顺序、正文hash、来源和授权归属，当前条目独立operation；前一条确切accepted后，后续才进原队列。国际站首条保留原来源逻辑键，后续核对冻结清单及全部前序确切受理证据；ordinary/final/supplement沿原通道及重试规则，按part_id限次，旧账本accepted/unknown不能换批次绕过。活动批次在条目间、重试和核查期间保持同会话互斥。新消息、接管、暂停或依据变化停止未提交尾部，重启不续发。平台先同步自身回显时，仅按确切受理ID、正文、角色与目标，并核实其余依据未变后继续；不能按同文泛化放行。
+
+ConversationDetail.reply_batches投影batch_id/status/total/accepted/current_index/pending_operation_ids。WhatsApp保持宿主单次sendMessage及单份单条JSONL账本，确切ID且ACK≥1才受理，Python管理整轮进度；历史及联系人metadata不触发回复，绑定国际站仅作只读背景。SDK阶段故障退役本代程序接待，可信原始页面保留；即时宿主状态独立于慢业务查询。诊断按固定阶段/错误码和受限相对堆栈保存，最多2 MiB×3份，不包含原始异常、聊天、账号、二维码或凭据。私有_wa_*入口不加入renderer API。
 
 ## 5. 图片、资料、翻译
 

@@ -1,8 +1,8 @@
 {
   "version": "0.3.19",
   "date": "2026-11-14",
-  "status": "candidate-built-verification-pending",
-  "public_latest": "0.3.18",
+  "status": "released-and-public-download-verified",
+  "public_latest": "0.3.19",
   "diagnostic_baseline": {
     "version": "0.3.19",
     "date": "2026-11-14",
@@ -286,16 +286,183 @@
     ]
   },
   "packaging": {
-    "status": "built-verification-pending",
+    "status": "passed",
     "candidate": "relase/release-0.3.19-a",
     "installer_sha256": "3f6f8868ed56d2819a3089de22f8ad24dc1ccc5fc3876af2c1eebb05fbcdb718",
     "archive_sha256": "31beb5148d47e38e28d57651665a619938936106e4ca7d39c0d15ebc132aeec4",
     "installer_signed": false,
     "release_signature": "ed25519",
-    "default_entry_changed": false
+    "default_entry_changed": false,
+    "immediate_commit": "3735711",
+    "checks": {
+      "integrity": {
+        "passed": true,
+        "version": "0.3.19",
+        "files": 165,
+        "asar_entries": 10,
+        "archive_sha256": "31beb5148d47e38e28d57651665a619938936106e4ca7d39c0d15ebc132aeec4",
+        "customer_databases": 0,
+        "development_dependencies": 0,
+        "signed": false
+      },
+      "zip": {
+        "passed": true,
+        "version": "0.3.19",
+        "entries": 166,
+        "manifest_files": 165,
+        "all_crcs_verified": true,
+        "all_file_hashes_verified": true,
+        "archive_bytes": 183442682,
+        "archive_sha256": "31beb5148d47e38e28d57651665a619938936106e4ca7d39c0d15ebc132aeec4"
+      },
+      "source": {
+        "status": "passed",
+        "version": "0.3.19",
+        "delivery": "e:\\ReceptionWorkbench\\relase\\release-0.3.19-a\\delivery.json",
+        "staging": "e:\\ReceptionWorkbench\\artifacts\\build\\package-input-1794660173461",
+        "python_inputs": 88,
+        "frozen_backend_files": 75,
+        "compiled_app_files": 6,
+        "external_launch_modules": 7,
+        "asar_sha256": "a3e740066d342375e45e877422d7ea96f7f3043db84a86fb6f8b7bd72a9660d3",
+        "source_manifest_sha256": "cb66964df0a6a050f2b1a54b5b7c7d04ccd478be6ea535a7358331820a80dbb2",
+        "production_workspace_accessed": false
+      },
+      "update": {
+        "status": "passed",
+        "version": "0.3.19",
+        "installer_bytes": 140092471,
+        "installer_sha256": "3f6f8868ed56d2819a3089de22f8ad24dc1ccc5fc3876af2c1eebb05fbcdb718",
+        "installer_sha512": "lgzZhGyzn/TyXkPKj7FsWxi0TTP+vpSfWC2q5ecKewNSUwvdXi+DEjMoZXOCVfGffvbOlUVVSt37NGyVt3SUig==",
+        "release_signature": "ed25519",
+        "windows_signed": false,
+        "feed_files": 3,
+        "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+        "python_inputs": 88,
+        "source_manifest": "artifacts\\build\\package-input-1794660173461\\source-manifest.json",
+        "compiled_host_matches_stage": true,
+        "installed_marker_baked_in": false,
+        "merchant_launch_inputs": 7,
+        "merchant_launch_inputs_match_source": true,
+        "update_source_preconfigured": true,
+        "update_source_type": "github",
+        "update_source_url": "https://github.com/juccistar/reception-workbench-releases/",
+        "actual_installer_executed": false
+      },
+      "runtime": {
+        "status": "passed",
+        "version": "0.3.19",
+        "runtime_packages": 193,
+        "runtime_files": 3377,
+        "exact_file_hashes_verified": true,
+        "unlisted_dependencies": false,
+        "bundles": [
+          {
+            "path": "relase/release-0.3.19-a/win-unpacked",
+            "runtime_archive_sha256": "eaee2930b1140de6363549f9f1212aa0ade411b640581bb48ec18f600779f317",
+            "asar_sha256": "a3e740066d342375e45e877422d7ea96f7f3043db84a86fb6f8b7bd72a9660d3",
+            "compiled_host_and_preload_match": true
+          },
+          {
+            "path": "relase/release-0.3.19-a/installer-build/win-unpacked",
+            "runtime_archive_sha256": "eaee2930b1140de6363549f9f1212aa0ade411b640581bb48ec18f600779f317",
+            "asar_sha256": "a3e740066d342375e45e877422d7ea96f7f3043db84a86fb6f8b7bd72a9660d3",
+            "compiled_host_and_preload_match": true
+          }
+        ]
+      }
+    }
   },
   "public_release": {
-    "status": "not-run"
+    "status": "published-and-anonymous-download-verified",
+    "repo": "juccistar/reception-workbench-releases",
+    "tag": "v0.3.19",
+    "assets_expected": 4,
+    "draft_verification": {
+      "status": "passed",
+      "release_id": 445291772,
+      "draft": true,
+      "assets": [
+        {
+          "name": "latest.yml",
+          "bytes": 726,
+          "sha256": "5de842a8ce6a891cceeb96632a3c6eddca91975577dffabe2f841bef98f207f6"
+        },
+        {
+          "name": "ReceptionWorkbench-0.3.19.zip",
+          "bytes": 183442682,
+          "sha256": "31beb5148d47e38e28d57651665a619938936106e4ca7d39c0d15ebc132aeec4"
+        },
+        {
+          "name": "ReceptionWorkbench-Setup-0.3.19.exe",
+          "bytes": 140092471,
+          "sha256": "3f6f8868ed56d2819a3089de22f8ad24dc1ccc5fc3876af2c1eebb05fbcdb718"
+        },
+        {
+          "name": "ReceptionWorkbench-Setup-0.3.19.exe.blockmap",
+          "bytes": 146777,
+          "sha256": "ff9fe7c5d9a25b2047202be5ec1090fb59df91d904d7e32079467c97cebc988d"
+        }
+      ],
+      "server_size_and_digest_match": true
+    },
+    "release_id": 445291772,
+    "url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.19",
+    "published_at": "2026-11-14T12:56:53Z",
+    "public_latest": "v0.3.19",
+    "assets": [
+      {
+        "name": "latest.yml",
+        "bytes": 726,
+        "sha256": "5de842a8ce6a891cceeb96632a3c6eddca91975577dffabe2f841bef98f207f6",
+        "sha512": "YncrgRb6Guc1O1Hp/2t44lThMq6/gvN0cB1sT9ei54w88xBZkDC0VVeSyjehgRH2+cSROeKNXW1Dk3e2i2vvGA==",
+        "server_digest": "sha256:5de842a8ce6a891cceeb96632a3c6eddca91975577dffabe2f841bef98f207f6",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.19/latest.yml",
+        "saved_path": "artifacts/verification/public-0319-a/latest.yml/latest.yml",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.19.zip",
+        "bytes": 183442682,
+        "sha256": "31beb5148d47e38e28d57651665a619938936106e4ca7d39c0d15ebc132aeec4",
+        "sha512": "/Ho9+rtACcSOSAk+WiKgHfvthX6wnQ+AQQDMFPqmeASZKotm/4jz14nVg/NHG/klQaca2GXytzHH+p3bqExs4Q==",
+        "server_digest": "sha256:31beb5148d47e38e28d57651665a619938936106e4ca7d39c0d15ebc132aeec4",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.19/ReceptionWorkbench-0.3.19.zip",
+        "saved_path": "artifacts/verification/public-0319-a/ReceptionWorkbench-0.3.19.zip/ReceptionWorkbench-0.3.19.zip",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.19.exe",
+        "bytes": 140092471,
+        "sha256": "3f6f8868ed56d2819a3089de22f8ad24dc1ccc5fc3876af2c1eebb05fbcdb718",
+        "sha512": "lgzZhGyzn/TyXkPKj7FsWxi0TTP+vpSfWC2q5ecKewNSUwvdXi+DEjMoZXOCVfGffvbOlUVVSt37NGyVt3SUig==",
+        "server_digest": "sha256:3f6f8868ed56d2819a3089de22f8ad24dc1ccc5fc3876af2c1eebb05fbcdb718",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.19/ReceptionWorkbench-Setup-0.3.19.exe",
+        "saved_path": "artifacts/verification/public-0319-a/ReceptionWorkbench-Setup-0.3.19.exe/ReceptionWorkbench-Setup-0.3.19.exe",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.19.exe.blockmap",
+        "bytes": 146777,
+        "sha256": "ff9fe7c5d9a25b2047202be5ec1090fb59df91d904d7e32079467c97cebc988d",
+        "sha512": "TLa/cqUkk9ZwReXOxM/eo9vODiEuvUld2SutGEU7f5HHmLi86fNUEPbDKRHLvLk1gSdlKIitTG16FcBHtmf/5A==",
+        "server_digest": "sha256:ff9fe7c5d9a25b2047202be5ec1090fb59df91d904d7e32079467c97cebc988d",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.19/ReceptionWorkbench-Setup-0.3.19.exe.blockmap",
+        "saved_path": "artifacts/verification/public-0319-a/ReceptionWorkbench-Setup-0.3.19.exe.blockmap/ReceptionWorkbench-Setup-0.3.19.exe.blockmap",
+        "complete": true
+      }
+    ],
+    "download_signature": {
+      "status": "passed",
+      "algorithm": "ed25519",
+      "version": "0.3.19",
+      "artifact": "ReceptionWorkbench-Setup-0.3.19.exe",
+      "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+      "installer_sha512_matches_complete_download": true
+    },
+    "anonymous_complete_download": true,
+    "download_report": "artifacts/verification/public-0319-a/report.json",
+    "release_notes_utf8_exact": true
   },
   "installation": {
     "status": "not-run"
@@ -321,5 +488,225 @@
       "status": "passed",
       "reason": "backend receipts passed; final driver now waits for renderer 2/2 display before taking receipt screenshot"
     }
-  ]
+  ],
+  "additional_actual_windows": {
+    "source_diagnostics": {
+      "status": "passed",
+      "version": "0.3.19",
+      "actual_window": true,
+      "packaged_executable": null,
+      "synthetic_only": true,
+      "production_data_accessed": false,
+      "real_ai_calls": 0,
+      "real_customer_sends": 0,
+      "host_event_injected": true,
+      "actual_sdk_fault_in_window": false,
+      "scope": "Actual renderer/preload and Demo backend; native public-page SDK faults are checked separately",
+      "screenshots": [
+        "whatsapp-normal-wide.png",
+        "native-available-wide.png",
+        "failure-details-wide.png",
+        "failure-details-narrow.png",
+        "native-loading-narrow.png",
+        "http-failure-narrow.png"
+      ],
+      "errors": [],
+      "normal_close": true,
+      "report": "artifacts/verification/workbench-0319-source-incremental-a/report.json",
+      "screenshots_visually_reviewed": true
+    },
+    "candidate_replies": {
+      "status": "passed",
+      "version": "0.3.19",
+      "actual_window": true,
+      "packaged_executable": "relase/release-0.3.19-a/installer-build/win-unpacked/ReceptionWorkbench.exe",
+      "synthetic_only": true,
+      "production_data_accessed": false,
+      "real_ai_calls": 0,
+      "real_customer_sends": 0,
+      "suggestion_seeded": true,
+      "business_ipc_mocked": false,
+      "scope": "Preseeded synthetic two-part suggestion; actual renderer/preload, Demo polish, saved draft, batch sends and receipts",
+      "screenshots": [
+        "two-part-suggestion-wide.png",
+        "two-part-editor-wide.png",
+        "two-part-editor-narrow.png",
+        "selected-part-polish-wide.png",
+        "two-receipts-wide.png",
+        "new-input-after-batch-narrow.png"
+      ],
+      "completed": [
+        "two-message-preview-and-adoption",
+        "per-part-edit-save",
+        "selected-part-demo-polish",
+        "two-separate-demo-submissions-and-receipts",
+        "unchanged-requirements-revision",
+        "new-editor-version-retained",
+        "wide-and-narrow-layouts"
+      ],
+      "errors": [],
+      "normal_close": true,
+      "demo_ai_check": true,
+      "sent_message_ids": [
+        "demo-send-fe36e9ba2a33482bb4def6ed6229e401",
+        "demo-send-1dbf6dcb15aa4aabb8e6c896a7485ad9"
+      ],
+      "report": "artifacts/verification/replies-0319-candidate-a/report.json",
+      "screenshots_visually_reviewed": true
+    },
+    "candidate_diagnostics": {
+      "status": "passed",
+      "version": "0.3.19",
+      "actual_window": true,
+      "packaged_executable": "relase/release-0.3.19-a/installer-build/win-unpacked/ReceptionWorkbench.exe",
+      "synthetic_only": true,
+      "production_data_accessed": false,
+      "real_ai_calls": 0,
+      "real_customer_sends": 0,
+      "host_event_injected": true,
+      "actual_sdk_fault_in_window": false,
+      "scope": "Actual renderer/preload and Demo backend; native public-page SDK faults are checked separately",
+      "screenshots": [
+        "whatsapp-normal-wide.png",
+        "native-available-wide.png",
+        "failure-details-wide.png",
+        "failure-details-narrow.png",
+        "native-loading-narrow.png",
+        "http-failure-narrow.png"
+      ],
+      "errors": [],
+      "normal_close": true,
+      "report": "artifacts/verification/workbench-0319-candidate-a/report.json",
+      "screenshots_visually_reviewed": true
+    }
+  },
+  "whatsapp_public_page": {
+    "normal_cold_start": {
+      "status": "passed",
+      "version": "0.3.19",
+      "cold_start": true,
+      "prewarm_before_connect": false,
+      "compiled_host_used": true,
+      "fixture_startup_replaced": true,
+      "real_merchant_bootstrap_used": false,
+      "reference_no_cdp": false,
+      "controlled_sdk_failure": false,
+      "formal_chinese_application_name": true,
+      "actual_ascii_request": true,
+      "application_tokens_omitted": true,
+      "request_chrome_matches_engine": true,
+      "session_ascii_user_agent": true,
+      "public_http_status": 200,
+      "sdk_injected_to_qr": true,
+      "sdk_inject_completed": true,
+      "qr_events": 3,
+      "native_qr_visible": true,
+      "qr_refresh_observed": true,
+      "qr_refresh_requested": false,
+      "stable_observation_ms": 60569,
+      "sdk_state_stable": true,
+      "normal_close": true,
+      "qr_recorded": false,
+      "logged_in": false,
+      "real_ai_calls": 0,
+      "real_customer_sends": 0,
+      "production_data_accessed": false,
+      "error_code": "",
+      "host_sha256": "e6231594b12e828c67d747521e70aaaad264ba7aea4ae5705f39bb3a231182c3",
+      "remote_node_integration_disabled": true,
+      "remote_business_bridge_absent": true,
+      "final_host_status": "qr",
+      "final_page_state": "available",
+      "redacted_screenshot": true,
+      "cdp_version_matches_engine": true,
+      "same_visible_dom": true,
+      "expose_function": true,
+      "preload_script": true,
+      "exit_code": 0,
+      "runtime_entry": "relase/release-0.3.19-a/installer-build/win-unpacked/resources/whatsapp-runtime.asar/index.js",
+      "host_entry": "relase/release-0.3.19-a/installer-build/win-unpacked/resources/app.asar/main/index.js",
+      "packaged_host_resources": true,
+      "packaged_sdk_resources": true,
+      "diagnostics_saved": true,
+      "report": "artifacts/verification/whatsapp-native-package-0319-b/report.json",
+      "redacted_screenshot_visually_reviewed": true
+    },
+    "controlled_post_qr_failure": {
+      "status": "passed",
+      "version": "0.3.19",
+      "cold_start": true,
+      "prewarm_before_connect": false,
+      "compiled_host_used": true,
+      "fixture_startup_replaced": true,
+      "real_merchant_bootstrap_used": false,
+      "reference_no_cdp": false,
+      "controlled_sdk_failure": true,
+      "formal_chinese_application_name": true,
+      "actual_ascii_request": true,
+      "application_tokens_omitted": true,
+      "request_chrome_matches_engine": true,
+      "session_ascii_user_agent": true,
+      "public_http_status": 200,
+      "sdk_injected_to_qr": true,
+      "sdk_inject_completed": true,
+      "qr_events": 2,
+      "native_qr_visible": true,
+      "qr_refresh_observed": true,
+      "qr_refresh_requested": false,
+      "stable_observation_ms": 60566,
+      "sdk_state_stable": true,
+      "normal_close": true,
+      "qr_recorded": false,
+      "logged_in": false,
+      "real_ai_calls": 0,
+      "real_customer_sends": 0,
+      "production_data_accessed": false,
+      "error_code": "",
+      "host_sha256": "e6231594b12e828c67d747521e70aaaad264ba7aea4ae5705f39bb3a231182c3",
+      "remote_node_integration_disabled": true,
+      "remote_business_bridge_absent": true,
+      "failure_phase": "sdk_inject",
+      "failure_code": "sdk_error",
+      "final_host_status": "error",
+      "final_page_state": "available",
+      "redacted_screenshot": true,
+      "cdp_version_matches_engine": true,
+      "same_visible_dom": true,
+      "expose_function": true,
+      "preload_script": true,
+      "exit_code": 0,
+      "runtime_entry": "relase/release-0.3.19-a/installer-build/win-unpacked/resources/whatsapp-runtime.asar/index.js",
+      "host_entry": "relase/release-0.3.19-a/installer-build/win-unpacked/resources/app.asar/main/index.js",
+      "packaged_host_resources": true,
+      "packaged_sdk_resources": true,
+      "diagnostics_saved": true,
+      "report": "artifacts/verification/whatsapp-native-package-0319-fault-b/report.json",
+      "redacted_screenshot_visually_reviewed": true
+    },
+    "controlled_diagnostic_phase_code_relative_frames_and_message_omission_verified": true,
+    "earlier_attempts": [
+      {
+        "report": "artifacts/verification/whatsapp-native-package-0319-a/report.json",
+        "status": "failed",
+        "error_code": "sdk_timeout",
+        "sdk_qr_events": 0,
+        "native_qr_visible": true,
+        "trusted_page_retained": true
+      },
+      {
+        "report": "artifacts/verification/whatsapp-native-package-0319-fault-a/report.json",
+        "status": "failed-before-controlled-injection",
+        "error_code": "sdk_timeout",
+        "sdk_qr_events": 0,
+        "native_qr_visible": true,
+        "trusted_page_retained": true
+      }
+    ],
+    "intermittent_sdk_timeout_root_cause_confirmed": false
+  },
+  "actual_merchant_failure": {
+    "status": "not-reproduced-in-merchant-session-not-accepted",
+    "root_cause_confirmed": false,
+    "public_page_intermittent_sdk_timeouts_preserved": true
+  }
 }
