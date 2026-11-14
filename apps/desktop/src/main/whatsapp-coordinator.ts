@@ -69,7 +69,7 @@ export class WhatsAppCoordinator {
       if (event.type === 'account') {
         const status = event.status === 'ready' ? 'connected' : ['disconnected', 'error'].includes(event.status) ? 'disconnected' : 'connecting';
         await this.options.invoke('_wa_set_account', { account_id: event.account_id, connection_epoch: event.connection_epoch, status });
-        this.options.notify({ event: 'whatsapp.host.changed', data: { status: event.status } });
+        this.options.notify({ event: 'whatsapp.host.changed', data: { status: event.status, ...(event.error_code ? { error_code: event.error_code } : {}), ...(event.http_status ? { http_status: event.http_status } : {}) } });
         if (status === 'connected') {
           const state = await this.options.invoke<{ pending_operations: { operation_id: string }[] }>('get_whatsapp_state');
           for (const operation of state.pending_operations) void this.reconcile(operation.operation_id).catch(() => this.error());

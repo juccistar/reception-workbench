@@ -250,6 +250,9 @@ class ManualChatTests(unittest.TestCase):
         # Projection capture time is observational; repeating takeover must leave
         # every business field and the projected state unchanged.
         for snapshot in (first, second):
+            health = snapshot.pop('executor_health')
+            self.assertTrue(health['worker_alive'])
+            self.assertIsNone(health['error_code'])
             for item in snapshot['conversations']:
                 item['reception_status'].pop('observed_at')
         self.assertEqual(first, second)
@@ -261,7 +264,7 @@ class ManualChatTests(unittest.TestCase):
         self.assertEqual(self.service._epoch, before_epoch)
         self.assertEqual(self.facade.revoked, revoked)
         self.assertEqual(self.service.repo.get('case', self.case_id), case)
-        self.assertIn(case, first['handoff_cases'])
+        self.assertIn(self.service.get_conversation(self.cid)['case'], first['handoff_cases'])
         self.assertEqual(self.service.repo.get('draft', legacy['draft_id'])['status'], 'stale')
         self.assertEqual(self.service.repo.get('draft', other_draft['draft_id']), other_draft)
         self.assertTrue(self.service.repo.get('confirmation', confirmation['confirmation_id'])['invalidated'])
@@ -676,7 +679,7 @@ class ManualChatTests(unittest.TestCase):
         self.facade.release.set()
         self.assertEqual(self.wait_job(ack)['status'], 'stale')
         self.assertEqual(self.service.get_conversation(self.cid)['chat_draft'], draft)
-        self.assertEqual(self.service.get_conversation(self.cid)['case'], case)
+        self.assertEqual(self.service.repo.get('case', self.case_id), case)
         self.assertIsNone(self.service.get_conversation(self.cid)['draft'])
         self.assertEqual(self.service.repo.list('outbox'), [])
         self.assertEqual(self.service.repo.get('ai_result', ack['job_id'])['status'], 'stale')

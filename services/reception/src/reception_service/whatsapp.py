@@ -119,7 +119,11 @@ class WhatsAppMixin:
     def set_whatsapp_reception(self, enabled, expected_account_id=None, expected_connection_epoch=None):
         if type(enabled) is not bool:
             raise ServiceError('invalid_params', '接待开关无效')
+        if enabled:
+            self._executor_health.require()
         with self._lock, self.repo.transaction():
+            if enabled:
+                self._executor_health.require()
             self._wa_expected_identity(expected_account_id, expected_connection_epoch)
             if enabled and (not self.account_verified or self._wa_status != 'connected' or self.mode == 'live' and self.checks['ai']['status'] != 'passed'):
                 raise ServiceError('checks_required', '请先连接账号并完成 AI 检查')
@@ -315,7 +319,8 @@ class WhatsAppMixin:
             if not self._wa_current(params):
                 raise ServiceError('cancelled', 'WhatsApp 来源已变化')
         self._ensure_identity(facade)
-        answer = facade.generate_whatsapp(params['context'], job_id, cancel_event=self._generation_cancel_event(job_id))
+        with self._job_phase(job_id, 'ai_elapsed_ms'):
+            answer = facade.generate_whatsapp(params['context'], job_id, cancel_event=self._generation_cancel_event(job_id))
         with self._lock, self.repo.transaction():
             if self._generation_cancel_event(job_id).is_set() or not self._wa_current(params):
                 raise ServiceError('cancelled', 'WhatsApp 来源已变化')
@@ -346,7 +351,9 @@ class WhatsAppMixin:
         return {'operation_id': op_id}
 
     def _wa_prepare_send(self, operation_id):
+        self._executor_health.require()
         with self._lock, self.repo.transaction():
+            self._executor_health.require()
             op = self.repo.get('wa_operation', _text(operation_id))
             if not op or op.get('seller_id') != self.seller_id or op.get('status') != 'prepared':
                 raise ServiceError('operation_unavailable', '发送操作不可重复提交')

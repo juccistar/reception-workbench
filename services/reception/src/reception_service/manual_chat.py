@@ -107,6 +107,7 @@ class ManualChatMixin:
                 if claimed['request'] != request:
                     raise ServiceError('request_conflict', '同一请求编号不能发送不同内容或版本')
                 return claimed['ack']
+            self._executor_health.require()
             if self._closing:
                 raise ServiceError('closing', '服务正在关闭')
             self._assert_conversation_resolved(cid)
@@ -148,7 +149,7 @@ class ManualChatMixin:
         return ack
 
     def _chat_authorized(self, operation, facade):
-        if self._closing or facade is not self.integrations:
+        if self._closing or self._executor_health.failed.is_set() or facade is not self.integrations:
             return False
         try:
             conversation = self._chat_owner(operation['conversation_id'])
@@ -234,6 +235,8 @@ class ManualChatMixin:
             self.repo.put('operation', operation_id, operation, history=True)
 
         def authorized():
+            if self._executor_health.failed.is_set():
+                return False
             with self._lock:
                 return self._chat_authorized(operation, bound_facade)
 

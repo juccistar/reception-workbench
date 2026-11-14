@@ -16,6 +16,7 @@ from .procurement import ProcurementMixin, merge_fact, invalidate_case_sources, 
 from .product_library import ProductLibraryMixin
 from .errors import ServiceError, safe_diagnostics, read_diagnostics
 from .execution import ExecutionMixin, BusinessQueue, AI_JOBS
+from .executor_health import ExecutorHealth
 from .integrations import build_integrations
 from .integrations.live import LiveIntegration, SNAPSHOT_ERROR_MESSAGES
 from .continuity import ContinuityMixin, text_hash
@@ -47,7 +48,7 @@ from .send_retry_policy import (decision as send_retry_decision, retry_message a
 
 SLOW = frozenset({'sync_messages', 'fill_history', 'generate_draft', 'check_connection', 'check_ai', 'refresh_company_profile',
                   'preview_send', 'confirm_send', 'send_chat', 'run_outbox', 'check_feishu', 'reconcile_operation', 'load_message_image'})
-FAST = frozenset({'get_snapshot', 'get_conversation', 'get_messages', 'get_message_image', 'get_requirement_media',
+FAST = frozenset({'get_snapshot', 'get_executor_health', 'get_conversation', 'get_messages', 'get_message_image', 'get_requirement_media',
                   'set_requirement_media_cover', 'set_product_image_source', 'load_requirement_media', 'get_context', 'list_jobs',
                   'list_outbox', 'save_draft', 'save_policy', 'list_builtin_policies', 'adopt_builtin_policy', 'save_settings', 'set_scope',
                   'set_reception', 'takeover', 'begin_manual_edit', 'save_chat_draft', 'prepare_send', 'inject_demo', 'mark_messages_read',
@@ -110,7 +111,7 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                 self._stop.set()
             if hasattr(self, '_generation_active'):
                 self._join_generation_tasks()
-            for name in ('_worker', '_monitor_thread', '_translation_worker'):
+            for name in ('_worker', '_monitor_thread', '_translation_worker', '_health_watchdog'):
                 thread = getattr(self, name, None)
                 if thread and thread.ident is not None and thread is not threading.current_thread():
                     thread.join()
@@ -136,6 +137,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
         self._epoch = 0
         self._queue = BusinessQueue()
         self._init_execution()
+        self._executor_health = ExecutorHealth(self)
+        self._queue.executor_guard = self._executor_health.require
         self._chat_facades = {}
         self._running = False
         self._auto_send = False
@@ -176,8 +179,10 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
             self._seed()
         self._hydrate_demo_messages()
         self._init_translation()
-        self._worker = threading.Thread(target=self._work_loop, name='reception-external-worker', daemon=True)
+        self._worker = threading.Thread(target=self._executor_health.run, args=(self._work_loop, 'worker'), name='reception-external-worker', daemon=True)
         self._worker.start()
+        self._health_watchdog = threading.Thread(target=self._executor_health.run, args=(self._executor_health.watch, 'health'), name='reception-health', daemon=True)
+        self._health_watchdog.start()
         self._start_message_monitor()
 
     def _emit(self, event, data):
@@ -359,6 +364,9 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
         self._changed()
         return {'message': '公司名称已更新'}
 
+    def get_executor_health(self):
+        return self._executor_health.snapshot()
+
     def get_snapshot(self):
         from .product_catalog import project_case
         with self._lock:
@@ -375,6 +383,7 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                     'handoff_cases': sorted([project_case(self.repo, case) for case in self.repo.list('case') if case['state'] == 'waiting_quote'],
                                             key=lambda case: case['updated_at'], reverse=True),
                     'policies': [policy_library.normalize_policy(p) for p in self.repo.list('policy')], 'jobs': self.list_jobs(), 'outbox': self.list_outbox(),
+                    'executor_health': self._executor_health.snapshot(),
                     'settings': copy.deepcopy(self.settings), 'message_sync': self._message_sync_snapshot(),
                     'translation': self.get_translation_info()}
 
@@ -989,7 +998,9 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
             # Renderers may send only enabled=False, whose other flags default False.
             self._pause()
             return self.get_snapshot()
+        self._executor_health.require()
         with self._lock:
+            self._executor_health.require()
             if self.mode == 'live':
                 if not self.account_verified or self.checks['messages']['status'] != 'passed':
                     raise ServiceError('connection_required', '请先完成只读连接检查')
@@ -1275,10 +1286,11 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
         return self.get_snapshot()
 
     def _enqueue(self, kind, params, *, automatic=False, read_reason=None):
+        if kind == 'send_chat':
+            return self._enqueue_chat(params)  # Existing exact requests remain readable.
+        self._executor_health.require()
         if read_reason is not None and (kind != 'sync_messages' or read_reason not in ('activity', 'history', 'audit', 'selection')):
             raise ServiceError('invalid_params', '读取任务来源无效')
-        if kind == 'send_chat':
-            return self._enqueue_chat(params)
         if kind == 'continuity_send' and automatic:
             return self._queue_continuity_plan(params)
         if kind == 'load_message_image':
@@ -1425,8 +1437,30 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                     self._chat_facades.pop(operation['operation_id'], None)
         self._job_update(job_id, status='cancelled', completed_at=now_ms(), stage='cancelled', message='服务已关闭；排队任务未执行')
 
+    def _preserve_dispatch_failure(self, item):
+        job_id, kind, params = item[:3]
+        if job_id in self._generation_active:
+            return  # The cancelled AI thread still owns its eventual completion.
+        with self._lock, self.repo.transaction():
+            job = self.repo.get('job', job_id)
+            if not job or job.get('status') not in ('queued', 'running'):
+                return
+            sending = kind in ('send_chat', 'automatic_send', 'continuity_send', 'confirm_send')
+            for operation in self.repo.list('operation') if sending else ():
+                if ((operation.get('job_id') == job_id or operation.get('operation_id') == params.get('operation_id'))
+                        and operation.get('status') in ('prepared', 'sending')):
+                    operation.update(status='unknown', submission_started=True, updated_at=now_ms(),
+                                     message='执行状态异常，保留原发送核查')
+                    self.repo.put('operation', operation['operation_id'], operation, history=True)
+                    if operation.get('purpose') == 'chat':
+                        self._sync_chat_draft_status(operation)
+            self._job_update(job_id, status='unknown' if sending else 'failed', stage='executor',
+                             completed_at=now_ms(), message='执行状态异常，未自动重新提交' if sending else '后台执行异常，任务已停止')
+
     def _run_queued(self, item, *, facade=None):
         job_id, kind, params, epoch, automatic = item
+        previous_job = getattr(self._execution_local, 'job_id', None)
+        self._execution_local.job_id = job_id
         measured_at = None
         try:
             if self._stop.is_set():
@@ -1498,7 +1532,23 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
             self._job_update(job_id, status='cancelled' if error.code == 'cancelled' else 'failed', stage=error.stage,
                              completed_at=now_ms(), message=str(error), error={'code': error.code, 'message': str(error)},
                              diagnostics=error.diagnostics)
-        except Exception:
+        except Exception as unexpected:
+            self._executor_health.log('task', job_id, unexpected)
+            if kind in ('send_chat', 'automatic_send', 'continuity_send', 'confirm_send'):
+                # An unexpected failure cannot establish whether the native
+                # submission crossed its boundary. Keep the original intent.
+                self._executor_health.fail('failed', 'send_state_unknown')
+                with self._lock, self.repo.transaction():
+                    for operation in self.repo.list('operation'):
+                        if (operation.get('job_id') == job_id or operation.get('operation_id') == params.get('operation_id')) and operation.get('status') in ('prepared', 'sending'):
+                            operation.update(status='unknown', submission_started=True, updated_at=now_ms(),
+                                             message='发送结果未知，保留原操作核查')
+                            self.repo.put('operation', operation['operation_id'], operation, history=True)
+                            if operation.get('purpose') == 'chat':
+                                self._sync_chat_draft_status(operation)
+                    self._job_update(job_id, status='unknown', completed_at=now_ms(), stage='executor',
+                                     message='发送结果未知，保留原操作核查')
+                return
             if kind == 'product_lookup':
                 self._finish_product_claim(job_id, 'task_failed')
             if kind == 'generate_draft':
@@ -1532,7 +1582,9 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                     with self._lock:
                         if job_id not in self._generation_active:
                             self._generation_events.pop(job_id, None)
-                self._queue.task_done()
+                self._queue.complete(item)
+                self._executor_health.finish_job(job_id)
+                self._execution_local.job_id = previous_job
                 self._changed()
 
     def _defer_generation_retry(self, job_id, code, *, replan=False):
@@ -1579,41 +1631,93 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                     'automatic_send', 'continuity_send', 'reconcile_operation', 'check_ai', 'preview_send', 'generate_draft')
             item = self._queue.take_ready(eligible, self._work_priority)
         if item is not None:
-            self._dispatch_work(item)
+            self._dispatch_owned(item)
 
     def _work_loop(self):
+        health = self._executor_health
         next_schedule = 0.0
-        while not self._stop.is_set():
-            if time.monotonic() >= next_schedule:
-                self._schedule()
-                next_schedule = time.monotonic() + .15
-            item = self._take_ready_work()
-            if item is None:
-                self._stop.wait(.03)
-                continue
-            self._business_enter()
-            try:
-                self._dispatch_work(item)
-                if item[1] == 'load_message_image' and not self._stop.is_set():
-                    self._yield_to_ready_work(replies=True)
-                if self.mode == 'live' and item[1] == 'sync_messages' and not self._stop.is_set():
-                    self._schedule()
-                    self._yield_to_ready_work(replies=True)
-            finally:
-                self._business_leave()
-        # Only jobs still in this queue are proven never to have crossed the native boundary.
-        while True:
-            try:
-                item = self._queue.get_nowait()
-            except queue.Empty:
-                break
-            try:
-                self._cancel_queued(item)
-            finally:
-                if item[1] in AI_JOBS:
-                    with self._lock:
-                        self._generation_events.pop(item[0], None)
-                self._queue.task_done()
+        schedule_failures = 0
+        stage, item = 'idle', None
+        try:
+            while not self._stop.is_set() and not health.failed.is_set():
+                if time.monotonic() >= next_schedule:
+                    stage = 'schedule'
+                    health.update('running', stage)
+                    try:
+                        self._schedule()
+                    except Exception as error:
+                        health.log(stage, None, error)
+                        schedule_failures += 1
+                        if schedule_failures >= 3:
+                            health.fail('failed', 'schedule_failed')
+                            break
+                        health.update('recovering', stage, code='schedule_failed')
+                        health.revoke()
+                        self._stop.wait((1, 5)[schedule_failures - 1])
+                        continue
+                    schedule_failures = 0
+                    next_schedule = time.monotonic() + .15
+                stage = 'queue'
+                health.update('running', stage)
+                item = self._take_ready_work()
+                if item is None:
+                    if self._generation_active:
+                        active_job = next(iter(self._generation_active.copy()), None)
+                        health.update('waiting_external', 'generation', active_job)
+                    else:
+                        health.update('idle', 'idle')
+                    self._stop.wait(.03)
+                    continue
+                stage = 'dispatch'
+                health.update('running', stage, item[0])
+                self._business_enter()
+                try:
+                    self._dispatch_owned(item)
+                    if item[1] == 'load_message_image' and not self._stop.is_set():
+                        self._yield_to_ready_work(replies=True)
+                    if self.mode == 'live' and item[1] == 'sync_messages' and not self._stop.is_set():
+                        self._yield_to_ready_work(replies=True)
+                finally:
+                    self._business_leave()
+                item = None
+        except BaseException as error:
+            # Dispatch or queue ownership may already have crossed a native or
+            # task_done boundary. Leave durable state for the existing recovery.
+            health.log(stage, item[0] if item else None, error)
+            health.fail('failed', 'executor_fault')
+            if item is not None:
+                try:
+                    self._preserve_dispatch_failure(item)
+                except Exception as cleanup_error:
+                    health.log('cleanup', item[0], cleanup_error)
+        finally:
+            if item is not None and item[0] not in self._generation_active:
+                self._queue.complete(item)
+                health.finish_job(item[0])
+            # A failed consumer still owns cleanup of entries that remain in the
+            # queue: these exact dequeues have never crossed a native boundary.
+            while True:
+                try:
+                    pending = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                except BaseException as error:
+                    health.log('cleanup', None, error)
+                    health.fail('failed', 'cleanup_failed')
+                    break
+                try:
+                    self._cancel_queued(pending)
+                except BaseException as error:
+                    health.log('cleanup', pending[0], error)
+                    health.fail('failed', 'cleanup_failed')
+                finally:
+                    if pending[1] in AI_JOBS:
+                        with self._lock:
+                            self._generation_events.pop(pending[0], None)
+                    self._queue.complete(pending)
+                    health.finish_job(pending[0])
+            if not health.failed.is_set():
+                health.update('stopped', 'stopped')
 
     def _schedule(self):
         requests = []
@@ -1787,7 +1891,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
         if not self.account_verified:
             raise ServiceError('identity_required', '请先运行只读连接检查核验卖家身份', stage='identity')
         if self.mode == 'live':
-            actual = facade.resolve_identity(self.seller_id)
+            with self._executor_health.phase(getattr(self._execution_local, 'job_id', None), 'identity_ms'):
+                actual = facade.resolve_identity(self.seller_id)
             if actual != self.seller_id:
                 self._pause()
                 raise ServiceError('seller_mismatch', '当前平台卖家身份已变化', stage='identity')
@@ -1805,7 +1910,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
         self._set_check('runtime', job_id, 'demo' if simulated else 'passed',
                         '本地演示运行环境' if simulated else '运行环境就绪', simulated)
         try:
-            seller = facade.resolve_identity(self.expected_seller_id or self.seller_id)
+            with self._executor_health.phase(job_id, 'identity_ms'):
+                seller = facade.resolve_identity(self.expected_seller_id or self.seller_id)
             if epoch != self._epoch or self._closing:
                 raise ServiceError('cancelled', '身份检查期间授权或设置已变化')
             if self.mode == 'live':
@@ -1849,7 +1955,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
             bootstrap = params.get('_bootstrap') is True and self.mode == 'live'
             infos, seen, cursor = [], set(), None
             for _ in range(HISTORY_PAGE_LIMIT):
-                page = facade.read_recent_conversations(self.seller_id, before_ms=cursor, count=20 if bootstrap else 100)
+                with self._executor_health.phase(job_id, 'message_read_ms'):
+                    page = facade.read_recent_conversations(self.seller_id, before_ms=cursor, count=20 if bootstrap else 100)
                 with self._lock:
                     self._require_current_read(token)
                 more, next_cursor = self._history_cursor(page, cursor)
@@ -1911,7 +2018,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
             for _ in range(SYNC_PAGE_LIMIT):
                 if self._stop.is_set():
                     raise ServiceError('cancelled', '服务已关闭')
-                page = facade.read_message_page(self.seller_id, info['buyer_id'], cid, before_ms=cursor, count=100)
+                with self._executor_health.phase(job_id, 'message_read_ms'):
+                    page = facade.read_message_page(self.seller_id, info['buyer_id'], cid, before_ms=cursor, count=100)
                 more, next_cursor = self._history_cursor(page, cursor)
                 messages = page.get('messages', [])
                 stamps = [m.get('timestamp_ms') for m in messages if type(m.get('timestamp_ms')) is int]
@@ -1990,7 +2098,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
             target_activity = self.repo.get('message_activity', cid, {})
         pages, latest_read, changed = 0, None, False
         while not self._stop.is_set():
-            page = facade.read_message_page(self.seller_id, conversation['buyer_id'], cid, before_ms=cursor, count=100)
+            with self._executor_health.phase(job_id, 'message_read_ms'):
+                page = facade.read_message_page(self.seller_id, conversation['buyer_id'], cid, before_ms=cursor, count=100)
             more, next_cursor = self._history_cursor(page, cursor)
             messages = page.get('messages', [])
             stamps = [message['timestamp_ms'] for message in messages if type(message.get('timestamp_ms')) is int]
@@ -2675,6 +2784,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
         self._pause(closing=True)
         self._stop_translation()
         self._stop_requirement_media()
+        if threading.current_thread() is not self._health_watchdog:
+            self._health_watchdog.join()
         if self._monitor_thread and threading.current_thread() != self._monitor_thread:
             self._monitor_thread.join()
         if threading.current_thread() != self._worker:

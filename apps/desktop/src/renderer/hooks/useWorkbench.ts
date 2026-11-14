@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
-import type { ApiMethod, ChatSendParams, ConversationDetail, Draft, Job, JobAck, Outbox, Preferences, ReceptionBridge, ServiceEvent, Snapshot, Supplement, SupplementAttachment, SupplementAttachmentBatch, SupplementUpload } from '../../shared/api';
+import type { ApiMethod, ChatSendParams, ConversationDetail, Draft, ExecutorHealth, Job, JobAck, Outbox, Preferences, ReceptionBridge, ServiceEvent, Snapshot, Supplement, SupplementAttachment, SupplementAttachmentBatch, SupplementUpload } from '../../shared/api';
+import { executorHealth } from '../executorHealth';
 
 export type Page = 'home' | 'reception' | 'whatsapp' | 'handoff' | 'customers' | 'policies' | 'settings' | 'activity' | 'products' | 'suppliers' | 'procurement';
 type SendStatus = Job['status'] | 'requesting' | 'retry' | 'accepted' | 'rejected';
@@ -40,6 +41,7 @@ const createEditor = (draft: Draft | null): EditorState => ({ body: draft?.statu
 const mutationId = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const checksReady = (snapshot: Snapshot | null, keys: (keyof Snapshot['checks'])[]) => !!snapshot && keys.every(key => snapshot.app.mode === 'demo' ? ['passed', 'demo'].includes(snapshot.checks[key].status) : snapshot.checks[key].status === 'passed');
 const generationBlocker = (snapshot: Snapshot | null, detail: ConversationDetail | null): string => {
+  if (!executorHealth(snapshot).ready) return `${executorHealth(snapshot).message}，正文仍可编辑保存。`;
   if (!detail) return '请先选择客户。';
   if (!snapshot || (snapshot.app.mode !== 'demo' && !snapshot.app.account_verified)) return '请先核验当前商家身份。';
   if (!checksReady(snapshot, ['ai'])) {
@@ -52,7 +54,22 @@ const generationBlocker = (snapshot: Snapshot | null, detail: ConversationDetail
 };
 
 export function useWorkbench(bridge: ReceptionBridge | undefined) {
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [baseSnapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [healthProjection, setHealthProjection] = useState<ExecutorHealth | null>(null);
+  const healthRef = useRef<ExecutorHealth | null>(null);
+  const snapshot = baseSnapshot && healthProjection ? { ...baseSnapshot, executor_health: healthProjection } : baseSnapshot;
+  const observeHealth = useCallback((health: ExecutorHealth | null | undefined) => {
+    if (!health || !['idle', 'running', 'waiting_external', 'recovering', 'stalled', 'stopped', 'failed'].includes(health.state) || typeof health.worker_alive !== 'boolean' || !Number.isFinite(health.observed_at_ms) || (healthRef.current && health.observed_at_ms < healthRef.current.observed_at_ms)) return;
+    const previous = healthRef.current;
+    const severity = (value: ExecutorHealth) => !value.worker_alive || ['failed', 'stalled', 'stopped'].includes(value.state) ? 2 : value.state === 'recovering' ? 1 : 0;
+    if (previous && health.observed_at_ms === previous.observed_at_ms && severity(health) < severity(previous)) return;
+    healthRef.current = health;
+    setHealthProjection(health);
+  }, []);
+  const withLatestHealth = useCallback((value: Snapshot): Snapshot => {
+    observeHealth(value.executor_health);
+    return healthRef.current ? { ...value, executor_health: healthRef.current } : value;
+  }, [observeHealth]);
   const [connected, setConnected] = useState(false);
   const [closing, setClosing] = useState(false);
   const closingRef = useRef(false);
@@ -171,8 +188,9 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
       setLoading(false); return null;
     }
     try {
-      const result = await bridge.invoke<Snapshot>('get_snapshot');
+      const received = await bridge.invoke<Snapshot>('get_snapshot');
       if (!mounted.current || sequence !== snapshotSequence.current) return null;
+      const result = withLatestHealth(received);
       connectedRef.current = true; setConnected(true);
       setSnapshot(result); snapshotRef.current = result;
       for (const item of [...result.conversations, ...(result.handoff_cases ?? [])]) if (item.case_id) caseOwners.current.set(item.case_id, item.conversation_id);
@@ -182,7 +200,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
       if (sequence === snapshotSequence.current && mounted.current) { connectedRef.current = false; setConnected(false); setError(errorText(failure)); }
       return null;
     } finally { if (sequence === snapshotSequence.current && mounted.current) setLoading(false); }
-  }, [bridge, updateJobs]);
+  }, [bridge, updateJobs, withLatestHealth]);
 
   const loadDetail = useCallback(async (conversationId: string, caseId = '', quiet = false, refreshEmpty = false) => {
     if (!bridge || !conversationId || closingRef.current) return false;
@@ -214,9 +232,10 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
 
   useEffect(() => {
     mounted.current = true; void refreshSnapshot();
+    if (bridge) void bridge.invoke<ExecutorHealth>('get_executor_health').then(health => { if (mounted.current) observeHealth(health); }).catch(() => {});
     if (bridge) void bridge.getPreferences().then(result => { if (mounted.current) setPreferences({ ...defaults, ...result }); }).catch(() => { if (mounted.current) setNotice('布局偏好读取失败，已使用默认布局。'); });
     return () => { mounted.current = false; if (refreshTimer.current) clearTimeout(refreshTimer.current); };
-  }, [bridge, refreshSnapshot]);
+  }, [bridge, refreshSnapshot, observeHealth]);
 
   useEffect(() => {
     if (!selection.conversationId && snapshot?.conversations.length) {
@@ -236,6 +255,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
         setLoading(false); setDetailLoading(false); setError(''); setNotice(''); return;
       }
       if (closingRef.current) return;
+      if (event.event === 'executor.health') { observeHealth(event.data as ExecutorHealth); return; }
       if (event.event === 'translation.settings_changed') { void refreshSnapshot(); return; }
       if (event.event === 'job.updated' && (event.data as Job)?.kind === 'translation') return;
       if (event.event === 'state.changed' && (event.data as { reason?: string } | null)?.reason === 'translations_updated') return;
@@ -260,7 +280,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
         }, 70);
       }
     });
-  }, [bridge, loadDetail, refreshSnapshot, updateJobs]);
+  }, [bridge, loadDetail, refreshSnapshot, updateJobs, observeHealth]);
 
   const beginManualEdit = useCallback((conversationId: string): Promise<boolean> => {
     const entry = editors.current.get(conversationId);
@@ -480,6 +500,8 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   }, []);
 
   const runJob = useCallback(async (method: ApiMethod, params: Record<string, unknown> = {}) => action(`${method}:${String(method === 'generate_manual_suggestion' ? params.conversation_id ?? '' : params.case_id ?? params.conversation_id ?? '')}`, async () => {
+    const health = executorHealth(snapshotRef.current);
+    if (!health.ready) throw new Error(`${health.message}，此任务暂未就绪。`);
     const ack = await invoke<JobAck & { cancelled?: boolean }>(method, params);
     if (ack?.cancelled) { setNotice('已取消本次操作。'); return null; }
     if (!ack?.job_id) throw new Error('服务未返回任务编号，不能确认任务已创建。');
@@ -513,16 +535,17 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
         const entry = editors.current.get(String(params.conversation_id));
         if (entry) { entry.manualState = params.enabled === false ? 'idle' : 'ready'; entry.manualError = ''; }
       }
-      if (result?.app && latestIntent) { setSnapshot(result); snapshotRef.current = result; updateJobs(result.jobs); }
+      if (result?.app && latestIntent) { const merged = withLatestHealth(result); setSnapshot(merged); snapshotRef.current = merged; updateJobs(merged.jobs); }
       else await refreshSnapshot();
       const current = selectionRef.current;
       if (current.conversationId) await loadDetail(current.conversationId, current.caseId, true);
       if (message && latestIntent) setNotice(message);
       return result;
     });
-  }, [action, invoke, loadDetail, refreshSnapshot, updateJobs]);
+  }, [action, invoke, loadDetail, refreshSnapshot, updateJobs, withLatestHealth]);
 
   const reconcileOperation = useCallback(async (operationId: string) => action(`reconcile:${operationId}`, async () => {
+    if (!executorHealth(snapshotRef.current).ready) throw new Error('后台执行暂不可用，原操作核查需要后台任务；回执已保留，请恢复后核查。');
     const result = await invoke<{ status?: string; message?: string; job_id?: string }>('reconcile_operation', { operation_id: operationId });
     setNotice(result.job_id ? '原操作核查已排队，不会重新发送；完成后更新回执。' : result.message || '原操作核查已完成，请查看回执。');
     await refreshSnapshot();
@@ -605,6 +628,8 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     if (!entry) return '请先选择客户。';
     const fence = conversationFence(conversationId, entry);
     if (fence) return fence;
+    const health = executorHealth(snapshotRef.current);
+    if (!health.ready) return `${health.message}，暂不能发送，正文已保留。`;
     if (entry.manualState === 'pending') return '正在暂停此客户自动接待，确认成功后才能发送。';
     if (entry.manualState === 'error') return '尚未确认暂停此客户自动接待，请先重试。';
     if (sendUnsettled(entry.send) && entry.send?.status !== 'retry') return '发送请求正在处理，请等待回执。';
@@ -662,16 +687,17 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
 
   const identityReady = !!snapshot && (snapshot.app.mode === 'demo' || snapshot.app.account_verified);
   const aiReady = checksReady(snapshot, ['ai']);
-  const aiReceptionReady = identityReady && checksReady(snapshot, ['identity', 'messages', 'ai']);
+  const health = executorHealth(snapshot);
+  const aiReceptionReady = health.ready && identityReady && checksReady(snapshot, ['identity', 'messages', 'ai']);
   const sendIssue = chatBlocker(selection.conversationId, editor);
   const generationIssue = generationBlocker(snapshot, detail);
 
   return { bridge, snapshot, connected, closing, loading, error, notice, setError, setNotice, page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, historyRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
-    aiReady, aiReceptionReady, sendIssue, generationIssue, reconcileOperation,
+    aiReady, aiReceptionReady, executorReady: health.ready, executorMessage: health.message, sendIssue, generationIssue, reconcileOperation,
     unknownOperations: snapshot?.outbox.filter(item => isSendOperation(item) && item.status === 'unknown' && (item.conversation_id === selection.conversationId || caseOwners.current.get(item.case_id) === selection.conversationId)) ?? [],
     canSave: connected && !closing && !!editor?.dirty && !sendUnsettled(editor.send),
     canSend: connected && !closing && !sendIssue,
-    canPreview: connected && !closing && !!detail?.draft,
+    canPreview: connected && !closing && health.ready && !!detail?.draft,
     canGenerate: connected && !closing && !!detail && !generationIssue,
     busy: (kind: string, caseId?: string) => (kind === 'generate_draft' && generationRequests.some(item => !caseId || item.case_id === caseId)) || pending.some(key => caseId ? key === `${kind}:${caseId}` : key === kind || key.startsWith(`${kind}:`)) || jobs.some(job => job.kind === kind && isActive(job) && (!caseId || job.case_id === caseId)),
   };

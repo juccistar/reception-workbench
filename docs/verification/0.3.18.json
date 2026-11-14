@@ -1,0 +1,83 @@
+{
+  "version": "0.3.18",
+  "date": "2026-11-14",
+  "status": "source-built-targeted-tested-public-sdk-blocked",
+  "public_latest": "0.3.17",
+  "architecture": "single-electron-webcontentsview-shared-with-sdk",
+  "targeted_tests": {
+    "backend": {
+      "test_execution_0310.py": 30,
+      "execution_run_scope": "29 cases passed together; the additional timestamp ordering case passed separately after the atomic capture fix",
+      "test_whatsapp_0317.py": 14,
+      "test_message_monitor.py": 50,
+      "test_manual_chat.py": 36,
+      "test_native_automatic_chat.py": 12,
+      "distinct_cases": 142,
+      "status": "passed"
+    },
+    "desktop": {
+      "whatsapp_connection": {
+        "cases": 16,
+        "status": "passed"
+      },
+      "whatsapp_transport": 3,
+      "whatsapp_host_lifecycle": 2,
+      "whatsapp_coordinator": 6,
+      "whatsapp_ledger": 1,
+      "renderer_workbench_and_whatsapp_page": 104,
+      "product_pages_0313": 11,
+      "distinct_cases": 143,
+      "status": "passed"
+    },
+    "tools": {
+      "whatsapp_runtime_closure": 1,
+      "status": "passed"
+    },
+    "typescript": "passed",
+    "full_suite_run": false
+  },
+  "whatsapp_public_page": {
+    "status": "blocked-sdk-bootstrap-not-verified",
+    "formal_chinese_application_name": true,
+    "http_400_repair": "HTTP 200 with ASCII view/session user agents and actual browser versions",
+    "same_visible_dom": true,
+    "exposed_function_and_preload": true,
+    "runtime_environment_consistency_checks": "passed",
+    "remote_business_bridge": false,
+    "sdk_qr_event": false,
+    "source_report": "artifacts/verification/whatsapp-native-source-0318-h/report.json",
+    "earlier_native_qr_visible_without_sdk_qr_event": "artifacts/verification/whatsapp-native-source-0318-e/report.json",
+    "no_cdp_reference": {
+      "report": "artifacts/verification/whatsapp-native-reference-0318-a/report.json",
+      "http_status": 200,
+      "qr_ready": false,
+      "uses_puppeteer_or_sdk": false
+    },
+    "limitation": "Public page application modules did not reliably become ready; the same condition occurred without CDP/SDK. The original HTTP 400 is resolved, but this does not establish successful SDK startup or identify the remaining public-page initialization cause.",
+    "real_account_login": false,
+    "real_account_reconnection": false,
+    "real_ai_calls": 0,
+    "real_customer_sends": 0,
+    "qr_or_credentials_recorded": false,
+    "experimental_automation_patches_adopted": false,
+    "sdk_dependency_versions_changed": false
+  },
+  "desktop_build": {
+    "status": "passed",
+    "output": "artifacts/app"
+  },
+  "actual_window": {
+    "status": "pending",
+    "synthetic_only": true
+  },
+  "packaging": {
+    "status": "not-run"
+  },
+  "delivery": {
+    "public_release_created": false,
+    "installed": false,
+    "default_entry_promoted": false,
+    "production_data_accessed_or_migrated": false,
+    "private_source_pushed": false
+  }
+}

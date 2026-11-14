@@ -515,7 +515,7 @@ describe('conversation chat and automatic reception', () => {
     await screen.findByRole('region', { name: '演示模式连接指引' });
     expect(screen.queryByText('服务未连接')).not.toBeInTheDocument();
     expect(screen.getAllByText('自动接待已暂停').length).toBeGreaterThan(0);
-    expect(invoke.mock.calls.every(([method]) => ['get_snapshot', 'get_conversation', 'get_requirement_media'].includes(method))).toBe(true);
+    expect(invoke.mock.calls.every(([method]) => ['get_snapshot', 'get_executor_health', 'get_conversation', 'get_requirement_media'].includes(method))).toBe(true);
   });
   it('sends consecutive messages, shows queued versus accepted and clears each successful body', async () => {
     const bridge = new FakeBridge(); bridge.details.emma.chat_draft = null;
@@ -1295,4 +1295,49 @@ describe('0.3.16 conversation controls', () => {
     expect(document.querySelector('.supplement-scroll + .supplement-toolbar')).not.toBeNull();
   });
 
+});
+
+it('shows executor failure without losing editing or allowing queued sends and checks', async () => {
+  const bridge = new FakeBridge();
+  bridge.snapshot.reception.running = true;
+  bridge.snapshot.executor_health = { state: 'failed', worker_alive: false, stage: 'dispatch', job_id: null, last_progress_at_ms: 1, observed_at_ms: 2, queue_depth: 1, error_code: 'failed' };
+  await openApp(bridge);
+  expect(screen.getAllByText('后台执行异常，自动发送已暂停').length).toBeGreaterThan(0);
+  expect(sendButton()).toBeDisabled();
+  expect(screen.getByRole('button', { name: /润色当前回复/ })).toBeDisabled();
+  fireEvent.change(textarea(), { target: { value: '保留的正文' } });
+  await waitFor(() => expect(calls(bridge, 'save_chat_draft').length).toBeGreaterThan(0));
+  expect(textarea()).toHaveValue('保留的正文');
+  fireEvent.click(screen.getByRole('button', { name: '连接与设置' }));
+  expect(await screen.findByRole('button', { name: '暂停并检查 AI' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '授权并开始自动接待' })).toBeDisabled();
+});
+
+it('treats long external waits as healthy and recovery as temporarily unavailable', async () => {
+  const { executorHealth } = await import('../src/renderer/executorHealth');
+  const bridge = new FakeBridge();
+  const health = { state: 'waiting_external' as const, worker_alive: true, stage: 'ai', job_id: 'job', last_progress_at_ms: 1, observed_at_ms: 999999999, queue_depth: 0, error_code: null };
+  bridge.snapshot.executor_health = health;
+  expect(executorHealth(bridge.snapshot).ready).toBe(true);
+  bridge.snapshot.executor_health = { ...health, state: 'idle' };
+  expect(executorHealth(bridge.snapshot).ready).toBe(true);
+  bridge.snapshot.executor_health = { ...health, state: 'recovering' };
+  expect(executorHealth(bridge.snapshot)).toEqual({ ready: false, message: '后台正在恢复，暂不能启动新任务或授权自动发送' });
+});
+
+it.each([10, 20])('keeps independent failure visible over a delayed healthy snapshot observed at %i', async observed => {
+  const bridge = new FakeBridge(); bridge.snapshot.reception.running = true;
+  const initial = { state: 'idle' as const, worker_alive: true, stage: 'idle', job_id: null, last_progress_at_ms: 1, observed_at_ms: observed, queue_depth: 0, error_code: null };
+  bridge.snapshot.executor_health = initial;
+  await openApp(bridge);
+  const blocked = deferred<Snapshot>();
+  const original = bridge.invoke.bind(bridge);
+  bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => method === 'get_snapshot' ? await blocked.promise as T : original<T>(method, params);
+  fireEvent.click(screen.getByRole('button', { name: '刷新本地工作区' }));
+  act(() => bridge.emit({ event: 'executor.health', data: { ...initial, state: 'failed', worker_alive: false, observed_at_ms: 20 } }));
+  expect((await screen.findAllByText('后台执行异常，自动发送已暂停')).length).toBeGreaterThan(0);
+  expect(sendButton()).toBeDisabled();
+  await act(async () => blocked.resolve(clone(bridge.snapshot)));
+  expect(screen.getAllByText('后台执行异常，自动发送已暂停').length).toBeGreaterThan(0);
+  expect(sendButton()).toBeDisabled();
 });

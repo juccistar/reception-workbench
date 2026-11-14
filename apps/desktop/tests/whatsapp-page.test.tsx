@@ -63,3 +63,26 @@ it('does not keep a background preview after choosing a different customer', asy
   await act(async () => resolve({ wa_summary: '旧客户摘要' }));
   expect(screen.queryByText('旧客户摘要')).not.toBeInTheDocument();
 });
+
+it('shows restricted HTTP errors and never displays arbitrary exception text', async () => {
+  const { model, bridge } = setup();
+  vi.mocked(bridge.getWhatsAppHostInfo!).mockResolvedValue({ status: 'error', account_id: '', connection_epoch: '', error_code: 'http_error', http_status: 400 });
+  bridge.connectWhatsApp = vi.fn().mockRejectedValue(new Error('secret raw diagnostic'));
+  render(<WhatsAppPage model={model} bridge={bridge} />);
+  expect(await screen.findByText('登录页请求失败（HTTP 400）')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '连接 WhatsApp' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('操作未完成');
+  expect(screen.queryByText(/secret raw diagnostic/)).not.toBeInTheDocument();
+});
+
+it('shows QR waiting and blocks new authorization during recovery while preserving receipt checks', async () => {
+  const { model, bridge, state, invoke } = setup();
+  model.snapshot!.executor_health = { state: 'recovering', worker_alive: true, stage: 'dispatch', job_id: null, last_progress_at_ms: 1, observed_at_ms: 2, queue_depth: 0, error_code: null };
+  state.pending_operations = [{ operation_id: 'original', chat_id: 'synthetic@lid', status: 'unknown' }];
+  vi.mocked(bridge.getWhatsAppHostInfo!).mockResolvedValue({ status: 'qr', account_id: '', connection_epoch: '' });
+  render(<WhatsAppPage model={model} bridge={bridge} />);
+  expect(await screen.findByText('请在原始页面扫码')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '开启全部单聊接待' })).toBeDisabled();
+  fireEvent.click(await screen.findByRole('button', { name: '核查 合成单聊客户 的回执' }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('reconcile_whatsapp_operation', { operation_id: 'original' }));
+});

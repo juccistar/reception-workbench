@@ -279,6 +279,296 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(calls, [1])
         self.assertEqual(service._queue.unfinished_tasks, 0)
 
+    def test_scheduler_fault_recovers_on_same_consumer_and_consumes_job(self):
+        service = self.service
+        worker = service._worker
+        service._auto_send = True
+        service._wa_enabled = True
+        calls = []
+        def schedule():
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError('private scheduler text')
+        with patch.object(service, '_schedule', side_effect=schedule):
+            deadline = time.monotonic() + 3
+            while len(calls) < 2 and time.monotonic() < deadline:
+                threading.Event().wait(.02)
+            self.assertGreaterEqual(len(calls), 2)
+            result = service._enqueue('sync_messages', {'conversation_id': self.cid})
+            self.assertEqual(self.wait_job(result['job_id'])['status'], 'succeeded')
+            self.assertIs(service._worker, worker)
+            self.assertEqual(service._queue.unfinished_tasks, 0)
+            self.assertFalse(service._executor_health.failed.is_set())
+            self.assertFalse(service._auto_send)
+            self.assertFalse(service._wa_enabled)
+
+    def test_queue_fault_revokes_and_rejects_new_work(self):
+        service = self.service
+        service._auto_send = True
+        service._wa_enabled = True
+        epoch = service._epoch
+        event = service._generation_cancel_event('job_synthetic')
+        with patch.object(service, '_take_ready_work', side_effect=RuntimeError('secret text')):
+            self.assertTrue(service._executor_health.failed.wait(2))
+        self.assertFalse(service._auto_send)
+        self.assertFalse(service._wa_enabled)
+        self.assertGreater(service._epoch, epoch)
+        self.assertTrue(event.is_set())
+        self.assertEqual(service._executor_health.snapshot()['state'], 'failed')
+        with self.assertRaises(ServiceError) as error:
+            service._enqueue('sync_messages', {'conversation_id': self.cid})
+        self.assertEqual(error.exception.code, 'executor_unavailable')
+        self.assertTrue(service.get_snapshot()['conversations'])
+
+    def test_delayed_health_snapshot_timestamp_cannot_postdate_a_newer_failure(self):
+        service = self.service
+        entered, release = threading.Event(), threading.Event()
+        snapshots, events = [], []
+        original = service._worker.is_alive
+        def delayed_alive():
+            if threading.current_thread().name == 'snapshot-probe':
+                entered.set()
+                release.wait(2)
+                return True
+            return original()
+        service._emit_callback = lambda event: events.append(event)
+        probe = threading.Thread(target=lambda: snapshots.append(service.get_executor_health()), name='snapshot-probe')
+        with patch.object(service._worker, 'is_alive', side_effect=delayed_alive):
+            probe.start()
+            try:
+                self.assertTrue(entered.wait(1))
+                service._executor_health.fail('failed', 'executor_fault')
+                failure = next(e['data'] for e in events if e['event'] == 'executor.health' and e['data']['state'] == 'failed')
+                threading.Event().wait(.03)
+            finally:
+                release.set()
+                probe.join(2)
+        self.assertNotEqual(snapshots[0]['state'], 'failed')
+        self.assertLessEqual(snapshots[0]['observed_at_ms'], failure['observed_at_ms'])
+
+    def test_health_event_and_fast_path_do_not_wait_for_business_lock(self):
+        service = self.service
+        received = threading.Event()
+        events = []
+        def emit(event):
+            if event['event'] == 'executor.health':
+                events.append(event['data'])
+                received.set()
+        service._emit_callback = emit
+        locked, release = threading.Event(), threading.Event()
+        def hold_lock():
+            with service._lock:
+                locked.set()
+                release.wait(3)
+        holder = threading.Thread(target=hold_lock)
+        holder.start()
+        try:
+            self.assertTrue(locked.wait(1))
+            self.assertTrue(received.wait(2))
+            result = service.call('get_executor_health')
+            self.assertTrue(result['worker_alive'])
+            self.assertIn('observed_at_ms', events[-1])
+            self.assertEqual(set(result), set(events[-1]))
+        finally:
+            release.set()
+            holder.join(2)
+        service.close()
+        self.assertFalse(service._health_watchdog.is_alive())
+
+    def test_unexpected_send_failure_preserves_unknown_on_restart(self):
+        service = self.service
+        draft = service.save_chat_draft(self.cid, 'Synthetic reply', None, 'save-unknown')
+        def fail_send(*args):
+            raise RuntimeError('sensitive send exception')
+        service._task_send_chat = fail_send
+        request = service._enqueue_chat({'conversation_id': self.cid, 'draft_id': draft['draft_id'],
+                                        'expected_revision': draft['revision'], 'client_request_id': 'unknown-test'})
+        self.assertTrue(service._executor_health.failed.wait(2))
+        job = self.wait_job(request['job_id'])
+        self.assertEqual(job['status'], 'unknown')
+        operation = next(o for o in service.repo.list('operation') if o.get('job_id') == request['job_id'])
+        self.assertEqual(operation['status'], 'unknown')
+        service.close()
+        reopened = ReceptionService(Path(self.temporary.name))
+        try:
+            self.assertEqual(reopened.repo.get('operation', operation['operation_id'])['status'], 'unknown')
+            self.assertFalse(reopened._auto_send)
+            self.assertFalse(reopened._wa_enabled)
+        finally:
+            reopened.close()
+
+    def test_diagnostics_redact_and_rotate_and_ignore_write_failure(self):
+        health = self.service._executor_health
+        try:
+            raise RuntimeError('SECRET message and customer body')
+        except RuntimeError as error:
+            health.log('schedule', 'job_test', error)
+            files = list(Path(self.temporary.name).rglob('executor.jsonl'))
+            self.assertEqual(len(files), 1)
+            content = files[0].read_text(encoding='utf-8')
+            self.assertNotIn('SECRET', content)
+            self.assertIn('RuntimeError', content)
+            files[0].write_bytes(b'x' * (2 * 1024 * 1024))
+            health.last_log.clear()
+            health.log('schedule', 'job_test', error)
+            self.assertTrue(files[0].with_name('executor.jsonl.1').exists())
+            health.last_log.clear()
+            with patch('pathlib.Path.mkdir', side_effect=OSError('private')):
+                health.log('schedule', 'job_test', error)
+
+    def test_dequeue_leases_settle_exactly_once_even_for_duplicate_tuple(self):
+        work = BusinessQueue()
+        original = ('job_same', 'sync_messages', {}, 0, False)
+        work.put(original)
+        work.put(original)
+        first, second = work.get_nowait(), work.get_nowait()
+        self.assertEqual(first, second)
+        self.assertIsNot(first, second)
+        self.assertFalse(work.complete(original))
+        self.assertTrue(work.complete(first))
+        self.assertFalse(work.complete(first))
+        self.assertEqual(work.unfinished_tasks, 1)
+        self.assertTrue(work.complete(second))
+        self.assertEqual(work.unfinished_tasks, 0)
+        self.assertFalse(work._claims)
+
+    def test_dispatch_fault_before_task_releases_claim_and_preserves_failed_job(self):
+        service = self.service
+        with patch.object(service, '_dispatch_work', side_effect=RuntimeError('private dispatch')):
+            result = service._enqueue('sync_messages', {'conversation_id': self.cid})
+            self.assertTrue(service._executor_health.failed.wait(2))
+            service._worker.join(2)
+        self.assertFalse(service._worker.is_alive())
+        self.assertEqual(service.repo.get('job', result['job_id'])['status'], 'failed')
+        self.assertEqual(service._queue.unfinished_tasks, 0)
+        self.assertFalse(service._queue._claims)
+
+    def test_dispatch_fault_after_completion_does_not_double_settle_or_rewrite_success(self):
+        service = self.service
+        original = service._dispatch_work
+        def after_dispatch(item):
+            original(item)
+            raise RuntimeError('private final callback')
+        with patch.object(service, '_dispatch_work', side_effect=after_dispatch):
+            result = service._enqueue('sync_messages', {'conversation_id': self.cid})
+            self.assertTrue(service._executor_health.failed.wait(2))
+            service._worker.join(2)
+        self.assertEqual(service.repo.get('job', result['job_id'])['status'], 'succeeded')
+        self.assertEqual(service._queue.unfinished_tasks, 0)
+        self.assertFalse(service._queue._claims)
+
+    def test_job_finalizer_fault_keeps_queue_accounting_and_safe_pause(self):
+        service = self.service
+        original = service._job_update
+        def update(job_id, **changes):
+            if 'task_elapsed_ms' in (changes.get('diagnostics') or {}):
+                raise RuntimeError('private finalizer')
+            return original(job_id, **changes)
+        with patch.object(service, '_job_update', side_effect=update):
+            result = service._enqueue('sync_messages', {'conversation_id': self.cid})
+            self.assertTrue(service._executor_health.failed.wait(2))
+            service._worker.join(2)
+        self.assertEqual(service.repo.get('job', result['job_id'])['status'], 'succeeded')
+        self.assertEqual(service._queue.unfinished_tasks, 0)
+        self.assertFalse(service._auto_send)
+        self.assertFalse(service._wa_enabled)
+
+    def test_failed_worker_drains_unsubmitted_queue_even_when_a_cancellation_fails(self):
+        service = self.service
+        original = service._cancel_queued
+        cancelled = []
+        def cancel(item):
+            cancelled.append(item[0])
+            if len(cancelled) == 1:
+                raise RuntimeError('private cancellation')
+            original(item)
+        def broken_take():
+            with service._lock:
+                raise RuntimeError('private queue')
+        with patch.object(service, '_take_ready_work', side_effect=broken_take), patch.object(service, '_cancel_queued', side_effect=cancel):
+            with service._lock:
+                first = service._enqueue('sync_messages', {'conversation_id': self.cid})
+                second = service._enqueue('check_feishu', {})
+            self.assertTrue(service._executor_health.failed.wait(2))
+            service._worker.join(2)
+        self.assertEqual(set(cancelled), {first['job_id'], second['job_id']})
+        self.assertEqual(service.repo.get('job', second['job_id'])['status'], 'cancelled')
+        self.assertEqual(service._queue.unfinished_tasks, 0)
+        self.assertFalse(service._queue._claims)
+        # An unsuccessful durable cleanup is left for startup recovery, never run again here.
+        service.close()
+        reopened = ReceptionService(Path(self.temporary.name))
+        try:
+            self.assertEqual(reopened.repo.get('job', first['job_id'])['status'], 'cancelled')
+        finally:
+            reopened.close()
+
+    def test_phase_budgets_allow_real_ai_wait_but_detect_a_stuck_external_read(self):
+        service = self.service
+        health = service._executor_health
+        item = ('job_phase', 'generate_draft', {}, service._epoch, False)
+        health.start_job(item)
+        with health.phase(item[0], 'ai_elapsed_ms'):
+            with health.lock:
+                deadline = health.activities[item[0]]['deadline']
+            self.assertFalse(health.check_stalled(at=deadline - 1))
+        with health.phase(item[0], 'message_read_ms'):
+            with health.lock:
+                deadline = health.activities[item[0]]['deadline']
+            self.assertTrue(health.check_stalled(at=deadline + 1))
+        self.assertEqual(health.snapshot()['state'], 'stalled')
+        self.assertFalse(service._running)
+        self.assertFalse(service._auto_send)
+        self.assertFalse(service._wa_enabled)
+        health.finish_job(item[0])
+
+    def test_health_revocation_is_published_before_integration_cleanup(self):
+        service = self.service
+        events = []
+        service._running = service._auto_send = service._wa_enabled = True
+        service._emit_callback = lambda event: events.append(event)
+        def revoke():
+            self.assertFalse(service._running)
+            self.assertFalse(service._auto_send)
+            self.assertFalse(service._wa_enabled)
+            self.assertTrue(any(e['event'] == 'executor.health' and e['data']['state'] == 'failed' for e in events))
+        with patch.object(service.integrations, 'revoke', side_effect=revoke):
+            service._executor_health.fail('failed', 'executor_fault')
+
+    def test_scheduler_third_failure_stops_without_restarting_or_reauthorizing(self):
+        service = self.service
+        original_worker = service._worker
+        service._running = service._auto_send = service._wa_enabled = True
+        with patch.object(service, '_schedule', side_effect=RuntimeError('private repeated schedule')) as schedule:
+            self.assertTrue(service._executor_health.failed.wait(9))
+            service._worker.join(2)
+            self.assertEqual(schedule.call_count, 3)
+        self.assertIs(service._worker, original_worker)
+        self.assertFalse(service._worker.is_alive())
+        self.assertFalse(service._running)
+        self.assertFalse(service._auto_send)
+        self.assertFalse(service._wa_enabled)
+        self.assertEqual(service.get_executor_health()['error_code'], 'schedule_failed')
+
+    def test_existing_exact_chat_ack_is_readable_when_new_work_is_unavailable(self):
+        service = self.service
+        draft = service.save_chat_draft(self.cid, 'Synthetic frozen body', None, 'save-prior-ack')
+        params = {'conversation_id': self.cid, 'draft_id': draft['draft_id'],
+                  'expected_revision': draft['revision'], 'client_request_id': 'exact-existing-request'}
+        with service._lock:
+            ack = service._enqueue_chat(params)
+            service._executor_health.fail('failed', 'executor_fault')
+        service._worker.join(2)
+        self.assertEqual(service.call('send_chat', params), ack)
+        self.assertEqual(len([j for j in service.repo.list('job') if j['kind'] == 'send_chat']), 1)
+        current = service.get_conversation(self.cid)['chat_draft']
+        other = service.save_chat_draft(self.cid, 'New body saved after pause', current['revision'], 'save-after-fault')
+        with self.assertRaises(ServiceError) as caught:
+            service.call('send_chat', {'conversation_id': self.cid, 'draft_id': other['draft_id'],
+                                      'expected_revision': other['revision'], 'client_request_id': 'new-request'})
+        self.assertEqual(caught.exception.code, 'executor_unavailable')
+        self.assertIsNone(service.repo.get('chat_request', 'new-request'))
+
     def test_new_defaults_and_advanced_integer_boundaries(self):
         self.assertEqual(self.service.settings['probe_seconds'], 2)
         self.assertEqual(self.service.settings['merge_seconds'], 1)

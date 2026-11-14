@@ -1,5 +1,6 @@
 import type { Case, ConversationDetail, ConversationSummary, Job, Outbox, Snapshot } from '../shared/api';
 import { compareMessages } from './hooks/useReadAcknowledgement';
+import { executorHealth } from './executorHealth';
 
 export function effectiveReceptionStatus(snapshot: Snapshot | null, conversation: ConversationSummary) {
   const listed = snapshot?.conversations.find(item => item.conversation_id === conversation.conversation_id)?.reception_status;
@@ -27,6 +28,8 @@ export function currentGeneration(detail: ConversationDetail, jobs: Job[]): Job 
 export function receptionLabel(snapshot: Snapshot | null, detail: ConversationDetail, connected: boolean, closing: boolean): string {
   if (closing) return '工作台正在关闭';
   if (!connected) return '接待服务未连接';
+  const health = executorHealth(snapshot);
+  if (!health.ready) return health.message;
   const projected = effectiveReceptionStatus(snapshot, detail.conversation);
   if (projected && (detail.case || detail.conversation.case_id || !projected.blockers.some(blocker => blocker.code === 'case' && blocker.message === projected.reason))) return projected.reason;
   if (projected && !detail.case && !detail.conversation.case_id) return projected.blockers.find(blocker => blocker.code !== 'case')?.message || (detail.conversation.human_owned ? '此客户由人工接待' : '客户会话');

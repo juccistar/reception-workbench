@@ -32,7 +32,7 @@ export class ViewTransport {
         case 'Target.setAutoAttach':
           this.emit({ method: 'Target.attachedToTarget', params: { sessionId: this.session, targetInfo: info, waitingForDebugger: false } }); break;
         case 'Target.createTarget': result = { targetId: this.target }; break;
-        case 'Browser.getVersion': result = { protocolVersion: '1.3', product: 'Chrome/140.0.0.0', revision: '', userAgent: '', jsVersion: '' }; break;
+        case 'Browser.getVersion': result = await this.contents.debugger.sendCommand('Browser.getVersion'); break;
         default: throw new Error('Unsupported browser command');
       }
     } else {

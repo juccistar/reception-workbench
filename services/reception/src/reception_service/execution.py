@@ -17,12 +17,57 @@ class BusinessQueue(queue.Queue):
     """Keep the standard unfinished-task contract while selecting ready work."""
     def __init__(self, capacity=256):
         super().__init__(maxsize=capacity)
+        self._claims = {}
+
+    def _claim(self, item):
+        # A distinct tuple identifies this dequeue even if the same job tuple
+        # was accidentally enqueued twice. Keep it alive until completion.
+        claimed = tuple(value for value in item)
+        self._claims[id(claimed)] = (claimed, threading.get_ident())
+        return claimed
+
+    def _get(self):
+        return self._claim(super()._get())
+
+    def complete(self, item):
+        """Settle only this dequeue, including exceptional outer cleanup."""
+        with self.all_tasks_done:
+            if self._claims.pop(id(item), None) is None:
+                return False
+            self._settle()
+            return True
+
+    def _settle(self):
+        unfinished = self.unfinished_tasks - 1
+        if unfinished < 0:
+            raise ValueError('task_done() called too many times')
+        self.unfinished_tasks = unfinished
+        if unfinished == 0:
+            self.all_tasks_done.notify_all()
+
+    def task_done(self):
+        # Retain Queue's public API for callers that explicitly dequeue/finish.
+        with self.all_tasks_done:
+            owned = next((key for key, (_, owner) in self._claims.items() if owner == threading.get_ident()), None)
+            if owned is None:
+                owned = next(iter(self._claims), None)
+            if owned is not None:
+                self._claims.pop(owned)
+            self._settle()
 
     def put(self, item, block=False, timeout=None):
-        try:
-            return super().put(item, block=False)
-        except queue.Full:
-            raise ServiceError('task_queue_full', '后台待执行任务较多，请稍后重试；当前输入已保留', stage='queue') from None
+        with self.not_full:
+            # Guard and insertion share the queue lock with shutdown draining.
+            # A producer that passed before revocation is drained; a later one
+            # is rejected instead of leaving an orphan entry after worker exit.
+            guard = getattr(self, 'executor_guard', None)
+            if guard:
+                guard()
+            if self.maxsize > 0 and self._qsize() >= self.maxsize:
+                raise ServiceError('task_queue_full', '后台待执行任务较多，请稍后重试；当前输入已保留', stage='queue')
+            self._put(item)
+            self.unfinished_tasks += 1
+            self.not_empty.notify()
 
     def take_ready(self, eligible, priority, *, fair=False):
         with self.not_empty:
@@ -38,7 +83,7 @@ class BusinessQueue(queue.Queue):
                 index, item, _ = min(candidates, key=lambda entry: (entry[2], entry[0]))
             del self.queue[index]
             self.not_full.notify()
-            return item
+            return self._claim(item)
 
 
 class ExecutionMixin:
@@ -111,7 +156,28 @@ class ExecutionMixin:
                     and (item[1] not in AI_JOBS or not self._generation_active),
                 self._work_priority, fair=self._dispatch_turn % 8 == 0)
 
+    def _dispatch_owned(self, item):
+        try:
+            if self._executor_health.failed.is_set() or self._stop.is_set():
+                self._cancel_queued(item)
+                return
+            self._dispatch_work(item)
+        except BaseException:
+            self._executor_health.fail('failed', 'executor_fault')
+            try:
+                self._preserve_dispatch_failure(item)
+            except Exception as error:
+                self._executor_health.log('dispatch', item[0], error)
+            raise
+        finally:
+            # Running AI owns its dequeue until its own finalizer. For every
+            # other path this is an idempotent completion of the exact lease.
+            if item[0] not in self._generation_active:
+                self._queue.complete(item)
+                self._executor_health.finish_job(item[0])
+
     def _dispatch_work(self, item):
+        self._executor_health.start_job(item)
         if item[1] not in AI_JOBS:
             self._run_queued(item)
             return
@@ -133,7 +199,8 @@ class ExecutionMixin:
                     facade._visual_workspace_identity = copy.deepcopy(original._visual_workspace_identity)
                     self._generation_read_bindings[id(facade)] = (
                         facade, original, self._monitor_generation, self.repo, job_id)
-                thread = threading.Thread(target=self._execute_generation, args=(item, facade),
+                thread = threading.Thread(target=self._executor_health.run,
+                                          args=(self._execute_generation, 'generation', item, facade),
                                           name='reception-ai-' + job_id[-8:], daemon=True)
                 self._generation_active[job_id] = (thread, event)
                 thread.start()
@@ -148,7 +215,8 @@ class ExecutionMixin:
                                      message='后台生成任务未能启动，请重试',
                                      error={'code': 'task_failed', 'message': '后台生成任务未能启动'})
                 finally:
-                    self._queue.task_done()
+                    self._queue.complete(item)
+                    self._executor_health.finish_job(job_id)
                     self._changed()
 
     def _execute_generation(self, item, facade):
@@ -156,14 +224,18 @@ class ExecutionMixin:
         self._execution_local.job_id = job_id
         try:
             self._run_queued(item, facade=facade)
+        except BaseException as error:
+            self._executor_health.log('generation', job_id, error)
+            self._executor_health.fail('failed', 'generation_cleanup_failed')
         finally:
+            self._queue.complete(item)
+            self._executor_health.finish_job(job_id)
             self._execution_local.job_id = None
             with self._lock:
                 self._generation_active.pop(job_id, None)
                 self._generation_events.pop(job_id, None)
                 self._generation_read_bindings.pop(id(facade), None)
-            if not self._stop.is_set():
-                self._schedule()
+            # The business consumer owns scheduling and its retry policy.
 
     def _execution_read_current(self, token):
         binding = self._generation_read_bindings.get(id(token[0]))
@@ -178,9 +250,11 @@ class ExecutionMixin:
     @contextmanager
     def _job_phase(self, job_id, phase):
         started = time.monotonic()
+        previous = self._executor_health.enter_phase(job_id, phase)
         try:
             yield
         finally:
+            self._executor_health.leave_phase(job_id, previous)
             self._job_update(job_id, diagnostics={phase: int((time.monotonic() - started) * 1000)})
 
     def _join_generation_tasks(self):
