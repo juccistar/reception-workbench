@@ -6,6 +6,7 @@ import re
 import time
 
 from ..errors import ServiceError
+from ..reply_messages import normalize_reply_output
 from ..model_payload import model_json
 from ..business_supplement import supplement_sources
 from ..procurement import buyer_fact_text_allowed
@@ -145,20 +146,21 @@ def invalid_reply_body(body):
                           output_has_tools(text)))
 
 
-def validate_analysis(raw, context):
+def validate_analysis(raw, context, *, allow_legacy=False):
     context, messages, recent = prepare_context(context)
     if output_has_tools(raw):
         fail('tool_approval', '生成结果包含工具或审批信号，已阻断', 'answer')
     if not isinstance(raw, dict) or raw.get('action') not in ('ask', 'wait_quote', 'human', 'skip'):
         fail('schema_action', '生成结果的接待动作无效')
-    if not isinstance(raw.get('reply'), str):
+    if allow_legacy and raw['action'] == 'skip' and 'reply_messages' not in raw and not raw.get('reply'):
+        raw = dict(raw, reply_messages=[])
+    try:
+        raw = normalize_reply_output(raw, allow_legacy=allow_legacy, allow_empty=raw['action'] == 'skip')
+    except ValueError:
         fail('answer_non_json', 'AI 未返回完整且明确的回复正文', 'answer')
-    raw = dict(raw)
-    if (len(raw['reply']) > 1200 or invalid_reply_body(raw['reply'])
-            or raw['action'] != 'skip' and not raw['reply'].strip()):
+    if (raw['action'] == 'skip' and raw['reply_messages'] or
+            any(invalid_reply_body(item['body']) for item in raw['reply_messages']) or invalid_reply_body(raw['reply'])):
         fail('answer_non_json', 'AI 未返回完整且明确的回复正文', 'answer')
-    sources = raw.get('reply_sources', [])
-    sources = sources if isinstance(sources, list) and all(isinstance(s, str) for s in sources) else []
     allowed = {m['message_id'] for m in messages} | set(supplement_sources(context))
     from ..requirement_changes import reply_scopes
     scopes = reply_scopes(raw, context)
@@ -173,8 +175,19 @@ def validate_analysis(raw, context):
             allowed.add(supplier['source_id'])
     from ..requirement_changes import validate_changes
     validate_changes(raw, context)
-    return {'action': raw['action'], 'reply': raw['reply'],
-            'reply_sources': [source for source in _conversation_sources(raw['reply'], sources, recent) if source in allowed],
+    from ..context import validate_reply
+    for item in raw['reply_messages']:
+        item['reply_sources'] = [source for source in _conversation_sources(item['body'], item['reply_sources'], recent) if source in allowed]
+        if not validate_reply(item['body'], item['reply_sources'], context)['ready']:
+            fail('answer_non_json', 'AI 未返回有效回复正文', 'answer')
+    raw = normalize_reply_output(raw, allow_empty=raw['action'] == 'skip')
+    if raw['reply_messages']:
+        validation = validate_reply(raw['reply'], raw['reply_sources'], context)
+        # Display separators are not part of the combined message-body budget.
+        if not validation['ready'] and not (len(raw['reply']) > 1200 and validation['issues'] == ['回复正文格式无效']):
+            fail('answer_non_json', 'AI 未返回有效回复正文', 'answer')
+    return {'action': raw['action'], 'reply': raw['reply'], 'reply_messages': raw['reply_messages'],
+            'reply_sources': raw['reply_sources'],
             **{key: raw[key] for key in ('requirement_changes', 'reply_case_refs') if key in raw},
             'conversation_summary': raw.get('conversation_summary') if isinstance(raw.get('conversation_summary'), str) else None,
             'facts': {}, 'question_keys': [], 'missing': [], 'conflicts': [], 'repairs': [],

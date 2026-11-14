@@ -84,9 +84,69 @@ def read_chat_receipt(gateway, intent, result):
     return result
 
 
+def _batch_part(intent):
+    keys = ('batch_id', 'part_id', 'part_index', 'batch_message_hashes', 'batch_root_request_id')
+    if not any(key in intent for key in keys):
+        return None
+    hashes, index = intent.get('batch_message_hashes'), intent.get('part_index')
+    if (any(not isinstance(intent.get(key), str) or not intent[key].strip() or len(intent[key]) > 200
+            for key in ('batch_id', 'part_id', 'batch_root_request_id'))
+            or not isinstance(hashes, list) or not 1 <= len(hashes) <= 3
+            or type(index) is not int or not 0 <= index < len(hashes)
+            or any(not isinstance(value, str) or len(value) != 64
+                   or any(char not in '0123456789abcdef' for char in value) for value in hashes)
+            or not isinstance(intent.get('reply'), str)
+            or hashlib.sha256(intent['reply'].encode('utf-8')).hexdigest() != hashes[index]):
+        raise AdapterError('分条发送的冻结清单或正文无效', code='args', stage='send')
+    return index
+
+
+def _batch_prefix(gateway, intent):
+    index = _batch_part(intent)
+    if index is None or index == 0:
+        return
+    with gateway.ledger.lock, closing(gateway.ledger._db()) as db:
+        rows = db.execute("SELECT logical_key,request,result FROM operations WHERE kind='send'").fetchall()
+    prefix = {}
+    for logical, raw_request, raw_result in rows:
+        request, result = json.loads(raw_request), json.loads(raw_result)
+        if (request.get('batch_id') != intent['batch_id']
+                or any(request.get(key) != intent.get(key) for key in
+                       ('seller_id', 'buyer_id', 'conversation_id', 'source_message_id', 'purpose',
+                        'send_mode', 'continuity_phase', 'batch_root_request_id'))):
+            continue
+        previous = request.get('part_index')
+        if (type(previous) is not int or not 0 <= previous < index
+                or result.get('status') != 'accepted' or not result.get('message_id')
+                or result.get('submission_started') is not True):
+            continue
+        if (previous in prefix or request.get('batch_message_hashes') != intent['batch_message_hashes']
+                or _batch_part(request) != previous):
+            raise AdapterError('分条前序回执或冻结清单不唯一', code='auth', stage='send')
+        prefix[previous] = (logical, request, result)
+    if set(prefix) != set(range(index)) or len({row[2]['message_id'] for row in prefix.values()}) != index:
+        raise AdapterError('前序消息尚未逐条受理，禁止继续提交', code='auth', stage='send')
+    first_logical, first, _ = prefix[0]
+    if intent.get('purpose') == 'continuity':
+        expected = 'continuity:' + digest([intent['seller_id'], intent['buyer_id'], intent['conversation_id'],
+                    intent['source_message_id'], intent['continuity_phase'],
+                    intent['batch_root_request_id'] if intent['continuity_phase'] in ('assistance', 'supplement') else None])
+    elif intent.get('purpose') == 'reception':
+        expected = 'send:' + digest([intent['seller_id'], intent['conversation_id'], intent['source_message_id']])
+    else:
+        expected = 'chat:' + digest([intent['seller_id'], intent['conversation_id'], intent['batch_root_request_id']])
+    if first_logical != expected:
+        raise AdapterError('首条缺少原来源认领，不能更换批次绕过防重', code='auth', stage='send')
+    if intent.get('purpose') == 'continuity':
+        previous = prefix[index - 1][2]
+        if intent.get('latest_message_id') != previous['message_id'] or intent.get('latest_message_role') != 'seller':
+            raise AdapterError('续答分条缺少上一条确切受理来源', code='auth', stage='send')
+
+
 def _continuity_verify(gateway, intent):
     """Check the local phase/receipt binding; source freshness is owned by the service."""
     gateway._send_authorized(intent)
+    _batch_prefix(gateway, intent)
     phase, latest_role = intent['continuity_phase'], intent['latest_message_role']
     if latest_role == 'buyer':
         if (intent['latest_message_id'] != intent['source_message_id'] or phase == 'final'
@@ -106,7 +166,7 @@ def _continuity_verify(gateway, intent):
                 and type(result.get('timestamp_ms')) is int and result['timestamp_ms'] > intent['source_timestamp_ms']
                 and all(request.get(k) == intent[k] for k in ('seller_id', 'buyer_id', 'conversation_id'))):
             matches.append(request)
-    if len(matches) != 1 or (phase == 'final' and not (
+    if len(matches) != 1 or (phase == 'final' and not ((_batch_part(intent) or 0) > 0) and not (
             matches[0].get('purpose') == 'continuity' and matches[0].get('continuity_phase') == 'ack'
             and all(matches[0].get(k) == intent[k] for k in
                     ('source_message_id', 'source_timestamp_ms', 'source_text_sha256')))):
@@ -120,6 +180,9 @@ def _claim_continuity(gateway, intent):
     logical = 'continuity:' + digest([intent['seller_id'], intent['buyer_id'], intent['conversation_id'],
                                       intent['source_message_id'], intent['continuity_phase'],
                                       intent['client_request_id'] if intent['continuity_phase'] in ('assistance', 'supplement') else None])
+    if (_batch_part(intent) or 0) > 0:
+        logical = 'continuity-part:' + digest([intent['seller_id'], intent['conversation_id'],
+                    intent['source_message_id'], intent['continuity_phase'], intent['batch_id'], intent['part_index']])
     with ledger.lock, closing(ledger._db()) as db, db:
         db.execute('BEGIN IMMEDIATE')
         rows = db.execute("SELECT operation_id,logical_key,request,result FROM operations WHERE kind='send'").fetchall()
@@ -192,12 +255,16 @@ def execute_chat(gateway, intent, authorization):
             if automatic:
                 gateway._send_authorized(intent)
             gateway._identity(seller)
+            _batch_prefix(gateway, intent)
             if continuity:
                 _continuity_verify(gateway, intent)
                 _claim_continuity(gateway, intent)
             else:
                 logical = ('send:' + digest([seller, cid, intent['source_message_id']]) if reception
                            else 'chat:' + digest([seller, cid, request]))
+                if (_batch_part(intent) or 0) > 0:
+                    logical = ('send-part:' if reception else 'chat-part:') + digest([
+                        seller, cid, intent.get('source_message_id'), intent['batch_id'], intent['part_index']])
                 prior = gateway.ledger.claim(operation, logical, 'send', intent,
                                              allow_rejected_send=reception, conversation_fence=True)
                 if prior:

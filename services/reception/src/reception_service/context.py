@@ -155,12 +155,12 @@ def build_context(repo, case: dict, settings: dict, budget: dict, *, continuatio
     return result
 
 
-def validate_reply(body: str, sources: list[str], context: dict) -> dict:
+def validate_reply(body: str, sources: list[str], context: dict, *, max_chars=1200) -> dict:
     messages = context['recent_messages'] + context['historical_evidence']
     issues = []
     if not isinstance(body, str) or not body.strip():
         issues.append('回复正文为空')
-    elif len(body) > 1200 or invalid_reply_body(body):
+    elif len(body) > max_chars or invalid_reply_body(body):
         issues.append('回复正文格式无效')
     return {'ready': not issues, 'issues': list(dict.fromkeys(issues)), 'sources': sources}
 

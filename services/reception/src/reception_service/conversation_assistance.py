@@ -12,6 +12,7 @@ from .photos import with_direct_photo_reads
 from .integrations.generation_metadata import checked_metadata
 from .requirement_media import get_product_source_images
 from .repository import encoded, new_id, now_ms
+from .reply_messages import normalize_reply_output
 from .supplement_attachments import parse_attachment, attachment_rows, public_attachment, MAX_TOTAL, MAX_COUNT
 
 
@@ -22,6 +23,13 @@ def _strip_product_display(context):
         case.pop('product_main_image', None)
         if isinstance(case.get('requirements'), dict):
             case['requirements'].pop('product_url', None)
+    for entry in context.get('case_catalog', []):
+        if isinstance(entry.get('requirements'), dict):
+            entry['requirements'].pop('product_url', None)
+        entry.pop('product_main_image', None)
+        for key in ('product_context', 'supplier_context'):
+            if key in entry:
+                entry[key] = _without_product_links_or_images(entry[key])
     for key in ('product_context', 'supplier_context'):
         if key in context:
             context[key] = _without_product_links_or_images(context[key])
@@ -158,7 +166,7 @@ class ConversationAssistanceMixin:
         return context, fingerprint
 
     def generate_manual_suggestion(self, conversation_id, client_request_id, case_id=None,
-                                   input_body=None, input_revision=None, input_hash=None):
+                                   input_body=None, input_revision=None, input_hash=None, part_index=None):
         if (not isinstance(client_request_id, str) or not 1 <= len(client_request_id.strip()) <= 200
                 or case_id is not None and (not isinstance(case_id, str) or not case_id)):
             raise ServiceError('invalid_params', '请求编号或事项无效')
@@ -170,8 +178,12 @@ class ConversationAssistanceMixin:
               or not isinstance(input_hash, str)
               or hashlib.sha256(input_body.encode('utf-8')).hexdigest() != input_hash):
             raise ServiceError('invalid_params', '润色正文或版本无效')
+        if part_index is not None and (input_body is None or type(part_index) is not int or not 0 <= part_index < 3):
+            raise ServiceError('invalid_params', '润色分条编号无效')
         request = {'conversation_id': conversation_id, 'case_id': case_id,
                    'input_body': input_body, 'input_revision': input_revision, 'input_hash': input_hash}
+        if part_index is not None:
+            request['part_index'] = part_index
         with self._lock, self.repo.transaction():
             self._chat_owner(conversation_id)
             prior = self.repo.get('manual_request', client_request_id)
@@ -181,7 +193,9 @@ class ConversationAssistanceMixin:
                 return {'job_id': prior['job_id']}
             if input_body is not None:
                 draft = self.repo.get('chat_draft', conversation_id)
-                if (not draft or draft.get('conversation_id') != conversation_id or draft.get('body') != input_body
+                parts = draft.get('message_parts') if draft else None
+                selected = (parts[part_index] if isinstance(parts, list) and part_index < len(parts) else None) if part_index is not None else (draft.get('body') if draft else None)
+                if (not draft or draft.get('conversation_id') != conversation_id or selected != input_body
                         or draft.get('revision') != input_revision):
                     raise ServiceError('source_changed', '当前回复正文已变化，请保存后重新润色')
             context, fingerprint = self._manual_context(conversation_id, case_id, input_body, input_revision)
@@ -194,7 +208,7 @@ class ConversationAssistanceMixin:
             self.repo.put('manual_request', client_request_id, {'request': request, 'job_id': job['job_id']})
             self.repo.put('manual_latest', conversation_id, {'job_id': job['job_id']})
             self._queue.put((job['job_id'], 'manual_suggestion', {'context': context, 'fingerprint': fingerprint,
-                              'request_id': client_request_id, 'input_hash': input_hash}, self._epoch, False))
+                              'request_id': client_request_id, 'input_hash': input_hash, 'part_index': part_index}, self._epoch, False))
         self._emit('job.updated', job)
         return {'job_id': job['job_id']}
 
@@ -207,10 +221,13 @@ class ConversationAssistanceMixin:
             try:
                 revision = suggestion.get('input_revision')
                 draft = self.repo.get('chat_draft', cid) if revision is not None else None
+                index = suggestion.get('input_part_index')
+                parts = draft.get('message_parts') if draft else None
+                selected = (parts[index] if type(index) is int and isinstance(parts, list) and 0 <= index < len(parts) else None) if index is not None else (draft.get('body') if draft else None)
                 input_current = (revision is None or bool(draft and draft.get('revision') == revision
-                    and hashlib.sha256(draft.get('body', '').encode('utf-8')).hexdigest() == suggestion.get('input_hash')))
+                    and isinstance(selected, str) and hashlib.sha256(selected.encode('utf-8')).hexdigest() == suggestion.get('input_hash')))
                 _, current = self._manual_context(cid, suggestion.get('case_id'),
-                    draft['body'] if input_current and draft else None, revision if input_current else None)
+                    selected if input_current and draft else None, revision if input_current else None)
                 suggestion['status'] = 'ready' if input_current and current == suggestion['context_fingerprint'] else 'stale'
             except ServiceError:
                 suggestion['status'] = 'stale'
@@ -276,6 +293,11 @@ class ConversationAssistanceMixin:
         with self._job_phase(job_id, 'ai_elapsed_ms'):
             output = facade.generate_manual(context, job_id, **options)
         self._job_update(job_id, diagnostics={'image_reads': len(output.get('verified_image_reads', [])) if isinstance(output, dict) else 0})
+        if not context.get('unsent_reply'):
+            try:
+                output = normalize_reply_output(output, allow_legacy=True)
+            except (TypeError, ValueError):
+                raise ServiceError('invalid_ai_output', '回复建议格式无效', stage='manual_suggestion')
         body = output.get('reply') if isinstance(output, dict) else None
         if not isinstance(body, str) or not body.strip() or len(body) > 50000:
             raise ServiceError('invalid_ai_output', '回复建议格式无效', stage='manual_suggestion')
@@ -284,7 +306,10 @@ class ConversationAssistanceMixin:
             guard()
             unsent = context.get('unsent_reply')
             draft = self.repo.get('chat_draft', cid) if unsent else None
-            input_current = not unsent or bool(draft and draft.get('body') == unsent['body']
+            index = params.get('part_index')
+            parts = draft.get('message_parts') if draft else None
+            selected = (parts[index] if isinstance(parts, list) and type(index) is int and 0 <= index < len(parts) else None) if index is not None else (draft.get('body') if draft else None)
+            input_current = not unsent or bool(draft and selected == unsent['body']
                 and draft.get('revision') == unsent['revision'])
             _, current = self._manual_context(cid, context['case_id'],
                 unsent['body'] if unsent else None, unsent['revision'] if unsent else None)
@@ -309,6 +334,10 @@ class ConversationAssistanceMixin:
                           'input_revision': unsent['revision'] if unsent else None,
                           'input_hash': params['input_hash'],
                           'context_fingerprint': fingerprint, 'status': 'ready', 'updated_at': now_ms()}
+            if unsent and params.get('part_index') is not None:
+                suggestion['input_part_index'] = params['part_index']
+            if not unsent:
+                suggestion['reply_messages'] = output['reply_messages']
             metadata = checked_metadata(output, with_direct_photo_reads(context, output.get('verified_image_reads', [])), manual=True)
             metadata.pop('assistance_suggestions', None)
             metadata.pop('quality_notes', None)

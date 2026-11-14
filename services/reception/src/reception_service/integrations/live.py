@@ -190,7 +190,7 @@ class LiveIntegration:
             raise ServiceError('invalid_request', '生成请求缺少任务标识', stage='context')
         if current_message(context, recent)['role'] != 'buyer' or case.get('state') in ('human_owned', 'closed'):
             return dict(action='skip', facts={}, question_keys=[], reply='', summary='', missing=[], conflicts=[],
-                        procurement_key=case.get('procurement_key') or 'main', new_case=False, reply_sources=[])
+                        procurement_key=case.get('procurement_key') or 'main', new_case=False, reply_sources=[], reply_messages=[])
         result, image_reads = self._business_query(AI_INSTRUCTIONS, context, photo_inputs,
                                                   on_call_start=on_call_start, cancel_event=cancel_event,
                                                   photo_deadline=photo_deadline)
@@ -289,12 +289,16 @@ class LiveIntegration:
         if self.resolve_identity(context.get('seller_id')) != context.get('seller_id'):
             raise ServiceError('seller_mismatch', '当前平台卖家身份已变化', stage='identity')
         answer = self._assistance_query(WHATSAPP, context, request_id, on_call_start, cancel_event)
-        reply, sources, summary = answer.get('reply'), answer.get('reply_sources'), answer.get('wa_summary')
-        if (not isinstance(reply, str) or not reply.strip() or len(reply) > 1200 or invalid_reply_body(reply)
-                or not isinstance(sources, list) or any(not isinstance(x, str) for x in sources)
-                or not isinstance(summary, str) or len(summary) > 4000):
+        from ..reply_messages import normalize_reply_output
+        try:
+            answer = normalize_reply_output(answer)
+        except ValueError:
+            raise ServiceError('answer_non_json', 'AI 未返回有效 WhatsApp 回复', stage='answer') from None
+        summary = answer.get('wa_summary')
+        if (any(invalid_reply_body(item['body']) for item in answer['reply_messages'])
+                or invalid_reply_body(answer['reply']) or not isinstance(summary, str) or len(summary) > 4000):
             raise ServiceError('answer_non_json', 'AI 未返回有效 WhatsApp 回复', stage='answer')
-        return {'reply': reply.strip(), 'reply_sources': sources, 'wa_summary': summary.strip()}
+        return {key: answer[key] for key in ('reply', 'reply_sources', 'reply_messages')} | {'wa_summary': summary.strip()}
 
     @boundary('analysis')
     def generate_manual(self, context, request_id, *, on_call_start=None, cancel_event=None, photo_inputs=None, photo_deadline=None):
@@ -306,8 +310,16 @@ class LiveIntegration:
         prompt = POLISH if context.get('unsent_reply') else MANUAL
         answer = self._assistance_query(prompt, context, request_id, on_call_start, cancel_event,
                                         photo_inputs=photo_inputs, photo_deadline=photo_deadline)
+        from ..reply_messages import normalize_reply_output
+        if not context.get('unsent_reply'):
+            try:
+                answer = normalize_reply_output(answer)
+            except ValueError:
+                raise ServiceError('answer_non_json', 'AI 未返回有效回复正文', stage='answer') from None
+            if any(invalid_reply_body(item['body']) for item in answer['reply_messages']):
+                raise ServiceError('answer_non_json', 'AI 未返回有效回复正文', stage='answer')
         reply = answer.get('reply')
-        if not isinstance(reply, str) or not reply.strip() or len(reply) > 1200 or invalid_reply_body(reply):
+        if not isinstance(reply, str) or not reply.strip() or (context.get('unsent_reply') and len(reply) > 1200) or invalid_reply_body(reply):
             raise ServiceError('answer_non_json', 'AI 未返回有效回复正文', stage='answer')
         from ..photos import with_direct_photo_reads
         image_reads = answer.pop('_host_image_reads', [])
@@ -320,7 +332,20 @@ class LiveIntegration:
         if not context.get('unsent_reply'):
             from ..requirement_changes import validate_changes
             validate_changes(answer, checked_context)
-        return {'reply': reply.strip(), 'verified_image_reads': image_reads, **metadata,
+            for item in answer['reply_messages']:
+                item['reply_sources'] = checked_metadata({**answer, 'reply_sources': item['reply_sources']}, checked_context, manual=True)['reply_sources']
+            answer = normalize_reply_output(answer)
+            from ..context import validate_reply
+            for item in answer['reply_messages']:
+                if not validate_reply(item['body'], item['reply_sources'], checked_context)['ready']:
+                    raise ServiceError('answer_non_json', 'AI 未返回有效回复正文', stage='answer')
+            validation = validate_reply(answer['reply'], answer['reply_sources'], checked_context)
+            if not validation['ready'] and not (len(answer['reply']) > 1200 and validation['issues'] == ['回复正文格式无效']):
+                raise ServiceError('answer_non_json', 'AI 未返回有效回复正文', stage='answer')
+            metadata['reply_sources'] = answer['reply_sources']
+            reply = answer['reply']
+        return {'reply': reply if not context.get('unsent_reply') else reply.strip(), 'verified_image_reads': image_reads, **metadata,
+                **({'reply_messages': answer['reply_messages']} if not context.get('unsent_reply') else {}),
                 **({key: answer[key] for key in ('requirement_changes', 'reply_case_refs', 'conversation_summary') if key in answer}
                    if not context.get('unsent_reply') else {})}
 

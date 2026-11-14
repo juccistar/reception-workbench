@@ -14,13 +14,14 @@ def retry_message(state, attempts, retry_at, now):
     return '发送未提交，原因无法安全自动重试，已停止本条自动重试'
 
 
-def chain_attempts(repo, seller_id, conversation_id, source_id, phase='reply', result_version=None):
+def chain_attempts(repo, seller_id, conversation_id, source_id, phase='reply', result_version=None, *, part_id=None):
     jobs = {j['job_id']: j for j in repo.list('job', conversation_id=conversation_id)}
     attempts = []
     for op in repo.list('operation', conversation_id=conversation_id):
         job = jobs.get(op.get('job_id'), {})
         if (op.get('seller_id') != seller_id or op.get('source_message_id') != source_id
-                or not job.get('automatic') or op.get('kind') != 'send'):
+                or not job.get('automatic') or op.get('kind') != 'send'
+                or part_id is not None and op.get('part_id') != part_id):
             continue
         intent = op.get('intent') or {}
         op_phase = intent.get('continuity_phase', 'reply') if op.get('purpose') == 'continuity' else 'reply'
@@ -37,14 +38,15 @@ def chain_attempts(repo, seller_id, conversation_id, source_id, phase='reply', r
     return attempts
 
 
-def decision(repo, seller_id, conversation_id, source_id, phase='reply', result_version=None):
+def decision(repo, seller_id, conversation_id, source_id, phase='reply', result_version=None, *, part_id=None):
     jobs = {j['job_id']: j for j in repo.list('job', conversation_id=conversation_id)}
-    attempts = chain_attempts(repo, seller_id, conversation_id, source_id, phase, result_version)
+    attempts = chain_attempts(repo, seller_id, conversation_id, source_id, phase, result_version, part_id=part_id)
     operation_jobs = {op.get('job_id') for op in repo.list('operation', conversation_id=conversation_id)}
     for job in jobs.values():
         if (not job.get('automatic') or job.get('kind') not in ('automatic_send', 'continuity_send')
                 or job.get('source_message_id') != source_id or job.get('status') != 'failed'
-                or job.get('job_id') in operation_jobs):
+                or job.get('job_id') in operation_jobs
+                or part_id is not None and job.get('part_id') != part_id):
             continue
         plan = repo.get('continuity_plan', job.get('plan_id')) or {}
         if (plan.get('phase', 'reply') == phase
@@ -65,12 +67,12 @@ def decision(repo, seller_id, conversation_id, source_id, phase='reply', result_
 
 
 def settle_waiting_jobs(repo, update_job, seller_id, conversation_id, source_id,
-                        phase='reply', result_version=None):
+                        phase='reply', result_version=None, *, part_id=None):
     """End obsolete retry waits without changing any native attempt or error."""
-    state, count, retry_at = decision(repo, seller_id, conversation_id, source_id, phase, result_version)
+    state, count, retry_at = decision(repo, seller_id, conversation_id, source_id, phase, result_version, part_id=part_id)
     if state not in ('blocked', 'exhausted'):
         return
-    attempts = chain_attempts(repo, seller_id, conversation_id, source_id, phase, result_version)
+    attempts = chain_attempts(repo, seller_id, conversation_id, source_id, phase, result_version, part_id=part_id)
     if not attempts:
         return
     last = attempts[-1]
@@ -104,6 +106,6 @@ def restore_retry_job_states(repo, update_job, seller_id):
         plan = repo.get('continuity_plan', operation.get('plan_id')) or {}
         version = (plan.get('result_version') if phase == 'assistance' else
                    tuple(plan.get('supplement_issue_ids', [])) if phase == 'supplement' else None)
-        chains.add((cid, source, phase, version))
-    for cid, source, phase, version in chains:
-        settle_waiting_jobs(repo, update_job, seller_id, cid, source, phase, version)
+        chains.add((cid, source, phase, version, operation.get('part_id')))
+    for cid, source, phase, version, part_id in chains:
+        settle_waiting_jobs(repo, update_job, seller_id, cid, source, phase, version, part_id=part_id)

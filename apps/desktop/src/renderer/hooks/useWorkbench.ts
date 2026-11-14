@@ -12,9 +12,13 @@ export interface ChatSend {
   jobId: string | null;
   message: string;
   cleared: boolean;
+  batchId?: string;
 }
 export interface EditorState {
   body: string;
+  parts: string[] | null;
+  selectedPart: number;
+  remainingBatchId: string | null;
   server: Draft | null;
   dirty: boolean;
   saving: boolean;
@@ -37,7 +41,7 @@ export const errorText = (error: unknown): string => {
   if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') return error.message;
   return '操作未完成，请重试或查看运行记录。';
 };
-const createEditor = (draft: Draft | null): EditorState => ({ body: draft?.status === 'accepted' ? '' : draft?.body ?? '', server: draft, dirty: false, saving: false, edited: false, editVersion: 0, saveState: 'saved', error: '', manualState: 'idle', manualError: '', send: null });
+const createEditor = (draft: Draft | null): EditorState => ({ body: draft?.status === 'accepted' ? '' : draft?.body ?? '', parts: draft?.status === 'accepted' ? null : draft?.message_parts ? [...draft.message_parts] : null, selectedPart: 0, remainingBatchId: null, server: draft, dirty: false, saving: false, edited: false, editVersion: 0, saveState: 'saved', error: '', manualState: 'idle', manualError: '', send: null });
 const mutationId = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const checksReady = (snapshot: Snapshot | null, keys: (keyof Snapshot['checks'])[]) => !!snapshot && keys.every(key => snapshot.app.mode === 'demo' ? ['passed', 'demo'].includes(snapshot.checks[key].status) : snapshot.checks[key].status === 'passed');
 const generationBlocker = (snapshot: Snapshot | null, detail: ConversationDetail | null): string => {
@@ -125,7 +129,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
       attempt.cleared = true;
       // A receipt only consumes the exact input that was sent. Typing during a send remains a new draft.
       if (entry.editVersion === attempt.editVersion && entry.body === attempt.body) {
-        entry.body = ''; entry.dirty = false; entry.edited = false; entry.saveState = 'saved'; entry.error = '';
+        entry.body = ''; entry.parts = null; entry.selectedPart = 0; entry.dirty = false; entry.edited = false; entry.saveState = 'saved'; entry.error = '';
         ++entry.editVersion;
       }
     }
@@ -135,6 +139,12 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     for (const entry of editors.current.values()) {
       const attempt = entry.send;
       if (!attempt) continue;
+      if (attempt.batchId) {
+        const batch = detailRef.current?.reply_batches?.find(item => item.batch_id === attempt.batchId);
+        if (batch?.status === 'accepted') settleSend(entry, 'accepted');
+        else if (batch?.status === 'stopped') settleSend(entry, batch.pending_operation_ids.length ? 'unknown' : 'rejected', '分条发送已停止，请查看发送进度。');
+        continue;
+      }
       const job = jobsRef.current.find(item => item.job_id === attempt.jobId);
       // An operation receipt is more specific than the completion status of its job.
       const operation = state?.outbox.find(item => isSendOperation(item) && (item.client_request_id
@@ -172,11 +182,11 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     let current = editors.current.get(key);
     if (!current) { current = createEditor(incoming); editors.current.set(key, current); }
     else if (incoming && !current.saving && (!current.server || incoming.revision >= current.server.revision)) {
-      if (!current.dirty && !current.edited && !current.send) current.body = incoming.status === 'accepted' ? '' : incoming.body;
+      if (!current.dirty && !current.edited && !current.send) { current.body = incoming.status === 'accepted' ? '' : incoming.body; current.parts = incoming.status === 'accepted' ? null : incoming.message_parts ? [...incoming.message_parts] : null; }
       current.server = incoming;
     }
     const attempt = current.send;
-    if (attempt && incoming?.draft_id === attempt.params.draft_id && incoming.revision === attempt.params.expected_revision && ['accepted', 'rejected', 'unknown'].includes(incoming.status)) settleSend(current, incoming.status as SendStatus);
+    if (attempt && !attempt.batchId && incoming?.draft_id === attempt.params.draft_id && incoming.revision === attempt.params.expected_revision && ['accepted', 'rejected', 'unknown'].includes(incoming.status)) settleSend(current, incoming.status as SendStatus);
     syncSends();
   }, [settleSend, syncSends]);
 
@@ -212,14 +222,14 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
       if (!mounted.current || sequence !== detailSequence.current || selectionRef.current.conversationId !== conversationId) return false;
       if (caseId && result.case?.case_id !== caseId) throw new Error('此采购事项暂时无法读取，当前正文已保留。');
       mergeDraft(result);
-      setDetail(result); detailRef.current = result;
+      setDetail(result); detailRef.current = result; syncSends();
       const nextSelection = { conversationId, caseId: result.case?.case_id ?? '' };
       selectionRef.current = nextSelection; setSelection(nextSelection); setDetailError(''); return true;
     } catch (failure) {
       if (sequence === detailSequence.current && mounted.current) setDetailError(errorText(failure));
       return false;
     } finally { if (sequence === detailSequence.current && mounted.current) setDetailLoading(false); }
-  }, [bridge, mergeDraft]);
+  }, [bridge, mergeDraft, syncSends]);
 
   const markMessagesRead = useCallback(async (conversationId: string, throughMessageId: string, observedSequence: number) => {
     if (!bridge || !connectedRef.current || closingRef.current) throw new Error('阅读进度尚未保存');
@@ -319,17 +329,19 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     if (existing) return existing;
     const entry = editors.current.get(conversationId);
     if (!entry || !entry.dirty) return true;
-    if (sendUnsettled(entry.send)) return false;
     if (!bridge || !connectedRef.current || closingRef.current) { entry.saveState = 'error'; entry.error = '服务未连接，尚未保存。恢复连接后可重试。'; redraw(); return false; }
     const capturedVersion = entry.editVersion;
     const capturedBody = entry.body;
+    const capturedParts = entry.parts ? [...entry.parts] : null;
+    const remainingBatchId = entry.remainingBatchId;
     entry.saving = true; entry.saveState = 'saving'; entry.error = ''; redraw();
     const operation = (async () => {
       try {
         if (!(await beginManualEdit(conversationId))) throw new Error(entry.manualError || '尚未暂停此客户自动接待。');
-        const result = await bridge.invoke<Draft>('save_chat_draft', { conversation_id: conversationId, body: capturedBody, expected_revision: entry.server?.revision ?? null, client_mutation_id: mutationId() });
+        const result = await bridge.invoke<Draft>('save_chat_draft', { conversation_id: conversationId, body: capturedBody, ...(capturedParts ? { message_parts: capturedParts } : {}), ...(remainingBatchId ? { remaining_batch_id: remainingBatchId } : {}), expected_revision: entry.server?.revision ?? null, client_mutation_id: mutationId() });
         if (result.conversation_id !== conversationId || result.purpose !== 'chat' || result.body !== capturedBody) throw new Error('服务返回的聊天草稿与保存内容不一致，请刷新核对。');
         entry.server = result;
+        if (entry.remainingBatchId === remainingBatchId) entry.remainingBatchId = null;
         entry.dirty = entry.editVersion !== capturedVersion;
         entry.saveState = entry.dirty ? 'pending' : 'saved';
         // Do not assign result.body: the user may have continued typing.
@@ -441,13 +453,28 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     if (!key || closingRef.current) return;
     let current = editors.current.get(key);
     if (!current) { current = createEditor(null); editors.current.set(key, current); }
-    current.body = body; current.dirty = true; current.edited = true; ++current.editVersion;
+    current.body = body; current.parts = null; current.selectedPart = 0; current.dirty = true; current.edited = true; ++current.editVersion;
     current.saveState = current.saving ? 'saving' : 'pending'; current.error = '';
     void beginManualEdit(key); redraw();
   }, [beginManualEdit]);
 
+  const editParts = useCallback((parts: string[], selectedPart = 0) => {
+    const key = selectionRef.current.conversationId;
+    if (!key || closingRef.current || !parts.length || parts.length > 3) return;
+    let current = editors.current.get(key);
+    if (!current) { current = createEditor(null); editors.current.set(key, current); }
+    current.parts = [...parts]; current.body = parts.join('\n\n'); current.selectedPart = Math.min(selectedPart, parts.length - 1);
+    current.dirty = true; current.edited = true; ++current.editVersion;
+    current.saveState = current.saving ? 'saving' : 'pending'; current.error = '';
+    void beginManualEdit(key); redraw();
+  }, [beginManualEdit]);
+  const selectPart = useCallback((index: number) => {
+    const current = editors.current.get(selectionRef.current.conversationId);
+    if (current?.parts && index >= 0 && index < current.parts.length) { current.selectedPart = index; redraw(); }
+  }, []);
+
   useEffect(() => {
-    if (!editor?.dirty || editor.saving || editor.saveState === 'error' || editor.manualState !== 'ready' || sendUnsettled(editor.send)) return;
+    if (!editor?.dirty || editor.saving || editor.saveState === 'error' || editor.manualState !== 'ready') return;
     const timer = setTimeout(() => { void saveDraft(selection.conversationId); }, 800);
     return () => clearTimeout(timer);
   }, [editor?.body, editor?.dirty, editor?.saving, editor?.saveState, editor?.server?.revision, editor?.manualState, editor?.send?.status, selection.conversationId, saveDraft]);
@@ -560,7 +587,9 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     const conversationId = selectionRef.current.conversationId;
     const selectedCaseId = selectionRef.current.caseId;
     const entry = editors.current.get(conversationId);
-    const frozen = entry?.body.trim() ? { body: entry.body, version: entry.editVersion } : null;
+    const selectedBody = entry?.parts ? entry.parts[entry.selectedPart] : entry?.body;
+    const frozen = selectedBody?.trim() ? { body: selectedBody, version: entry!.editVersion, partIndex: entry?.parts ? entry.selectedPart : null } : null;
+    if (entry?.parts && !frozen) { setNotice('请先填写选中的回复。'); return; }
     if (!(await saveSupplement(conversationId))) return;
     if (frozen && !(await saveDraft(conversationId))) return;
     const current = detailRef.current;
@@ -570,14 +599,14 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     const params: Record<string, unknown> = { conversation_id: conversationId, case_id: selectedCaseId || null, client_request_id: mutationId() };
     if (frozen) {
       const saved = entry?.server;
-      if (!entry || entry.editVersion !== frozen.version || entry.body !== frozen.body || entry.dirty || entry.saving ||
-          saved?.body !== frozen.body || saved?.conversation_id !== conversationId || !saved.revision) {
+      if (!entry || entry.editVersion !== frozen.version || (frozen.partIndex === null ? entry.body : entry.parts?.[frozen.partIndex]) !== frozen.body || entry.dirty || entry.saving ||
+          (frozen.partIndex === null ? saved?.body : saved?.message_parts?.[frozen.partIndex]) !== frozen.body || saved?.conversation_id !== conversationId || !saved.revision) {
         setNotice('润色期间正文已变化，请以当前输入重新点击润色。'); return;
       }
       if (!globalThis.crypto?.subtle) { setNotice('无法核对当前回复正文摘要，请稍后重试。'); return; }
       const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(frozen.body));
-      if (entry.editVersion !== frozen.version || entry.body !== frozen.body || selectionRef.current.conversationId !== conversationId) return;
-      Object.assign(params, { input_body: frozen.body, input_revision: saved.revision,
+      if (entry.editVersion !== frozen.version || (frozen.partIndex === null ? entry.body : entry.parts?.[frozen.partIndex]) !== frozen.body || selectionRef.current.conversationId !== conversationId) return;
+      Object.assign(params, { ...(frozen.partIndex === null ? {} : { part_index: frozen.partIndex }), input_body: frozen.body, input_revision: saved.revision,
         input_hash: [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('') });
     }
     await runJob('generate_manual_suggestion', params);
@@ -606,10 +635,26 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     if (draft) await runJob('preview_send', { draft_id: draft.draft_id, expected_revision: draft.revision });
   }, [runJob]);
 
-  const adoptSuggestion = useCallback(() => {
+  const adoptSuggestion = useCallback(async () => {
     const suggestion = detailRef.current?.manual_suggestion;
-    if (suggestion) { editBody(suggestion.body); finishSuggestionReview(); }
-  }, [editBody, finishSuggestionReview]);
+    const cid = selectionRef.current.conversationId;
+    const entry = editors.current.get(cid);
+    if (!suggestion || suggestion.status !== 'ready' || !entry) return;
+    if (suggestion.mode === 'polish') {
+      const index = suggestion.input_part_index;
+      const body = index == null ? entry.body : entry.parts?.[index];
+      const version = entry.editVersion;
+      if (!body || entry.dirty || entry.server?.revision !== suggestion.input_revision || !crypto.subtle) { setNotice('润色依据已变化，请重新生成。'); return; }
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body));
+      const hash = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
+      if (hash !== suggestion.input_hash || entry.editVersion !== version || selectionRef.current.conversationId !== cid || detailRef.current?.manual_suggestion?.suggestion_id !== suggestion.suggestion_id) { setNotice('润色依据已变化，请重新生成。'); return; }
+      if (index == null) editBody(suggestion.body);
+      else if (entry.parts && index < entry.parts.length) { const parts = [...entry.parts]; parts[index] = suggestion.body; editParts(parts, index); }
+      else return;
+    } else if (suggestion.reply_messages && suggestion.reply_messages.length > 1) editParts(suggestion.reply_messages.map(item => item.body));
+    else editBody(suggestion.body);
+    finishSuggestionReview();
+  }, [editBody, editParts, finishSuggestionReview]);
 
   const conversationFence = useCallback((conversationId: string, entry?: EditorState): string => {
     const state = snapshotRef.current;
@@ -632,8 +677,11 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     if (!health.ready) return `${health.message}，暂不能发送，正文已保留。`;
     if (entry.manualState === 'pending') return '正在暂停此客户自动接待，确认成功后才能发送。';
     if (entry.manualState === 'error') return '尚未确认暂停此客户自动接待，请先重试。';
+    const linkedBatch = entry.server?.blocked_batch_id ?? entry.server?.batch_id ?? (entry.server?.draft_id === entry.send?.params.draft_id && entry.server?.revision === entry.send?.params.expected_revision ? entry.send?.batchId : undefined);
+    const stoppedBatch = detailRef.current?.reply_batches?.find(batch => batch.batch_id === linkedBatch && batch.status === 'stopped');
+    if (!entry.remainingBatchId && stoppedBatch && stoppedBatch.accepted > 0) return '此轮已有消息受理，请先确认只保留未发送内容。';
     if (sendUnsettled(entry.send) && entry.send?.status !== 'retry') return '发送请求正在处理，请等待回执。';
-    if (entry.send?.status !== 'retry' && !entry.body.trim()) return '请输入回复正文。';
+    if (entry.send?.status !== 'retry' && (!entry.body.trim() || entry.parts?.some(part => !part.trim()))) return '请输入每条回复正文。';
     return '';
   }, [conversationFence]);
 
@@ -654,14 +702,15 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
         if (latestBlocker) throw new Error(latestBlocker);
         const saved = entry.server;
         if (!saved || saved.purpose !== 'chat' || saved.conversation_id !== conversationId || saved.body !== entry.body || entry.dirty || entry.saving) throw new Error('尚未确认保存确切正文，请保存后重试。');
-        attempt = { params: { conversation_id: conversationId, draft_id: saved.draft_id, expected_revision: saved.revision, client_request_id: mutationId() }, body: saved.body, editVersion: entry.editVersion, status: 'requesting', jobId: null, message: '', cleared: false };
+        attempt = { params: { conversation_id: conversationId, draft_id: saved.draft_id, expected_revision: saved.revision, client_request_id: mutationId() }, body: saved.body, editVersion: entry.editVersion, status: 'requesting', jobId: null, message: '', cleared: false, ...(saved.message_parts && saved.message_parts.length > 1 ? { batchId: 'pending' } : {}) };
         entry.send = attempt;
       }
       // A communication failure retains every argument, including the original request ID and revision.
       attempt.status = 'requesting'; attempt.message = ''; redraw();
       try {
-        const ack = await invoke<JobAck>('send_chat', { ...attempt.params });
-        if (!ack?.job_id) throw new Error('服务未返回任务编号，请重试原发送请求以查询同一任务。');
+        const ack = await invoke<JobAck & { batch_id?: string }>('send_chat', { ...attempt.params });
+        if (!ack?.job_id || (attempt.batchId && !ack.batch_id)) throw new Error('服务未返回任务编号，请重试原发送请求以查询同一任务。');
+        if (ack.batch_id) attempt.batchId = ack.batch_id;
         attempt.jobId = ack.job_id; attempt.status = 'queued';
         setNotice('发送请求已提交，执行状态与平台回执会在本条回复下方更新。');
         syncSends();
@@ -677,6 +726,24 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     });
   }, [action, chatBlocker, beginManualEdit, flush, invoke, syncSends, updateJobs, refreshSnapshot, loadDetail]);
 
+  const keepUnsentParts = useCallback(async () => {
+    const cid = selectionRef.current.conversationId;
+    const entry = editors.current.get(cid);
+    if (!entry || !entry.parts || !(await saveDraft(cid)) || selectionRef.current.conversationId !== cid) return;
+    const batchId = entry.server?.blocked_batch_id ?? entry.server?.batch_id;
+    const batch = detailRef.current?.reply_batches?.find(item => item.batch_id === batchId && item.status === 'stopped');
+    const accepted = entry.server?.blocked_accepted_parts;
+    if (!batch || !accepted || !accepted.length || batch.pending_operation_ids.length || entry.parts.length !== batch.total || accepted.length !== batch.accepted || accepted.some((body, index) => entry.parts?.[index] !== body)) {
+      setNotice('请保留已发送条目的原文；如已修改，请先将新增内容移到未发送条目，并核查未决回执。'); return;
+    }
+    const remaining = entry.parts.slice(accepted.length);
+    if (!remaining.length) return;
+    entry.parts = remaining; entry.body = remaining.join('\n\n'); entry.selectedPart = 0;
+    entry.remainingBatchId = batch.batch_id; entry.dirty = true; entry.edited = true; ++entry.editVersion;
+    entry.saveState = 'pending'; entry.error = ''; redraw();
+    await saveDraft(cid);
+  }, [saveDraft]);
+
   useEffect(() => {
     const protect = (event: BeforeUnloadEvent) => {
       if (dirtyForms.current.size || [...supplements.current.values()].some(entry => entry.dirty || entry.saving || entry.attachmentBusy) || [...editors.current.values()].some(entry => entry.dirty || entry.saving)) { event.preventDefault(); event.returnValue = ''; }
@@ -691,11 +758,15 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const aiReceptionReady = health.ready && identityReady && checksReady(snapshot, ['identity', 'messages', 'ai']);
   const sendIssue = chatBlocker(selection.conversationId, editor);
   const generationIssue = generationBlocker(snapshot, detail);
+  const editorBatchId = editor?.server?.blocked_batch_id ?? editor?.server?.batch_id ?? (editor?.server?.draft_id === editor?.send?.params.draft_id && editor?.server?.revision === editor?.send?.params.expected_revision ? editor?.send?.batchId : undefined);
+  const editorBatch = detail?.reply_batches?.find(batch => batch.batch_id === editorBatchId);
+  const partStructureLocked = !!editor?.parts && !editor.remainingBatchId && (!!editorBatch && (['prepared', 'sending', 'waiting_retry', 'waiting_receipt'].includes(editorBatch.status) || editorBatch.status === 'stopped' && editorBatch.accepted > 0) || !!editor?.send?.batchId && sendUnsettled(editor.send));
+  const partialBatch = editorBatch?.status === 'stopped' && editorBatch.accepted > 0 ? editorBatch : null;
 
-  return { bridge, snapshot, connected, closing, loading, error, notice, setError, setNotice, page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, historyRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
+  return { bridge, snapshot, connected, closing, loading, error, notice, setError, setNotice, page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, historyRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, editParts, selectPart, partStructureLocked, partialBatch, keepUnsentParts, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
     aiReady, aiReceptionReady, executorReady: health.ready, executorMessage: health.message, sendIssue, generationIssue, reconcileOperation,
     unknownOperations: snapshot?.outbox.filter(item => isSendOperation(item) && item.status === 'unknown' && (item.conversation_id === selection.conversationId || caseOwners.current.get(item.case_id) === selection.conversationId)) ?? [],
-    canSave: connected && !closing && !!editor?.dirty && !sendUnsettled(editor.send),
+    canSave: connected && !closing && !!editor?.dirty,
     canSend: connected && !closing && !sendIssue,
     canPreview: connected && !closing && health.ready && !!detail?.draft,
     canGenerate: connected && !closing && !!detail && !generationIssue,

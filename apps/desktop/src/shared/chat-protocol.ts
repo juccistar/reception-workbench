@@ -110,7 +110,7 @@ export function validateChatParameters(method: ApiMethod, params: Record<string,
   }
   if (!['begin_manual_edit', 'save_chat_draft', 'send_chat', 'generate_manual_suggestion'].includes(method)) return;
   if (method === 'generate_manual_suggestion') {
-    const allowed = ['conversation_id', 'case_id', 'client_request_id', 'input_body', 'input_revision', 'input_hash'];
+    const allowed = ['conversation_id', 'case_id', 'client_request_id', 'input_body', 'input_revision', 'input_hash', 'part_index'];
     if (Object.keys(params).some(key => !allowed.includes(key)) ||
         typeof params.conversation_id !== 'string' || !params.conversation_id.trim() || params.conversation_id.length > 256 ||
         !(params.case_id === null || params.case_id === undefined || typeof params.case_id === 'string' && !!params.case_id.trim() && params.case_id.length <= 256) ||
@@ -120,12 +120,15 @@ export function validateChatParameters(method: ApiMethod, params: Record<string,
         typeof params.input_revision !== 'number' || !Number.isSafeInteger(params.input_revision) || params.input_revision < 1 ||
         typeof params.input_hash !== 'string' || !/^[0-9a-f]{64}$/.test(params.input_hash) :
         params.input_revision !== undefined || params.input_hash !== undefined) throw new Error('润色正文或版本无效。');
+    if (params.part_index !== undefined && (!polishing || typeof params.part_index !== 'number' || !Number.isInteger(params.part_index) || params.part_index < 0 || params.part_index > 2)) throw new Error('润色分条编号无效。');
     return;
   }
   const keys = method === 'begin_manual_edit' ? ['conversation_id'] : method === 'save_chat_draft'
     ? ['conversation_id', 'body', 'expected_revision', 'client_mutation_id']
     : ['conversation_id', 'draft_id', 'expected_revision', 'client_request_id'];
-  if (Object.keys(params).some(key => !keys.includes(key)) || keys.some(key => !Object.hasOwn(params, key))) throw new Error('聊天操作参数无效。');
+  if (Object.keys(params).some(key => !keys.includes(key) && !(method === 'save_chat_draft' && ['message_parts', 'remaining_batch_id'].includes(key))) || keys.some(key => !Object.hasOwn(params, key))) throw new Error('聊天操作参数无效。');
+  if (method === 'save_chat_draft' && params.message_parts !== undefined && (!Array.isArray(params.message_parts) || params.message_parts.length < 1 || params.message_parts.length > 3 || params.message_parts.some((part: unknown) => typeof part !== 'string') || params.message_parts.join('\n\n') !== params.body)) throw new Error('分条正文与组合正文不一致。');
+  if (method === 'save_chat_draft' && params.remaining_batch_id !== undefined && (typeof params.remaining_batch_id !== 'string' || !params.remaining_batch_id.trim() || params.remaining_batch_id.length > 256 || !Array.isArray(params.message_parts))) throw new Error('剩余回复批次无效。');
   const id = (key: string) => typeof params[key] === 'string' && !!params[key].trim() && params[key].length <= 256;
   if (!id('conversation_id')) throw new Error('客户会话编号无效。');
   if (method === 'begin_manual_edit') return;

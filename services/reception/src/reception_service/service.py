@@ -23,6 +23,8 @@ from .continuity import ContinuityMixin, text_hash
 from .manual_chat import ManualChatMixin
 from .conversation_assistance import ConversationAssistanceMixin
 from .requirement_changes import RequirementChangesMixin, requirement_revision
+from .reply_batches import ReplyBatchMixin, reply_batch_progress
+from .reply_messages import normalize_reply_output
 from .cached_media import CachedMediaMixin
 from .whatsapp import WhatsAppMixin
 from .business_supplement import supplement_fingerprint
@@ -94,7 +96,7 @@ def coverage():
             'next_cursor': None, 'message': '尚未读取历史消息'}
 
 
-class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin, ProductLibraryMixin, RequirementMediaMixin, ExecutionMixin, ProcurementMixin, ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
+class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin, ProductLibraryMixin, RequirementMediaMixin, ExecutionMixin, ProcurementMixin, ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
     def __init__(self, data_root: Path, mode='demo', seller_id='', emit=None):
         if mode not in ('demo', 'live'):
             raise ServiceError('invalid_mode', '运行模式无效')
@@ -260,6 +262,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                     item.update(status='unknown', message='上次同步结果未知；保留操作编号，等待核对', updated_at=now_ms())
                     self.repo.put('outbox', item['operation_id'], item, history=True)
             self._restore_continuity()
+            self._recover_reply_batches()
+            self._recover_manual_reply_batches()
             for work in self.repo.list('supplement_followup'):
                 if work.get('status') == 'generating':
                     work.update(status='pending', due_at=now_ms() + 1500)
@@ -478,7 +482,7 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                 raise ServiceError('case_conversation_mismatch', '采购事项不属于当前客户会话')
             if refresh_empty:
                 self._request_empty_history(conversation_id)
-            drafts = self.repo.list('draft', case_id=case['case_id']) if case else []
+            drafts = [row for row in self.repo.list('draft', case_id=case['case_id']) if not row.get('parent_draft_id')] if case else []
             drafts.sort(key=lambda d: (d['updated_at'], d['created_at']))
             for draft in drafts:
                 draft.pop('quality_warnings', None)
@@ -500,7 +504,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                     'supplement': self._supplement(conversation_id),
                     'conversation_summary': summary,
                     'requirement_media': self.get_requirement_media(case['case_id']) if case else None,
-                    'manual_suggestion': self._manual_suggestion(conversation_id)}
+                    'manual_suggestion': self._manual_suggestion(conversation_id),
+                    'reply_batches': [reply_batch_progress(row) for row in self.repo.list('reply_batch', conversation_id=conversation_id)]}
 
     def get_messages(self, conversation_id, before_id=None, limit=50):
         if type(limit) is not int or not 1 <= limit <= 200:
@@ -830,7 +835,7 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                 confirmation['invalidated'] = True
                 self.repo.put('confirmation', confirmation['confirmation_id'], confirmation)
 
-    def _draft(self, case, body, sources, context, origin, previous=None):
+    def _draft(self, case, body, sources, context, origin, previous=None, *, messages=None):
         source = self._latest_buyer(case['conversation_id'])
         stamp = now_ms()
         return {'draft_id': previous['draft_id'] if previous and previous['status'] not in ('accepted', 'rejected') else new_id('draft'),
@@ -839,7 +844,9 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                 'body': body, 'status': 'pending', 'source_message_id': source['message_id'] if source else None,
                 'source_case_revision': case['revision'], 'source_conversation_revision': context['conversation_revision'],
                 'origin': origin, 'created_at': previous['created_at'] if previous else stamp, 'updated_at': stamp,
-                'validation': validate_reply(body, sources, context), 'context_fingerprint': context['fingerprint'],
+                'reply_messages': copy.deepcopy(messages if messages is not None else [{'body': body, 'reply_sources': sources}]),
+                'validation': validate_reply(body, sources, context, max_chars=1200 + 2 * max(0, len(messages or []) - 1)),
+                'context_fingerprint': context['fingerprint'],
                 'photo_fingerprint': photo_fingerprint(context),
                 'photo_read_images': copy.deepcopy(context.get('photo_context', {}).get('read_images', [])),
                 'supplement_fingerprint': supplement_fingerprint(context),
@@ -1064,6 +1071,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
         draft = self._require('draft', draft_id)
         case = self._require('case', draft['case_id'])
         conversation = self._require('conversation', draft['conversation_id'])
+        if draft.get('batch_id'):
+            return self._validate_reply_batch_child(draft, expected_revision, manual=manual)
         self._assert_conversation_resolved(draft['conversation_id'])
         if draft['revision'] != expected_revision:
             raise ServiceError('revision_conflict', '发送正文版本已变化')
@@ -1088,7 +1097,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
         policy_versions = {**{p['policy_id']: p['revision'] for p in context['knowledge']}, **context.get('policy_versions', {})}
         if draft.get('policy_versions', {}) != policy_versions:
             raise ServiceError('stale_policy', '适用资料或有效期已变化')
-        validation = validate_reply(draft['body'], draft['validation']['sources'], context)
+        validation = validate_reply(draft['body'], draft['validation']['sources'], context,
+                                    max_chars=1200 + 2 * max(0, len(draft.get('reply_messages', [])) - 1))
         if not validation['ready']:
             raise ServiceError('validation_blocked', '正文存在未核实依据，请先修订', stage='validation')
         supplement = draft.get('continuation', {}).get('phase') == 'supplement'
@@ -1200,6 +1210,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                     self._store_registration(current, result)
                 receipt = {k: current.get(k) for k in ('operation_id', 'kind', 'case_id', 'case_revision', 'status', 'message')}
             else:
+                batch_basis_current = bool(current.get('batch_id') and current.get('purpose') != 'chat'
+                    and self._reply_batch_basis_current(self._require('reply_batch', current['batch_id']), excluding=operation_id))
                 status = result.get('status')
                 message_id = result.get('message_id')
                 if (status not in ('accepted', 'rejected') or status == 'accepted' and
@@ -1218,9 +1230,10 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                     self._sync_chat_draft_status(current)
                     if status == 'accepted':
                         self._chat_history(current, result)
+                    self._manual_batch_receipt(current, result)
                 elif current.get('purpose') == 'continuity':
                     self._continuity_receipt(current, result)
-                draft = self.repo.get('draft', current.get('draft_id')) if current.get('purpose') not in ('chat', 'continuity') else None
+                draft = self.repo.get('draft', current.get('draft_id')) if current.get('purpose') not in ('chat', 'continuity') and not current.get('batch_id') else None
                 matching_draft = (draft and draft['revision'] == current.get('draft_revision')
                                   and draft['case_id'] == current['case_id']
                                   and draft['conversation_id'] == current['conversation_id']
@@ -1246,6 +1259,19 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                         conversation.update(last_message=latest['text'], last_timestamp=latest['timestamp_ms'],
                                             revision=conversation['revision'] + 1)
                         self.repo.put('conversation', cid, conversation)
+                if current.get('batch_id') and current.get('purpose') != 'chat':
+                    child = self.repo.get('draft', current.get('draft_id'))
+                    if child and child.get('batch_id') == current['batch_id']:
+                        child.update(status=status, updated_at=now_ms())
+                        self.repo.put('draft', child['draft_id'], child, history=True)
+                    if (status == 'accepted' and type(stamp) is int and stamp > 0
+                            and self.repo.get('message', encoded([current['conversation_id'], message_id])) is None):
+                        conversation = self._require('conversation', current['conversation_id'])
+                        self._ingest(conversation, [{'message_id': message_id, 'seller_id': self.seller_id,
+                            'buyer_id': current['buyer_id'], 'conversation_id': current['conversation_id'],
+                            'role': 'seller', 'text': current['intent']['reply'], 'timestamp_ms': stamp,
+                            'attachments': [], 'own': True}])
+                    self._reply_batch_receipt(current, result, basis_current=batch_basis_current)
                 if status in ('accepted', 'rejected'):
                     kinds = (('send_chat',) if current.get('purpose') == 'chat' else
                              ('continuity_send', 'automatic_send') if current.get('purpose') == 'continuity'
@@ -1373,6 +1399,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
             if kind == 'automatic_send':
                 job['draft_id'] = params['draft_id']
                 job['source_message_id'] = target_draft['source_message_id']
+                if target_draft.get('batch_id'):
+                    job.update(batch_id=target_draft['batch_id'], part_id=target_draft['part_id'])
             if kind in ('generate_draft', 'check_ai'):
                 job['external_started'] = False
             if kind == 'generate_draft':
@@ -1726,6 +1754,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                 return
             self._schedule_procurement()
             self._schedule_whatsapp()
+            self._schedule_manual_reply_batches()
+            self._schedule_reply_batches()
             self._schedule_continuity()
             self._schedule_generation_retries()
             with self.repo.lock:
@@ -2176,15 +2206,21 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
         return False
 
     def _validate_ai_output(self, output, context):
-        if (not isinstance(output, dict) or not isinstance(output.get('reply'), str)
-                or not isinstance(output.get('facts', {}), dict) or not isinstance(output.get('reply_sources', []), list)
+        if (not isinstance(output, dict) or not isinstance(output.get('facts', {}), dict)
                 or not isinstance(output.get('question_keys', []), list)
                 or not isinstance(output.get('conflicts', []), list)):
             raise ServiceError('invalid_ai_output', 'AI 返回的业务结构无效', stage='validation')
+        normalized = normalize_reply_output(output, allow_legacy=True,
+                                            allow_empty=output.get('action') in ('stop', 'skip', 'no_reply'))
+        output.update(normalized)
         from .requirement_changes import validate_changes
         validate_changes(output, context)
+        for message in output['reply_messages']:
+            if not validate_reply(message['body'], message['reply_sources'], context)['ready']:
+                raise ServiceError('unverified_reply', '某条回复正文或来源无效', stage='validation')
         facts = {}
-        validation = validate_reply(output['reply'], output.get('reply_sources', []), context)
+        validation = validate_reply(output['reply'], output['reply_sources'], context,
+                                    max_chars=1200 + 2 * max(0, len(output['reply_messages']) - 1))
         if not validation['ready'] and output.get('action') not in ('stop', 'skip', 'no_reply'):
             raise ServiceError('unverified_reply', 'AI 正文缺少有效来源或包含未核实承诺', stage='validation',
                                diagnostics={'validation_reason': reply_validation_reason(validation)})
@@ -2301,11 +2337,10 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
         social_reply = bool(latest and not latest.get('attachments') and social_intent(latest['text'])
                             and validation['ready'] and output.get('action') in ('ask', 'wait_quote', 'skip'))
         if social_reply:
-            # A social turn must not invent a new purchase or rewrite a handoff.
-            # Keep the AI's natural reply; constrain only procurement side effects.
+            # Conversational wording does not invalidate grounded requirements
+            # supplied earlier in this same frozen customer context.
             facts = {}
-            output = dict(output, facts={}, question_keys=[], requirement_changes=[], reply_case_refs=[],
-                          procurement_key=case['procurement_key'])
+            output = dict(output, facts={}, question_keys=[], procurement_key=case['procurement_key'])
         with self._lock, self.repo.transaction():
             current = self._require('case', case['case_id'])
             current_conversation = self._require('conversation', case['conversation_id'])
@@ -2359,7 +2394,7 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                 return {'message': '事项已停止自动回复，需求与依据已保存'}
             new_context = with_direct_photo_reads(self.get_context(current['case_id']), output.get('verified_image_reads', []))
             draft = self._draft(current, output['reply'], output.get('reply_sources', []), new_context,
-                                'demo' if self.mode == 'demo' else 'ai')
+                                'demo' if self.mode == 'demo' else 'ai', messages=output['reply_messages'])
             draft['question_keys'] = [key for key in output.get('question_keys', []) if key in FIELDS]
             draft['reply_case_ids'] = applied['reply_case_ids']
             draft['related_case_versions'] = self._related_case_versions(applied['reply_case_ids'])
@@ -2403,13 +2438,15 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
         return source
 
     def _automatic_send_source(self, draft, case, *, excluding=None):
+        if draft.get('batch_id'):
+            return self._reply_batch_basis_current(self._require('reply_batch', draft['batch_id']), excluding=excluding)
         source = (self._supplement_source(case, excluding=excluding)
                   if draft.get('continuation', {}).get('phase') == 'supplement'
-                  else self._automatic_source(draft['conversation_id'], excluding=excluding))
+                  else self._automatic_source(draft['conversation_id'], excluding=excluding or draft.get('batch_id')))
         conversation = self._require('conversation', draft['conversation_id'])
         return (source is not None and source['message_id'] == draft['source_message_id']
                 and case['case_id'] == conversation['case_id']
-                and self._in_scope(draft['conversation_id'], excluding=excluding))
+                and self._in_scope(draft['conversation_id'], excluding=excluding or draft.get('batch_id')))
 
     def _intent(self, draft, case, operation_id, epoch, automatic=False):
         source = self._intent_source(draft, case)
@@ -2422,7 +2459,7 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
             intent['frozen_scope'] = copy.deepcopy(self._frozen_scope)
             intent['budget_reserved'] = True
             intent['budget_sequence'] = self._budget_used
-        return intent
+        return self._reply_batch_intent(draft, intent) if draft.get('batch_id') else intent
 
     def _task_preview_send(self, params, job_id, epoch, facade):
         self._ensure_identity(facade)
@@ -2468,23 +2505,28 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
             if (not self._auto_send
                     or not self._automatic_send_source(draft, case)):
                 raise ServiceError('cancelled', '自动发送来源、范围或预算已失效')
-        if draft.get('continuation'):
+        if draft.get('continuation') and not draft.get('batch_id'):
             with self._lock, self.repo.transaction():
                 source = self._intent_source(draft, case)
                 phase = 'supplement' if draft['continuation'].get('phase') == 'supplement' else 'final'
                 plan = self._new_continuity_plan(case, source, phase, draft['body'], draft=draft)
                 self._job_update(job_id, plan_id=plan['plan_id'])
             return self._task_continuity_send({'plan_id': plan['plan_id']}, job_id, epoch, facade)
+        if len(draft.get('reply_messages', [])) > 1 and not draft.get('batch_id'):
+            return self._begin_reply_batch(draft, case, epoch, job_id)
         return self._perform_send(draft, case, epoch, facade, automatic=True, job_id=job_id)
 
     def _perform_send(self, draft, case, epoch, facade, *, automatic=False, confirmation=None, job_id=None):
+        if len(draft.get('reply_messages', [])) > 1 and not draft.get('batch_id'):
+            raise ServiceError('invalid_send', '多条回复须通过分条发送批次，不能组合提交')
         with self._lock, self.repo.transaction():
             if epoch != self._epoch or not self._running or self._closing:
                 raise ServiceError('cancelled', '接待权限已撤销', stage='send')
             self._validate_send(draft['draft_id'], draft['revision'], manual=not automatic)
             self._intent_source(draft, case)
             if automatic:
-                retry_state, _, retry_at = send_retry_decision(self.repo, self.seller_id, draft['conversation_id'], draft['source_message_id'])
+                retry_state, _, retry_at = send_retry_decision(self.repo, self.seller_id, draft['conversation_id'], draft['source_message_id'],
+                                                             **self._reply_batch_retry_options(draft))
                 if retry_state in ('blocked', 'exhausted') or retry_state == 'waiting' and retry_at > now_ms():
                     raise ServiceError('send_retry_blocked', '当前消息的自动发送已停止或正在等待重试', stage='send')
                 if (not self._auto_send
@@ -2499,11 +2541,16 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                          'conversation_id': draft['conversation_id'], 'source_message_id': draft['source_message_id'],
                          'status': 'sending', 'message': '等待原生最终检查和权威回执', 'updated_at': now_ms(),
                          'message_id': None, 'submission_started': False}
+            intent = self._intent(draft, case, operation_id, epoch, automatic)
+            self._reply_batch_attempt_started(draft, operation)
+            if draft.get('batch_id'):
+                operation['intent'] = copy.deepcopy(intent)
             self.repo.put('operation', operation_id, operation, history=True)
             draft['status'] = 'sending'
             draft['updated_at'] = now_ms()
             self.repo.put('draft', draft['draft_id'], draft, history=True)
-            intent = self._intent(draft, case, operation_id, epoch, automatic)
+            batch_snapshot = (self._reply_batch_send_snapshot(self._require('reply_batch', draft['batch_id']))
+                              if draft.get('batch_id') else None)
         def authorized():
             with self._lock:
                 if self._closing or not self._running or epoch != self._epoch or not self.account_verified:
@@ -2535,9 +2582,16 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                     return False
                 if self._conversation_unresolved(draft['conversation_id'], excluding=operation_id):
                     return False
+                if draft.get('batch_id') and not self._reply_batch_basis_current(self._require('reply_batch', draft['batch_id']), excluding=operation_id):
+                    return False
                 if any(o.get('purpose') != 'chat' and o['operation_id'] != operation_id and o['case_id'] == case['case_id']
                        and o['source_message_id'] == current['source_message_id']
-                       and o['status'] in ('sending', 'accepted', 'unknown') for o in self.repo.list('operation')):
+                       and o['status'] in ('sending', 'accepted', 'unknown')
+                       and not (draft.get('batch_id') and o.get('batch_id') == draft['batch_id']
+                                and o.get('part_index', -1) < draft['part_index'] and o['status'] == 'accepted')
+                       and not (draft.get('batch_id') and o.get('purpose') == 'continuity'
+                                and o.get('intent', {}).get('continuity_phase') == 'ack' and o['status'] == 'accepted')
+                       for o in self.repo.list('operation')):
                     return False
                 policies = {**{p['policy_id']: p['revision'] for p in context['knowledge']}, **context.get('policy_versions', {})}
                 expected_photo = draft.get('photo_fingerprint')
@@ -2551,7 +2605,8 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                         and policies == draft.get('policy_versions', {})
                         and validate_reply(current['body'], current['validation']['sources'], context)['ready'])
         try:
-            result = facade.send(intent, authorization=authorized)
+            sender = facade.send_chat if draft.get('batch_id') and intent.get('purpose') == 'continuity' else facade.send
+            result = sender(intent, authorization=authorized)
             status = result.get('status', 'unknown')
             if status not in ('accepted', 'rejected', 'unknown'):
                 status = 'unknown'
@@ -2567,6 +2622,15 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
             failure = {'error_code': 'adapter_error', 'stage': 'adapter',
                        'diagnostics': {'code': 'adapter_error', 'stage': 'adapter'}}
         with self._lock, self.repo.transaction():
+            batch_basis_current = bool(draft.get('batch_id') and self._reply_batch_basis_current(
+                self._require('reply_batch', draft['batch_id']), excluding=operation_id))
+            if draft.get('batch_id') and status == 'accepted':
+                returned_id = result.get('message_id')
+                existing_echo = (self.repo.get('message', encoded([draft['conversation_id'], returned_id]))
+                                 if isinstance(returned_id, str) else None)
+                if existing_echo or not batch_basis_current:
+                    batch_basis_current = self._reply_batch_echo_basis_current(
+                        self._require('reply_batch', draft['batch_id']), operation, result, batch_snapshot)
             message = {'accepted': '平台已受理发送', 'rejected': '发送已明确拒绝',
                        'unknown': '发送结果未知，禁止自动重试'}[status]
             if status == 'rejected':
@@ -2578,12 +2642,13 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
             if automatic and status == 'rejected' and submitted is False:
                 if self._draft_basis_current(draft):
                     retry_state, attempts, retry_at = send_retry_decision(
-                        self.repo, self.seller_id, draft['conversation_id'], draft['source_message_id'])
+                        self.repo, self.seller_id, draft['conversation_id'], draft['source_message_id'],
+                        **self._reply_batch_retry_options(draft))
                     draft.update(status='pending' if retry_state == 'waiting' else retry_state, retry_after=retry_at)
                     if job_id:
                         self._job_update(job_id, retry_at=retry_at, retry_attempt=attempts, retry_status=retry_state)
                     settle_waiting_jobs(self.repo, self._job_update, self.seller_id,
-                                        draft['conversation_id'], draft['source_message_id'])
+                                        draft['conversation_id'], draft['source_message_id'], **self._reply_batch_retry_options(draft))
                 else:
                     # A new buyer message or verified result may arrive while the
                     # native guard rejects the old attempt before submission.
@@ -2593,7 +2658,7 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
             self.repo.put('draft', draft['draft_id'], draft, history=True)
             if automatic and status in ('accepted', 'unknown'):
                 settle_waiting_jobs(self.repo, self._job_update, self.seller_id,
-                                    draft['conversation_id'], draft['source_message_id'])
+                                    draft['conversation_id'], draft['source_message_id'], **self._reply_batch_retry_options(draft))
             if status == 'accepted':
                 for previous in self.repo.list('job', conversation_id=draft['conversation_id']):
                     if (previous['job_id'] != job_id and previous.get('draft_id') == draft['draft_id']
@@ -2618,7 +2683,9 @@ class ReceptionService(WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin,
                        'conversation_id': draft['conversation_id'], 'role': 'seller', 'text': draft['body'],
                        'timestamp_ms': (result['timestamp_ms'] if type(result.get('timestamp_ms')) is int
                                         and result['timestamp_ms'] > 0 else now_ms()), 'attachments': [], 'own': True}
-                self._ingest(conversation, [msg])
+                if not draft.get('batch_id') or self.repo.get('message', encoded([draft['conversation_id'], msg['message_id']])) is None:
+                    self._ingest(conversation, [msg])
+            self._reply_batch_receipt(operation, result, basis_current=batch_basis_current)
         self._changed(draft['conversation_id'], case['case_id'])
         job_message = operation['message']
         if automatic and status == 'rejected' and draft['status'] != 'stale':

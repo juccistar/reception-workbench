@@ -93,6 +93,10 @@ class FakeBridge implements ReceptionBridge {
       if (this.saveHandler) return await this.saveHandler(params) as T;
       const id = String(params.conversation_id);
       const result = makeDraft(id, String(params.body), Number(params.expected_revision ?? 0) + 1);
+      const previous = this.details[id].chat_draft;
+      const linked = previous?.blocked_batch_id ?? previous?.batch_id;
+      if (linked && !params.remaining_batch_id) { result.blocked_batch_id = linked; result.blocked_accepted_parts = previous?.blocked_accepted_parts; }
+      if (Array.isArray(params.message_parts)) result.message_parts = [...params.message_parts] as string[];
       this.details[id].chat_draft = result; return clone(result) as T;
     }
     if (method === 'reconcile_operation') return (this.reconcileHandler ? await this.reconcileHandler(params) : { status: 'unknown', message: '合成操作尚无权威回执' }) as T;
@@ -128,6 +132,109 @@ describe('0.3.15 compact workspace', () => {
   const ready = (bridge: FakeBridge, id = 'pending-0315') => {
     bridge.details.emma.manual_suggestion = { suggestion_id: id, conversation_id: 'emma', case_id: 'case-emma', body: 'A synthetic reply for review.', request_id: id, context_fingerprint: 'synthetic', status: 'ready', updated_at: 1 };
   };
+  it('adopts ordered suggestion parts, edits, deletes and merges them', async () => {
+    const bridge = new FakeBridge(); ready(bridge);
+    bridge.details.emma.manual_suggestion!.body = 'first\n\nsecond';
+    bridge.details.emma.manual_suggestion!.reply_messages = [{ body: 'first', reply_sources: [] }, { body: 'second', reply_sources: [] }];
+    await openApp(bridge);
+    expect(screen.getByRole('region', { name: '待处理回复建议' })).toHaveTextContent('1. first');
+    fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
+    expect(await screen.findByRole('textbox', { name: '第 1 条回复正文' })).toHaveValue('first');
+    fireEvent.change(screen.getByRole('textbox', { name: '第 2 条回复正文' }), { target: { value: 'changed' } });
+    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => JSON.stringify(call.params.message_parts) === JSON.stringify(['first', 'changed']))).toBe(true));
+    fireEvent.click(screen.getByRole('button', { name: '删除第 1 条' }));
+    expect(screen.getByRole('textbox', { name: '第 1 条回复正文' })).toHaveValue('changed');
+    fireEvent.click(screen.getByRole('button', { name: '合为一条' }));
+    expect(textarea()).toHaveValue('changed');
+    expect(screen.queryByRole('region', { name: '待处理回复建议' })).not.toBeInTheDocument();
+  });
+  it('preserves later edits when an earlier reply batch completes', async () => {
+    const bridge = new FakeBridge(); ready(bridge);
+    bridge.details.emma.manual_suggestion!.body = 'first\n\nsecond';
+    bridge.details.emma.manual_suggestion!.reply_messages = [{ body: 'first', reply_sources: [] }, { body: 'second', reply_sources: [] }];
+    bridge.sendHandler = async params => {
+      const ack = bridge.enqueue(params);
+      bridge.details.emma.reply_batches = [{ batch_id: 'batch-1', status: 'sending', total: 2, accepted: 0, current_index: 0, pending_operation_ids: [] }];
+      return { ...ack, batch_id: 'batch-1' };
+    };
+    await openApp(bridge);
+    fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
+    await screen.findByRole('textbox', { name: '第 2 条回复正文' });
+    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => Array.isArray(call.params.message_parts))).toBe(true));
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(1));
+    fireEvent.change(screen.getByRole('textbox', { name: '第 2 条回复正文' }), { target: { value: 'later input' } });
+    bridge.details.emma.reply_batches = [{ batch_id: 'batch-1', status: 'accepted', total: 2, accepted: 2, current_index: null, pending_operation_ids: [] }];
+    act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
+    await screen.findByText('已发送 2/2 条');
+    expect(screen.getByRole('textbox', { name: '第 2 条回复正文' })).toHaveValue('later input');
+    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => call.params.body === 'first\n\nlater input')).toBe(true));
+  });
+  it('requires an explicit remaining-only draft after partial acceptance', async () => {
+    const bridge = new FakeBridge(); ready(bridge);
+    bridge.details.emma.manual_suggestion!.body = 'first\n\nsecond';
+    bridge.details.emma.manual_suggestion!.reply_messages = [{ body: 'first', reply_sources: [] }, { body: 'second', reply_sources: [] }];
+    bridge.sendHandler = async params => {
+      const ack = bridge.enqueue(params);
+      if (bridge.requests.size === 1) {
+        bridge.details.emma.chat_draft!.batch_id = 'batch-partial';
+        bridge.details.emma.reply_batches = [{ batch_id: 'batch-partial', status: 'sending', total: 2, accepted: 0, current_index: 0, pending_operation_ids: [] }];
+        return { ...ack, batch_id: 'batch-partial' };
+      }
+      return ack;
+    };
+    await openApp(bridge);
+    fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
+    await screen.findByRole('textbox', { name: '第 2 条回复正文' });
+    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => Array.isArray(call.params.message_parts))).toBe(true));
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(1));
+    fireEvent.change(screen.getByRole('textbox', { name: '第 2 条回复正文' }), { target: { value: 'new second' } });
+    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => call.params.body === 'first\n\nnew second')).toBe(true));
+    bridge.details.emma.chat_draft!.blocked_batch_id = 'batch-partial';
+    bridge.details.emma.chat_draft!.blocked_accepted_parts = ['first'];
+    bridge.details.emma.reply_batches = [{ batch_id: 'batch-partial', status: 'stopped', total: 2, accepted: 1, current_index: 1, pending_operation_ids: [] }];
+    bridge.snapshot.jobs[0].status = 'failed';
+    act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
+    await screen.findByRole('button', { name: '只保留未发送内容' });
+    expect(sendButton()).toBeDisabled();
+    expect(screen.getByRole('textbox', { name: '第 2 条回复正文' })).toHaveValue('new second');
+    fireEvent.click(screen.getByRole('button', { name: '只保留未发送内容' }));
+    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => call.params.remaining_batch_id === 'batch-partial' && call.params.body === 'new second')).toBe(true));
+    expect(screen.getByRole('textbox', { name: '第 1 条回复正文' })).toHaveValue('new second');
+    await waitFor(() => expect(sendButton()).toBeEnabled());
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(2));
+    expect(bridge.details.emma.chat_draft!.body).toBe('new second');
+  });
+  it('polishes only the selected saved part and rejects a stale replacement', async () => {
+    const originalSubtle = Object.getOwnPropertyDescriptor(globalThis.crypto, 'subtle');
+    Object.defineProperty(globalThis.crypto, 'subtle', { configurable: true, value: webcrypto.subtle });
+    try {
+      const bridge = new FakeBridge(); ready(bridge);
+      bridge.details.emma.manual_suggestion!.body = 'first\n\nsecond';
+      bridge.details.emma.manual_suggestion!.reply_messages = [{ body: 'first', reply_sources: [] }, { body: 'second', reply_sources: [] }];
+      await openApp(bridge);
+      fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
+      const second = await screen.findByRole('textbox', { name: '第 2 条回复正文' });
+      fireEvent.focus(second);
+      await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => Array.isArray(call.params.message_parts))).toBe(true));
+      fireEvent.click(screen.getByRole('button', { name: '润色当前回复' }));
+      await waitFor(() => expect(calls(bridge, 'generate_manual_suggestion')).toHaveLength(1));
+      const params = calls(bridge, 'generate_manual_suggestion')[0].params;
+      expect(params).toMatchObject({ input_body: 'second', part_index: 1 });
+      bridge.details.emma.manual_suggestion = { suggestion_id: 'part-result', conversation_id: 'emma', case_id: 'case-emma', body: 'polished', request_id: 'part-result', context_fingerprint: 'synthetic', status: 'ready', updated_at: 1, mode: 'polish', input_part_index: 1, input_revision: params.input_revision as number, input_hash: params.input_hash as string };
+      act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
+      await screen.findByText('polished');
+      fireEvent.change(second, { target: { value: 'newer edit' } });
+      fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
+      expect(screen.getByRole('textbox', { name: '第 2 条回复正文' })).toHaveValue('newer edit');
+      expect(screen.getByRole('textbox', { name: '第 1 条回复正文' })).toHaveValue('first');
+    } finally {
+      if (originalSubtle) Object.defineProperty(globalThis.crypto, 'subtle', originalSubtle);
+      else Reflect.deleteProperty(globalThis.crypto, 'subtle');
+    }
+  });
   it('shows full local timestamps above messages without date separators', async () => {
     const bridge = new FakeBridge();
     bridge.details.emma.messages[0].timestamp_ms = new Date(2026, 0, 2, 3, 4, 5).getTime();
@@ -390,6 +497,14 @@ describe('manual suggestion and supplement', () => {
     expect(() => validateChatParameters('generate_manual_suggestion', { ...valid, input_revision: null })).toThrow();
     expect(() => validateChatParameters('generate_manual_suggestion', { ...valid, input_body: 'changed', input_hash: null })).toThrow();
     expect(() => validateChatParameters('generate_manual_suggestion', { ...valid, foreign_body: 'other customer' })).toThrow();
+    expect(() => validateChatParameters('generate_manual_suggestion', { ...valid, part_index: 2 })).not.toThrow();
+    expect(() => validateChatParameters('generate_manual_suggestion', { ...valid, part_index: 3 })).toThrow();
+    const parts = { conversation_id: 'emma', body: 'one\n\ntwo', expected_revision: null, client_mutation_id: 'm', message_parts: ['one', 'two'] };
+    expect(() => validateChatParameters('save_chat_draft', parts)).not.toThrow();
+    expect(() => validateChatParameters('save_chat_draft', { ...parts, body: 'different' })).toThrow();
+    expect(() => validateChatParameters('save_chat_draft', { ...parts, remaining_batch_id: 'batch' })).not.toThrow();
+    expect(() => validateChatParameters('save_chat_draft', { ...parts, remaining_batch_id: '' })).toThrow();
+    expect(() => validateChatParameters('save_chat_draft', { ...parts, message_parts: undefined, remaining_batch_id: 'batch' })).toThrow();
   });
   it('polishes the exact saved body and displays the suggestion translation without editing the reply', async () => {
     const originalSubtle = Object.getOwnPropertyDescriptor(globalThis.crypto, 'subtle');

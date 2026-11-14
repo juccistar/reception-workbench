@@ -116,6 +116,159 @@ class ManualChatTests(unittest.TestCase):
         self.service.repo.put('conversation', self.cid, conversation)
         return case
 
+    def test_message_parts_save_validation_and_send(self):
+        params = {'conversation_id': self.cid, 'body': 'first\n\nsecond', 'message_parts': ['first', 'second'],
+                  'expected_revision': None, 'client_mutation_id': new_id('mutation')}
+        draft = self.service.call('save_chat_draft', params)
+        self.assertEqual(draft['message_parts'], ['first', 'second'])
+        params.update(body='different', expected_revision=draft['revision'], client_mutation_id=new_id('mutation'))
+        with self.assertRaises(ServiceError):
+            self.service.call('save_chat_draft', params)
+        ack = self.service.call('send_chat', self.params(draft))
+        self.assertEqual(self.wait_job(ack)['status'], 'succeeded')
+        batch = self.service.repo.get('reply_batch', ack['batch_id'])
+        self.assertEqual(batch['status'], 'prepared')
+        self.assertEqual([intent['reply'] for intent in self.facade.chat_intents], ['first'])
+        self.service._schedule_manual_reply_batches()
+        batch = self.service.repo.get('reply_batch', ack['batch_id'])
+        operation = self.service.repo.get('operation', batch['parts'][1]['operation_ids'][0])
+        self.assertEqual(self.wait_job({'job_id': operation['job_id']})['status'], 'succeeded')
+        batch = self.service.repo.get('reply_batch', ack['batch_id'])
+        self.assertEqual(batch['status'], 'accepted')
+        self.assertEqual([intent['reply'] for intent in self.facade.chat_intents], ['first', 'second'])
+        self.assertEqual(self.service.repo.get('chat_draft', self.cid)['status'], 'accepted')
+
+    def test_message_parts_empty_can_save_but_not_send(self):
+        params = {'conversation_id': self.cid, 'body': 'first\n\n', 'message_parts': ['first', ''],
+                  'expected_revision': None, 'client_mutation_id': new_id('mutation')}
+        draft = self.service.call('save_chat_draft', params)
+        self.assertFalse(draft['validation']['ready'])
+        with self.assertRaises(ServiceError):
+            self.service.call('send_chat', self.params(draft))
+        self.assertEqual(self.facade.chat_intents, [])
+
+    def test_batch_unknown_stops_tail_and_preserves_new_input(self):
+        draft = self.service.call('save_chat_draft', {'conversation_id': self.cid, 'body': 'one\n\ntwo',
+            'message_parts': ['one', 'two'], 'expected_revision': None, 'client_mutation_id': new_id('mutation')})
+        self.facade.block_chat = True
+        self.facade.chat_result = {'status': 'unknown', 'submission_started': True}
+        ack = self.service.call('send_chat', self.params(draft))
+        self.assertTrue(self.facade.chat_started.wait(3))
+        newer = self.save('new input')
+        self.facade.chat_release.set()
+        self.assertEqual(self.wait_job(ack)['status'], 'unknown')
+        batch = self.service.repo.get('reply_batch', ack['batch_id'])
+        self.assertEqual(batch['status'], 'stopped')
+        self.assertEqual([part['status'] for part in batch['parts']], ['unknown', 'cancelled'])
+        self.assertEqual(self.service.repo.get('chat_draft', self.cid)['body'], newer['body'])
+        self.service._schedule_manual_reply_batches()
+        self.assertEqual(len(self.facade.chat_intents), 1)
+        operation = self.service.repo.get('operation', batch['parts'][0]['operation_ids'][0])
+        operation.update(status='accepted', message_id='late-platform-receipt')
+        with self.service._lock, self.service.repo.transaction():
+            self.service.repo.put('operation', operation['operation_id'], operation)
+            self.service._manual_batch_receipt(operation, {'status': 'accepted'})
+        self.assertEqual(self.service.repo.get('reply_batch', ack['batch_id'])['status'], 'stopped')
+        self.service._schedule_manual_reply_batches()
+        self.assertEqual(len(self.facade.chat_intents), 1)
+
+    def test_batch_new_message_stops_tail_and_recovery_stops_prepared(self):
+        draft = self.service.call('save_chat_draft', {'conversation_id': self.cid, 'body': 'one\n\ntwo',
+            'message_parts': ['one', 'two'], 'expected_revision': None, 'client_mutation_id': new_id('mutation')})
+        ack = self.service.call('send_chat', self.params(draft))
+        self.assertEqual(self.wait_job(ack)['status'], 'succeeded')
+        self.ingest(text='new buyer message')
+        self.service._schedule_manual_reply_batches()
+        batch = self.service.repo.get('reply_batch', ack['batch_id'])
+        self.assertEqual([part['status'] for part in batch['parts']], ['accepted', 'cancelled'])
+        self.assertEqual(len(self.facade.chat_intents), 1)
+        batch['status'] = 'prepared'
+        batch['parts'][1]['status'] = 'planned'
+        self.service.repo.put('reply_batch', batch['batch_id'], batch)
+        with self.service._lock, self.service.repo.transaction():
+            self.service._recover_manual_reply_batches()
+        self.assertEqual(self.service.repo.get('reply_batch', ack['batch_id'])['status'], 'stopped')
+
+    def test_partial_batch_requires_explicit_remaining_and_preserves_new_input(self):
+        draft = self.service.call('save_chat_draft', {'conversation_id': self.cid, 'body': 'first\n\nsecond',
+            'message_parts': ['first', 'second'], 'expected_revision': None, 'client_mutation_id': new_id('mutation')})
+        ack = self.service.call('send_chat', self.params(draft))
+        self.assertEqual(self.wait_job(ack)['status'], 'succeeded')
+        self.facade.block_chat = True
+        self.facade.chat_result = {'status': 'rejected', 'submission_started': False}
+        self.service._schedule_manual_reply_batches()
+        self.assertTrue(self.facade.chat_started.wait(3))
+        edited = self.service.call('save_chat_draft', {'conversation_id': self.cid, 'body': 'first\n\nnew second',
+            'message_parts': ['first', 'new second'], 'expected_revision': draft['revision'], 'client_mutation_id': new_id('mutation')})
+        self.facade.chat_release.set()
+        batch = self.service.repo.get('reply_batch', ack['batch_id'])
+        operation = self.service.repo.get('operation', batch['parts'][1]['operation_ids'][0])
+        self.assertEqual(self.wait_job({'job_id': operation['job_id']})['status'], 'failed')
+        current = self.service.repo.get('chat_draft', self.cid)
+        self.assertEqual(current['body'], 'first\n\nnew second')
+        self.assertEqual(current['blocked_batch_id'], ack['batch_id'])
+        self.assertEqual(current['blocked_accepted_parts'], ['first'])
+        with self.assertRaises(ServiceError) as error:
+            self.service.call('send_chat', self.params(current))
+        self.assertEqual(error.exception.code, 'partial_batch')
+        with self.assertRaises(ServiceError):
+            self.service.call('save_chat_draft', {'conversation_id': self.cid, 'body': 'first',
+                'message_parts': ['first'], 'remaining_batch_id': ack['batch_id'],
+                'expected_revision': edited['revision'], 'client_mutation_id': new_id('mutation')})
+        release_request = {'conversation_id': self.cid, 'body': 'new second',
+            'message_parts': ['new second'], 'remaining_batch_id': ack['batch_id'],
+            'expected_revision': edited['revision'], 'client_mutation_id': new_id('mutation')}
+        remaining = self.service.call('save_chat_draft', release_request)
+        self.assertEqual(self.service.call('save_chat_draft', release_request), remaining)
+        with self.assertRaises(ServiceError):
+            self.service.call('save_chat_draft', {**release_request, 'remaining_batch_id': 'other-batch'})
+        self.assertNotIn('blocked_batch_id', remaining)
+        self.facade.block_chat = False
+        self.facade.chat_result = None
+        self.assertEqual(self.send(remaining)['status'], 'succeeded')
+        self.assertEqual([intent['reply'] for intent in self.facade.chat_intents], ['first', 'second', 'new second'])
+
+    def test_partial_batch_does_not_discard_edits_to_accepted_prefix(self):
+        draft = self.service.call('save_chat_draft', {'conversation_id': self.cid, 'body': 'first\n\nsecond',
+            'message_parts': ['first', 'second'], 'expected_revision': None, 'client_mutation_id': new_id('mutation')})
+        ack = self.service.call('send_chat', self.params(draft))
+        self.assertEqual(self.wait_job(ack)['status'], 'succeeded')
+        self.facade.block_chat = True
+        self.facade.chat_result = {'status': 'rejected', 'submission_started': False}
+        self.service._schedule_manual_reply_batches()
+        self.assertTrue(self.facade.chat_started.wait(3))
+        edited = self.service.call('save_chat_draft', {'conversation_id': self.cid, 'body': 'first plus new input\n\nsecond',
+            'message_parts': ['first plus new input', 'second'], 'expected_revision': draft['revision'], 'client_mutation_id': new_id('mutation')})
+        self.facade.chat_release.set()
+        batch = self.service.repo.get('reply_batch', ack['batch_id'])
+        operation = self.service.repo.get('operation', batch['parts'][1]['operation_ids'][0])
+        self.wait_job({'job_id': operation['job_id']})
+        with self.assertRaises(ServiceError):
+            self.service.call('save_chat_draft', {'conversation_id': self.cid, 'body': 'second',
+                'message_parts': ['second'], 'remaining_batch_id': ack['batch_id'],
+                'expected_revision': edited['revision'], 'client_mutation_id': new_id('mutation')})
+        self.assertEqual(self.service.repo.get('chat_draft', self.cid)['body'], 'first plus new input\n\nsecond')
+
+    def test_batch_pause_stops_tail(self):
+        draft = self.service.call('save_chat_draft', {'conversation_id': self.cid, 'body': 'one\n\ntwo',
+            'message_parts': ['one', 'two'], 'expected_revision': None, 'client_mutation_id': new_id('mutation')})
+        ack = self.service.call('send_chat', self.params(draft))
+        self.assertEqual(self.wait_job(ack)['status'], 'succeeded')
+        self.service.set_reception(False)
+        self.service._schedule_manual_reply_batches()
+        self.assertEqual(self.service.repo.get('reply_batch', ack['batch_id'])['status'], 'stopped')
+        self.assertEqual(len(self.facade.chat_intents), 1)
+
+    def test_active_reply_batch_fences_other_sends(self):
+        self.service.repo.put('reply_batch', 'batch', {'batch_id': 'batch', 'conversation_id': self.cid, 'status': 'prepared'})
+        self.assertTrue(self.service._conversation_unresolved(self.cid))
+        self.assertFalse(self.service._conversation_unresolved(self.cid, excluding='batch'))
+        self.service.repo.put('operation', 'op', {'operation_id': 'op', 'conversation_id': self.cid, 'status': 'sending', 'batch_id': 'batch'})
+        self.assertTrue(self.service._conversation_unresolved(self.cid, excluding='batch'))
+        self.assertFalse(self.service._conversation_unresolved(self.cid, excluding='op'))
+        self.service.repo.put('reply_batch', 'other', {'batch_id': 'other', 'conversation_id': self.cid, 'status': 'waiting_receipt'})
+        self.assertTrue(self.service._conversation_unresolved(self.cid, excluding='op'))
+
     def test_no_case_is_not_ownership_error_and_manual_chat_sends(self):
         conversation = self.service.repo.get('conversation', self.cid)
         conversation['case_id'] = None
@@ -163,6 +316,11 @@ class ManualChatTests(unittest.TestCase):
         self.assertEqual(self.wait_job(sent)['status'], 'succeeded')
         self.assertEqual(self.wait_job(synced)['status'], 'succeeded')
         self.assertEqual(order, [self.cid, 'synthetic-other'])
+        # Durable job completion precedes the worker's exact-dequeue finalizer.
+        # Wait for that finalizer, retaining the assertion that no claim leaks.
+        with self.service._queue.all_tasks_done:
+            self.assertTrue(self.service._queue.all_tasks_done.wait_for(
+                lambda: self.service._queue.unfinished_tasks == 0, timeout=5))
         self.assertEqual(self.service._queue.unfinished_tasks, 0)
 
     def test_clean_close_marks_never_started_chat_unsubmitted_and_keeps_body(self):
@@ -240,7 +398,7 @@ class ManualChatTests(unittest.TestCase):
         conversation = self.service.repo.get('conversation', self.cid)
         self.facade.block_read = True
         read = self.service.call('sync_messages')
-        self.assertTrue(self.facade.started.wait(1))
+        self.assertTrue(self.facade.started.wait(5), self.service.list_jobs())
         started = time.monotonic()
         first = self.service.call('begin_manual_edit', {'conversation_id': self.cid})
         second = self.service.begin_manual_edit(self.cid)
@@ -358,7 +516,7 @@ class ManualChatTests(unittest.TestCase):
             futures = [pool.submit(retry) for _ in range(12)]
             barrier.wait(3)
             acks = [future.result(3) for future in futures]
-        self.assertTrue(self.facade.chat_started.wait(1))
+        self.assertTrue(self.facade.chat_started.wait(5), self.service.list_jobs())
         self.assertTrue(all(ack == acks[0] for ack in acks))
         self.assertEqual(len(self.service.repo.list('operation')), 1)
         operation = self.service.repo.list('operation')[0]
@@ -416,7 +574,7 @@ class ManualChatTests(unittest.TestCase):
         self.start_auto()
         self.facade.block_read = True
         read = self.service.call('sync_messages')
-        self.assertTrue(self.facade.started.wait(1))
+        self.assertTrue(self.facade.started.wait(5), self.service.list_jobs())
         draft = self.save('Synthetic queued exact body')
         ack = self.service.call('send_chat', self.params(draft))
         self.assertEqual(self.service.repo.list('operation')[0]['status'], 'prepared')
@@ -434,7 +592,7 @@ class ManualChatTests(unittest.TestCase):
         draft = self.save()
         self.facade.block_chat = True
         ack = self.service.call('send_chat', self.params(draft))
-        self.assertTrue(self.facade.chat_started.wait(1))
+        self.assertTrue(self.facade.chat_started.wait(5), self.service.list_jobs())
         self.service.set_reception(False)
         self.ingest(text='Do not contact me.', stamp=now_ms() + 20)
         case = self.service.repo.get('case', self.case_id)
@@ -447,7 +605,7 @@ class ManualChatTests(unittest.TestCase):
     def test_facade_replacement_revokes_queued_intent(self):
         self.facade.block_read = True
         read = self.service.call('sync_messages')
-        self.assertTrue(self.facade.started.wait(1))
+        self.assertTrue(self.facade.started.wait(5), self.service.list_jobs())
         ack = self.service.call('send_chat', self.params(self.save()))
         replacement = ChatFacade()
         with patch('reception_service.service.build_integrations', return_value=replacement):
@@ -469,7 +627,7 @@ class ManualChatTests(unittest.TestCase):
                 self.facade.chat_release.clear()
                 self.facade.block_chat = True
                 ack = self.service.call('send_chat', self.params(draft))
-                self.assertTrue(self.facade.chat_started.wait(1))
+                self.assertTrue(self.facade.chat_started.wait(5), self.service.list_jobs())
                 operation = self.service.repo.list('operation', conversation_id=cid)[0]
                 if change == 'verified':
                     self.service.account_verified = False
@@ -576,7 +734,7 @@ class ManualChatTests(unittest.TestCase):
         params = self.params(draft)
         self.facade.block_read = True
         read = self.service.call('sync_messages')
-        self.assertTrue(self.facade.started.wait(1))
+        self.assertTrue(self.facade.started.wait(5), self.service.list_jobs())
         ack = self.service.call('send_chat', params)
         # Capture a true abrupt boundary before performing orderly test cleanup.
         crashed_operation = self.service.repo.list('operation')[0]
@@ -674,7 +832,7 @@ class ManualChatTests(unittest.TestCase):
         case = self.service.repo.get('case', self.case_id)
         self.facade.block_generate = True
         ack = self.service.call('generate_draft', {'case_id': self.case_id, 'expected_case_revision': case['revision']})
-        self.assertTrue(self.facade.started.wait(1))
+        self.assertTrue(self.facade.started.wait(5), self.service.list_jobs())
         draft = self.save('My exact handwritten body')
         self.facade.release.set()
         self.assertEqual(self.wait_job(ack)['status'], 'stale')

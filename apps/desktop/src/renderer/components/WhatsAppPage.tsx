@@ -108,7 +108,7 @@ export function WhatsAppPage({ model, bridge, obscured = false }: { model: Workb
     window.addEventListener('resize', update);
     update();
     return () => { stopped = true; cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener('resize', update); void bridge.setWhatsAppView!({ visible: false }).catch(() => {}); };
-  }, [bridge, host.status, host.page_state, host.phase, host.error_code, host.http_status, host.diagnostic_id, detailsOpen, panel, obscured, model.closing, error, notice, state?.pending_operations.length, connected]);
+  }, [bridge, host.status, host.page_state, host.phase, host.error_code, host.http_status, host.diagnostic_id, detailsOpen, panel, obscured, model.closing, error, notice, state?.pending_operations.length, state?.reply_batches?.length, connected]);
 
   const act = async (key: string, action: () => Promise<unknown>, success = '') => {
     if (pending || model.closing) return;
@@ -165,6 +165,7 @@ export function WhatsAppPage({ model, bridge, obscured = false }: { model: Workb
       {selected && <Button disabled={disabled || !connected || (!!current?.human_owned && (!health.ready || !receptionReady))} onClick={() => void act('takeover', () => bridge!.invoke('takeover_whatsapp', { ...identity, chat_id: selected, enabled: !current?.human_owned }), current?.human_owned ? '已恢复所选客户自动接待。' : '所选客户已由人工接管。')}>{current?.human_owned ? '恢复此客户接待' : '人工接管此客户'}</Button>}
     </div>
     {(error || notice) && <div className={`whatsapp-feedback ${error ? 'is-error' : ''}`} role={error ? 'alert' : 'status'}>{error || notice}</div>}
+    {(state?.reply_batches ?? []).filter(batch => batch.status !== 'accepted').map(batch => <div className="whatsapp-hint" role="status" key={batch.batch_id}>{allContacts.find(chat => chat.chat_id === batch.chat_id)?.name || '单聊'}：已发送 {batch.accepted}/{batch.total} 条{batch.status === 'stopped' ? '，未提交的尾部已停止' : batch.status === 'waiting_receipt' && batch.current_index !== null ? `，第 ${batch.current_index + 1} 条等待回执` : ''}</div>)}
     {unresolved.length > 0 && <div className="whatsapp-pending" role="status"><span>有 {unresolved.length} 条自动发送正在处理或等待确切回执。相关单聊会暂停新增自动发送；原始界面仍可人工操作。</span>{unresolved.filter(item => item.status === 'unknown' || item.status === 'submitted').map(item => <Button key={item.operation_id} disabled={disabled} onClick={() => void act('reconcile', () => bridge!.invoke('reconcile_whatsapp_operation', { operation_id: item.operation_id }), '已请求核查原发送回执。')}>核查 {allContacts.find(chat => chat.chat_id === item.chat_id)?.name || '单聊'} 的回执</Button>)}</div>}
     <div className="whatsapp-native-surface" ref={surface} data-testid="whatsapp-native-surface"><Empty title={host.status === 'disconnected' ? '连接 WhatsApp 后在这里使用原始界面' : host.status === 'error' ? '连接未完成，请重新连接' : '正在加载 WhatsApp Web'} icon={<MessageCircle size={40} strokeWidth={1.3} />}>登录二维码、聊天列表和输入框由 WhatsApp Web 原始页面提供。</Empty></div>
     <footer className="whatsapp-footer">{!health.ready ? health.message : !receptionReady && state?.enabled ? '自动接待未就绪' : state?.enabled ? '全部单聊自动接待已开启' : 'WhatsApp 自动接待已暂停'}<span>在原始界面或手机上人工回复，会接管相应客户。</span></footer>

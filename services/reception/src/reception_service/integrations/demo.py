@@ -45,7 +45,7 @@ def natural_demo_analysis(context):
         result.update(action='ask', reply=demo_social_reply(latest['text'], intent),
                       summary=case.get('summary', ''), missing=list(case.get('missing') or []),
                       reply_sources=[latest['message_id']])
-        return validate_analysis({key: value for key, value in result.items() if key != 'new_case'}, context)
+        return validate_analysis({key: value for key, value in result.items() if key != 'new_case'}, context, allow_legacy=True)
     photo_rows = ((context.get('photo_context') or {}).get('observations') or []) + ((context.get('photo_context') or {}).get('read_images') or [])
     photo = next((row for row in photo_rows if row.get('message_id') == latest['message_id']), None)
     if photo and latest['text'].strip() == '[image]':
@@ -53,7 +53,7 @@ def natural_demo_analysis(context):
                       reply='Thanks for the photo. The image appears to show a green tote bag. Is this the design you have in mind?',
                       summary=case.get('summary', ''), missing=list(case.get('missing') or []),
                       reply_sources=[latest['message_id'], photo.get('observation_id') or photo['image_id']])
-        return validate_analysis({key: value for key, value in result.items() if key != 'new_case'}, context)
+        return validate_analysis({key: value for key, value in result.items() if key != 'new_case'}, context, allow_legacy=True)
     buyers = [row for row in messages if row['role'] == 'buyer']
     boundary = re.compile(r'new (?:order|inquiry)|another (?:order|product)|separate order|新(?:采购|订单|需求)|另(?:一|外).*采购', re.I)
     boundaries = [index for index, row in enumerate(buyers) if boundary.search(row['text'])]
@@ -127,7 +127,7 @@ def natural_demo_analysis(context):
                   missing=missing, reply_sources=list(dict.fromkeys([latest['message_id'],
                       *(mid for fact in facts.values() for mid in fact['evidence_ids']),
                       *([note['source_id']] if note.get('body') and note.get('source_id') else [])])))
-    return validate_analysis({key: value for key, value in result.items() if key != 'new_case'}, context)
+    return validate_analysis({key: value for key, value in result.items() if key != 'new_case'}, context, allow_legacy=True)
 
 
 class DemoIntegration:
@@ -283,6 +283,11 @@ class DemoIntegration:
         if on_call_start is not None:
             on_call_start()
         result = natural_demo_analysis(with_direct_photo_reads(context, refs))
+        if 'reply_messages' not in result:
+            from ..reply_messages import normalize_reply_output
+            if result['action'] == 'skip':
+                result['reply_messages'] = []
+            result = normalize_reply_output(result, allow_legacy=True, allow_empty=result['action'] == 'skip')
         latest = next((m for m in reversed(context.get('recent_messages', [])) if m.get('role') == 'buyer'), None)
         if latest:
             result['conversation_summary'] = '客户提出了沟通事项。'
@@ -298,8 +303,9 @@ class DemoIntegration:
             on_call_start()
         messages = context.get('whatsapp_messages', [])
         source = next((m['source_id'] for m in reversed(messages) if m.get('role') == 'buyer'), None)
-        return {'reply': 'Thank you for your message. How can I help you?',
-                'reply_sources': [source] if source else [], 'wa_summary': '客户提出了沟通事项。'}
+        from ..reply_messages import normalize_reply_output
+        return normalize_reply_output({'reply': 'Thank you for your message. How can I help you?',
+                'reply_sources': [source] if source else [], 'wa_summary': '客户提出了沟通事项。'}, allow_legacy=True)
 
     def generate_requirements(self, context, request_id, *, on_call_start=None, cancel_event=None, photo_inputs=None):
         if cancel_event is not None and cancel_event.is_set():
@@ -335,6 +341,11 @@ class DemoIntegration:
             message = next((m for m in reversed(messages) if m.get('role') == 'buyer'), None)
             if message:
                 self._demo_quantity_change(result, context, message)
+        if not unsent:
+            from ..reply_messages import normalize_reply_output
+            source = next((m.get('message_id') for m in reversed(messages) if m.get('role') == 'buyer'), None)
+            result['reply_sources'] = [source] if source else []
+            result = normalize_reply_output(result, allow_legacy=True)
         return result
 
     @staticmethod
@@ -403,8 +414,15 @@ class DemoIntegration:
                                 or type(source_time) is not int or source_time < started):
                             raise ServiceError('authorization_revoked', '新消息范围、卖家或来源时间未通过', stage='send')
                 operation = intent.get('operation_id')
-                prior = self.ledger.claim(operation, 'send:' + digest([
-                    self.seller_id, intent.get('conversation_id'), intent.get('source_message_id')]), 'send', intent,
+                logical = 'send:' + digest([self.seller_id, intent.get('conversation_id'), intent.get('source_message_id')])
+                if intent.get('batch_id'):
+                    from .accio_native.chat import _batch_prefix, _batch_part
+                    intent = dict(intent, purpose='reception')
+                    _batch_prefix(self, intent)
+                    if (_batch_part(intent) or 0) > 0:
+                        logical = 'send-part:' + digest([self.seller_id, intent['conversation_id'],
+                            intent['source_message_id'], intent['batch_id'], intent['part_index']])
+                prior = self.ledger.claim(operation, logical, 'send', intent,
                     allow_rejected_send=True, conversation_fence=True)
                 if prior:
                     return dict(prior, simulated=True)
@@ -458,13 +476,13 @@ class DemoIntegration:
                        if result.get('status') == 'accepted' and result.get('message_id') == latest['message_id']
                        and request.get('reply') == latest['text']
                        and all(request.get(k) == intent[k] for k in ('seller_id', 'buyer_id', 'conversation_id'))]
-            if len(matches) != 1 or phase == 'final' and not (
+            if len(matches) != 1 or phase == 'final' and not ((intent.get('part_index') or 0) > 0) and not (
                     matches[0].get('purpose') == 'continuity' and matches[0].get('continuity_phase') == 'ack'
                     and matches[0].get('source_message_id') == source['message_id']):
                 raise ServiceError('source_changed', '演示最新卖家消息缺少已受理依据')
 
     def send_chat(self, intent, authorization):
-        from .accio_native.chat import authorized, chat_text, _claim_continuity
+        from .accio_native.chat import authorized, chat_text, _claim_continuity, _batch_prefix, _batch_part
         with self.lock:
             claimed = attempted = False
             epoch = self.permission_epoch
@@ -482,6 +500,7 @@ class DemoIntegration:
                     raise ServiceError('identity_mismatch', '演示会话归属不符')
                 chat_text(intent.get('reply'))
                 authorized(authorization)
+                _batch_prefix(self, intent)
                 if continuity:
                     previous = self.ledger.get(operation)
                     if previous:
@@ -491,9 +510,11 @@ class DemoIntegration:
                     self._verify_continuity(intent, authorization, epoch)
                     _claim_continuity(self, intent)
                 else:
-                    prior = self.ledger.claim(operation, 'chat:' + digest([
-                        self.seller_id, intent['conversation_id'], intent['client_request_id']]), 'send', intent,
-                        conversation_fence=True)
+                    logical = 'chat:' + digest([self.seller_id, intent['conversation_id'], intent['client_request_id']])
+                    if (_batch_part(intent) or 0) > 0:
+                        logical = 'chat-part:' + digest([self.seller_id, intent['conversation_id'],
+                            intent.get('source_message_id'), intent['batch_id'], intent['part_index']])
+                    prior = self.ledger.claim(operation, logical, 'send', intent, conversation_fence=True)
                     if prior:
                         return prior
                 claimed = True

@@ -196,6 +196,7 @@ button{transition:background-color 120ms,color 120ms,border-color 120ms}
 .new-messages{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);border:1px solid #d5e8df;border-radius:15px;padding:6px 12px;display:flex;align-items:center;gap:7px;background:#fff;box-shadow:0 3px 10px #183d2210;color:var(--green);font-size:11px;z-index:2}
 .composer{margin:0 20px 19px;padding:15px 16px 14px;border:1px solid #e3e7e8;border-radius:12px;box-shadow:0 3px 9px #26383403;flex:0 1 auto;min-height:0;max-height:55%;display:flex;flex-direction:column;background:#fff}
 .composer-content{min-height:0;overflow:auto;overscroll-behavior:contain}
+.reply-parts{display:grid;gap:8px}.reply-parts>div{border:1px solid #e2ebe6;border-radius:7px;padding:8px}.reply-parts label{display:block;font-size:11px;color:#547560}.reply-parts textarea{display:block;width:100%;min-height:64px;margin-top:5px;padding:8px;resize:vertical;font:13px/1.6 "Segoe UI","Microsoft YaHei UI",sans-serif}.reply-parts .button{font-size:11px;min-height:28px}
 .composer-actions{flex-shrink:0}
 .composer-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
 .composer-heading>div{display:flex;align-items:center;gap:8px}

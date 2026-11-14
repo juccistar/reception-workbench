@@ -4,7 +4,7 @@ import type { ReceptionBridge } from '../src/shared/api';
 import type { Workbench } from '../src/renderer/hooks/useWorkbench';
 import { WhatsAppPage } from '../src/renderer/components/WhatsAppPage';
 function setup() {
-  const state = { connected: true, account_id: 'self@c.us', connection_epoch: 'epoch', enabled: false, conversations: [{ chat_id: 'synthetic@lid', name: '合成单聊客户', human_owned: false, pending: true }], bindings: [{ chat_id: 'synthetic@lid', conversation_id: null, revision: 0 }], pending_operations: [] as Record<string, unknown>[] };
+  const state = { connected: true, account_id: 'self@c.us', connection_epoch: 'epoch', enabled: false, conversations: [{ chat_id: 'synthetic@lid', name: '合成单聊客户', human_owned: false, pending: true }], bindings: [{ chat_id: 'synthetic@lid', conversation_id: null, revision: 0 }], pending_operations: [] as Record<string, unknown>[], reply_batches: [] as { batch_id: string; chat_id: string; status: string; total: number; accepted: number; current_index: number | null; pending_operation_ids: string[] }[] };
   const invoke = vi.fn(async (method: string, _params?: unknown): Promise<unknown> => {
     if (method === 'get_whatsapp_state') return structuredClone(state);
     if (method === 'get_whatsapp_context') return { whatsapp_messages: [], wa_summary: '合成独立摘要', knowledge: [], guidance: [], style: [], binding_revision: 0 };
@@ -48,6 +48,15 @@ it('labels unknown sends as awaiting receipts and only reconciles the original o
   render(<WhatsAppPage model={model} bridge={bridge} />);
   fireEvent.click(await screen.findByRole('button', { name: '核查 合成单聊客户 的回执' }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('reconcile_whatsapp_operation', { operation_id: 'original' }));
+});
+it('shows batch progress and reconciles the original pending part', async () => {
+  const { model, bridge, invoke, state } = setup();
+  state.reply_batches = [{ batch_id: 'batch', chat_id: 'synthetic@lid', status: 'waiting_receipt', total: 3, accepted: 1, current_index: 1, pending_operation_ids: ['part-2'] }];
+  state.pending_operations = [{ operation_id: 'part-2', chat_id: 'synthetic@lid', status: 'unknown' }];
+  render(<WhatsAppPage model={model} bridge={bridge} />);
+  expect(await screen.findByText(/已发送 1\/3 条，第 2 条等待回执/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '核查 合成单聊客户 的回执' }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('reconcile_whatsapp_operation', { operation_id: 'part-2' }));
 });
 it('does not keep a background preview after choosing a different customer', async () => {
   const { model, bridge, invoke, state } = setup(); state.conversations.push({ chat_id: 'other@lid', name: '另一位合成客户', human_owned: false, pending: false });

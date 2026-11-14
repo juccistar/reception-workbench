@@ -30,6 +30,104 @@ class WhatsAppTests(unittest.TestCase):
             threading.Event().wait(.01)
         self.fail('WhatsApp reply was not generated')
 
+    def generate_parts(self, context, *args, **kwargs):
+        source = context['whatsapp_messages'][-1]['source_id']
+        return {'reply_messages': [{'body': text, 'reply_sources': [source]} for text in ('First', 'Second', 'Third')], 'wa_summary': '摘要'}
+
+    def test_batch_advances_only_on_exact_ack_and_preserves_early_echo(self):
+        self.setUpAccount()
+        with patch.object(self.service.integrations, 'generate_whatsapp', side_effect=self.generate_parts):
+            self.service.set_whatsapp_reception(True)
+            self.ingest('incoming')
+            first = self.wait_op()
+            self.assertEqual(first['body'], 'First')
+            self.service._wa_prepare_send(first['operation_id'])
+            self.ingest('sent-1', body='First', from_me=True, ack=1)
+            self.service._wa_transport_result(first['operation_id'], 'wa-account', 'epoch-1', 'submitted', 'sent-1', 0)
+            ops = self.service.repo.list('wa_operation')
+            second = next(op for op in ops if op['body'] == 'Second')
+            self.assertTrue(self.service.get_whatsapp_state()['conversations'][0]['pending'])
+            self.assertFalse(self.service.get_whatsapp_state()['conversations'][0]['human_owned'])
+            self.service._wa_prepare_send(second['operation_id'])
+            self.service._wa_transport_result(second['operation_id'], 'wa-account', 'epoch-1', 'unknown')
+            self.assertEqual(len(self.service.repo.list('wa_operation')), 2)
+            self.service._wa_transport_result(second['operation_id'], 'wa-account', 'epoch-1', 'submitted', 'sent-2', 1)
+            third = next(op for op in self.service.repo.list('wa_operation') if op['body'] == 'Third')
+            self.service._wa_prepare_send(third['operation_id'])
+            self.service._wa_transport_result(third['operation_id'], 'wa-account', 'epoch-1', 'submitted', 'sent-3', 1)
+            batch = self.service.repo.list('wa_reply_batch')[0]
+            self.assertEqual(batch['status'], 'accepted')
+            self.assertFalse(self.service.get_whatsapp_state()['conversations'][0]['pending'])
+
+    def test_new_buyer_message_stops_prepared_tail_and_keeps_new_pending(self):
+        self.setUpAccount()
+        with patch.object(self.service.integrations, 'generate_whatsapp', side_effect=self.generate_parts):
+            self.service.set_whatsapp_reception(True)
+            self.ingest('incoming')
+            first = self.wait_op()
+            self.service._wa_prepare_send(first['operation_id'])
+            self.service._wa_transport_result(first['operation_id'], 'wa-account', 'epoch-1', 'submitted', 'sent-1', 1)
+            batch = self.service.repo.list('wa_reply_batch')[0]
+            second_id = batch['parts'][1]['operation_ids'][0]
+            self.ingest('new-incoming')
+            batch = self.service.repo.get('wa_reply_batch', batch['batch_id'])
+            self.assertEqual(batch['status'], 'stopped')
+            self.assertEqual(self.service.repo.get('wa_operation', second_id)['status'], 'cancelled')
+            contact = self.service.repo.get('wa_conversation', self.service._wa_contact_key('contact'))
+            self.assertEqual(contact['pending_message_id'], 'new-incoming')
+            self.assertTrue(contact['pending'])
+
+    def test_restart_stops_batch_and_preserves_unknown(self):
+        from pathlib import Path
+        from reception_service.service import ReceptionService
+        self.setUpAccount()
+        with patch.object(self.service.integrations, 'generate_whatsapp', side_effect=self.generate_parts):
+            self.service.set_whatsapp_reception(True)
+            self.ingest('incoming')
+            first = self.wait_op()
+            self.service._wa_prepare_send(first['operation_id'])
+        self.service.close()
+        self.service = ReceptionService(Path(self.tmp.name))
+        batch = self.service.repo.list('wa_reply_batch')[0]
+        self.assertEqual(batch['status'], 'stopped')
+        self.assertEqual([p['status'] for p in batch['parts']], ['unknown', 'cancelled', 'cancelled'])
+        self.assertEqual(self.service.repo.get('wa_operation', first['operation_id'])['status'], 'unknown')
+
+    def test_external_reply_during_unknown_stops_tail(self):
+        self.setUpAccount()
+        with patch.object(self.service.integrations, 'generate_whatsapp', side_effect=self.generate_parts):
+            self.service.set_whatsapp_reception(True)
+            self.ingest('incoming')
+            op = self.wait_op()
+            self.service._wa_prepare_send(op['operation_id'])
+            self.ingest('human', body='Manual', from_me=True)
+            self.service._wa_transport_result(op['operation_id'], 'wa-account', 'epoch-1', 'submitted', 'sent-1', 1)
+            batch = self.service.repo.list('wa_reply_batch')[0]
+            self.assertEqual(batch['status'], 'stopped')
+            self.assertEqual([p['status'] for p in batch['parts']], ['accepted', 'cancelled', 'cancelled'])
+            self.assertTrue(self.service.get_whatsapp_state()['conversations'][0]['human_owned'])
+            self.assertEqual(len(self.service.repo.list('wa_operation')), 1)
+
+    def test_binding_change_before_first_submit_replans_same_pending_message(self):
+        self.setUpAccount()
+        with patch.object(self.service.integrations, 'generate_whatsapp', side_effect=self.generate_parts):
+            self.service.set_whatsapp_reception(True)
+            self.ingest('binding-pending')
+            original = self.wait_op()
+            self.service.save_whatsapp_binding('contact', 'demo-emma', 0)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                rows = [row for row in self.service.repo.list('wa_operation') if row['operation_id'] != original['operation_id']]
+                if rows:
+                    break
+                threading.Event().wait(.01)
+            self.assertTrue(rows, self.service.list_jobs())
+            self.assertEqual(self.service.repo.get('wa_operation', original['operation_id'])['status'], 'cancelled')
+            self.assertEqual(rows[0]['status'], 'prepared')
+            contact = self.service._wa_contact('contact')
+            self.assertTrue(contact['pending'])
+            self.assertEqual(contact['pending_message_id'], 'binding-pending')
+
     def test_unbound_inbound_generates_and_ack_requires_exact_server_id(self):
         self.setUpAccount()
         self.service.set_whatsapp_reception(True)
@@ -104,8 +202,8 @@ class WhatsAppTests(unittest.TestCase):
             {'source_id': 'wa-source', 'role': 'buyer', 'text': 'Hello', 'timestamp_ms': 1}]}
         self.assertEqual(project_model_payload(context)['whatsapp_messages'], context['whatsapp_messages'])
         with patch.object(facade, 'resolve_identity', return_value='123') as identity, \
-                patch.object(facade, '_assistance_query', return_value={'reply': 'Hello',
-                    'reply_sources': ['wa-source'], 'wa_summary': '客户问候。'}):
+                patch.object(facade, '_assistance_query', return_value={'reply_messages': [{'body': 'Hello',
+                    'reply_sources': ['wa-source']}], 'wa_summary': '客户问候。'}):
             output = facade.generate_whatsapp(context, 'job')
         identity.assert_called_once_with('123')
         self.assertEqual(output['reply_sources'], ['wa-source'])

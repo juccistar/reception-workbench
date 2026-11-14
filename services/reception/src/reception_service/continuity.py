@@ -381,6 +381,10 @@ class ContinuityMixin:
                 return {'message': '此接待阶段已有操作，未重复提交'}
             if epoch != self._epoch or plan.get('next_retry_at', 0) > now_ms() or self._continuity_wait_reason(plan):
                 raise ServiceError('cancelled', '接待跟进权限、来源或重试时间已变化')
+            if plan.get('draft_id'):
+                batch_draft = self._require('draft', plan['draft_id'])
+                if len(batch_draft.get('reply_messages', [])) > 1:
+                    return self._begin_reply_batch(batch_draft, self._require('case', plan['case_id']), epoch, job_id, plan=plan)
             source = self._latest_buyer(plan['conversation_id'])
             retry_state, attempts, retry_at = send_retry_decision(
                 self.repo, self.seller_id, plan['conversation_id'], source['message_id'],
@@ -452,6 +456,8 @@ class ContinuityMixin:
                         'stage': failure['stage'], 'diagnostics': failure['diagnostics']} if failure else {}))
 
     def _continuity_receipt(self, operation, result):
+        if operation.get('batch_id'):
+            return  # The ordered batch settles the parent only after all parts.
         if operation.get('purpose') != 'continuity':
             return
         plan = self.repo.get('continuity_plan', operation.get('plan_id'))

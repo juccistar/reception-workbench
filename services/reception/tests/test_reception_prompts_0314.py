@@ -60,6 +60,7 @@ class ReceptionPromptRequestTests(unittest.TestCase):
 
     def answer(self):
         return {'action': 'ask', 'reply': 'Could you confirm the product?', 'reply_sources': ['buyer-1'],
+                'reply_messages': [{'body': 'Could you confirm the product?', 'reply_sources': ['buyer-1']}],
                 'conversation_summary': '客户询问100件报价，并明确不需要样品。'}
 
     def decode(self):
@@ -78,7 +79,7 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         for irrelevant in ('商品主图仅供展示和找货', '另一客户的数量、预算', '未入清单的展示图',
                            '【兼容图片输入】', '【本轮图片附件与聊天记录】'):
             self.assertNotIn(irrelevant, instruction)
-        self.assertEqual(prompts.PROMPT_VERSION, 'reception-0.3.16')
+        self.assertEqual(prompts.PROMPT_VERSION, 'reception-0.3.19')
 
     def test_automatic_live_request_carries_restored_rules_and_current_contract(self):
         context = self.context()
@@ -134,7 +135,7 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         self.assertIn('最近相关买家消息的语言', instruction)
         self.assertNotIn('requirements', result)
         self.assertNotIn('requirement_changes', result)
-        self.assertIn('未变化时省略requirement_changes', instruction)
+        self.assertIn('无变化时省略requirement_changes', instruction)
         self.assertIn('case_catalog', instruction)
         self.assertNotIn('action', result)
         self.assertEqual(len(self.requests), 1)
@@ -164,7 +165,7 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         context = self.context()
         context['case_catalog'] = [{'case_ref': 'c1', 'case_id': 'synthetic-case', 'revision': 1,
                                     'requirements': {}, 'state': 'clarifying'}]
-        self.answer = lambda: {'action': 'ask', 'reply': 'Noted.', 'reply_sources': ['buyer-1'],
+        self.answer = lambda: {'action': 'ask', 'reply_messages': [{'body': 'Noted.', 'reply_sources': ['buyer-1']}],
             'reply_case_refs': ['c1'], 'requirement_changes': [{'action': 'update', 'case_ref': 'c1',
                 'trigger_evidence_ids': ['buyer-1'], 'set_fields': {'quantity': {'value': '100件',
                     'evidence_ids': ['buyer-1'], 'source_excerpts': {'buyer-1': '100 pieces'}}}}]}
@@ -174,6 +175,66 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         _, payload = self.decode()
         self.assertEqual(payload['case_catalog'][0]['case_ref'], 'c1')
         self.assertNotIn('case_id', payload['case_catalog'][0])
+
+    def test_multiple_messages_skip_and_strict_new_contract(self):
+        from reception_service.errors import ServiceError
+        context = self.context()
+        self.answer = lambda: {'action': 'ask', 'reply_messages': [
+            {'body': 'Noted.', 'reply_sources': ['buyer-1']},
+            {'body': 'Which product?', 'reply_sources': ['buyer-1']}], 'conversation_summary': '客户询价。'}
+        result = self.live.generate(context, 'multi')
+        self.assertEqual(result['reply'], 'Noted.\n\nWhich product?')
+        self.assertEqual(len(result['reply_messages']), 2)
+        manual = self.live.generate_manual(context, 'manual-multi')
+        self.assertEqual(manual['reply_messages'], result['reply_messages'])
+        self.answer = lambda: {'action': 'ask', 'reply_messages': [
+            {'body': 'a' * 600, 'reply_sources': ['buyer-1']},
+            {'body': 'b' * 600, 'reply_sources': ['buyer-1']}], 'conversation_summary': ''}
+        self.assertEqual(len(self.live.generate(context, 'budget')['reply']), 1202)
+        self.assertEqual(len(self.live.generate_manual(context, 'manual-budget')['reply']), 1202)
+        self.answer = lambda: {'action': 'ask', 'reply_messages': [
+            {'body': 'Valid', 'reply_sources': ['buyer-1']},
+            {'body': '{invalid}', 'reply_sources': ['buyer-1']}]}
+        with self.assertRaises(ServiceError):
+            self.live.generate(context, 'invalid-part')
+        context['case_catalog'] = [{'case_ref': 'c1', 'case_id': 'synthetic-case', 'revision': 1,
+                                    'requirements': {}, 'state': 'clarifying'}]
+        change = {'action': 'update', 'case_ref': 'c1', 'trigger_evidence_ids': ['buyer-1'],
+                  'set_fields': {'quantity': {'value': '100件', 'evidence_ids': ['buyer-1'],
+                                              'source_excerpts': {'buyer-1': '100 pieces'}}}}
+        self.answer = lambda: {'action': 'skip', 'reply_messages': [], 'conversation_summary': '客户致谢。',
+                               'requirement_changes': [change]}
+        skipped = self.live.generate(context, 'skip')
+        self.assertEqual(skipped['reply_messages'], [])
+        self.assertEqual(skipped['requirement_changes'], [change])
+        self.answer = lambda: {'action': 'ask', 'reply': 'Old format', 'reply_sources': []}
+        with self.assertRaises(ServiceError):
+            self.live.generate(context, 'old')
+        with self.assertRaises(ServiceError):
+            self.live.generate_manual(context, 'old-manual')
+
+    def test_whatsapp_multiple_messages_and_legacy_rejection(self):
+        from reception_service.errors import ServiceError
+        context = {'task_mode': 'whatsapp_reply', 'seller_id': '1', 'whatsapp_messages': []}
+        self.answer = lambda: {'reply_messages': [{'body': 'Hello', 'reply_sources': ['m1']},
+                                                  {'body': 'Thanks', 'reply_sources': ['m2']}],
+                               'wa_summary': '客户询问。'}
+        result = self.live.generate_whatsapp(context, 'wa')
+        self.assertEqual(result['reply'], 'Hello\n\nThanks')
+        self.assertEqual(result['reply_sources'], ['m1', 'm2'])
+        self.answer = lambda: {'reply': 'old', 'reply_sources': [], 'wa_summary': '摘要'}
+        with self.assertRaises(ServiceError):
+            self.live.generate_whatsapp(context, 'wa-old')
+
+    def test_prompt_changes_preserve_requested_boundaries(self):
+        self.assertIn('原始聊天中的链接只能帮助识别指代', prompts.COMMON)
+        self.assertNotIn('平台商品ID及', prompts.COMMON)
+        for phrase in ('补建尚未记录的需求', '原文未入窗口', '保留其中仍有效且未改变的条件', '已撤回的条件不因补录而恢复'):
+            self.assertIn(phrase, prompts.REQUIREMENT_CHANGE_RULES)
+        for prompt in (prompts.AUTOMATIC_TASK, prompts.MANUAL_TASK, prompts.WHATSAPP_TASK):
+            self.assertIn('reply_messages', prompt)
+            self.assertIn('整轮正文合计最多1200字符', prompt)
+        self.assertNotIn('reply_messages', prompts.POLISH_TASK)
 
     def test_requirements_prompt_keeps_grounding_without_retired_output_fields(self):
         context = self.context()

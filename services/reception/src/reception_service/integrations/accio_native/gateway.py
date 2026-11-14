@@ -238,7 +238,8 @@ class NativeGateway(LiveGateway):
                     if previous and previous[0] == 'send' and previous[1] == self._active_intent:
                         return previous[2]
                     direct = deepcopy(self._active_intent)
-                    direct.update(purpose='reception', client_request_id=direct.get('operation_id'))
+                    direct.update(purpose='reception')
+                    direct.setdefault('client_request_id', direct.get('operation_id'))
                     return execute_chat(self, direct, authorization)
                 # Explicit legacy manual confirmation/preview remains compatible;
                 # ordinary human chat already uses send_chat directly.

@@ -10,6 +10,8 @@ from .errors import ServiceError
 from .model_payload import model_json
 from .policy_library import select_policy_inputs
 from .repository import encoded, new_id, now_ms
+from .reply_messages import normalize_reply_output
+from .reply_batches import freeze_reply_batch, reply_batch_progress
 
 
 def _key(*parts):
@@ -29,6 +31,9 @@ class WhatsAppMixin:
         self._wa_status = 'disconnected'
         self._wa_enabled = False
         with self.repo.transaction():
+            for batch in self.repo.list('wa_reply_batch'):
+                if batch.get('status') not in ('accepted', 'stopped'):
+                    self._wa_stop_batch(batch)
             for op in self.repo.list('wa_operation'):
                 if op.get('status') == 'prepared':
                     op.update(status='cancelled', updated_at=now_ms())
@@ -49,7 +54,26 @@ class WhatsAppMixin:
             raise ServiceError('not_found', 'WhatsApp 联系人不存在')
         return row
 
-    def _wa_cancel(self, chat_id=None):
+    def _wa_stop_batch(self, batch, *, preserve_pending=False):
+        if batch.get('status') in ('accepted', 'stopped'):
+            return
+        can_replan = preserve_pending and not any(part['status'] in ('accepted', 'sending', 'unknown') for part in batch['parts'])
+        batch['status'] = 'stopped'
+        for part in batch['parts']:
+            if part['status'] in ('planned', 'prepared'):
+                part['status'] = 'cancelled'
+        batch['updated_at'] = now_ms()
+        self.repo.put('wa_reply_batch', batch['batch_id'], batch, history=True)
+        key = self._wa_contact_key(batch['chat_id'], batch['account_id'])
+        contact = self.repo.get('wa_conversation', key)
+        if contact and contact.get('pending_message_id') == batch.get('pending_message_id') and not can_replan:
+            contact['pending'] = False
+            self.repo.put('wa_conversation', key, contact)
+
+    def _wa_cancel(self, chat_id=None, *, preserve_pending=False):
+        for batch in self.repo.list('wa_reply_batch'):
+            if batch.get('seller_id') == self.seller_id and batch.get('account_id') == self._wa_account and (chat_id is None or batch.get('chat_id') == chat_id):
+                self._wa_stop_batch(batch, preserve_pending=preserve_pending)
         for job in self.repo.list('job'):
             if job.get('kind') != 'whatsapp_reply' or job.get('status') not in ('queued', 'running'):
                 continue
@@ -85,7 +109,9 @@ class WhatsAppMixin:
             rows = [r for r in self.repo.list('wa_conversation') if r.get('seller_id') == self.seller_id and r.get('account_id') == account]
             bindings = [self.repo.get('wa_binding', self._wa_contact_key(r['chat_id'])) or {'chat_id': r['chat_id'], 'conversation_id': None, 'revision': 0} for r in rows]
             ops = [r for r in self.repo.list('wa_operation') if r.get('seller_id') == self.seller_id and r.get('account_id') == account and r.get('status') in ('prepared', 'sending', 'unknown')]
-            return {'connected': self._wa_status == 'connected', 'account_id': account, 'connection_epoch': self._wa_epoch,
+            batches = [r for r in self.repo.list('wa_reply_batch') if r.get('seller_id') == self.seller_id and r.get('account_id') == account]
+            return {'reply_batches': [{**reply_batch_progress(b), 'chat_id': b['chat_id']} for b in batches],
+                    'connected': self._wa_status == 'connected', 'account_id': account, 'connection_epoch': self._wa_epoch,
                     'enabled': self._wa_enabled, 'conversations': [{k: r.get(k) for k in ('chat_id', 'name', 'human_owned', 'pending')} for r in rows],
                     'bindings': [{k: b.get(k) for k in ('chat_id', 'conversation_id', 'revision')} for b in bindings],
                     'pending_operations': [{k: o.get(k) for k in ('operation_id', 'chat_id', 'status', 'message_id', 'ack')} for o in ops]}
@@ -108,7 +134,7 @@ class WhatsAppMixin:
             row = {'seller_id': self.seller_id, 'account_id': self._wa_account, 'chat_id': chat_id,
                    'conversation_id': conversation_id, 'revision': old['revision'] + 1, 'updated_at': now_ms()}
             self.repo.put('wa_binding', key, row, history=True)
-            self._wa_cancel(chat_id)
+            self._wa_cancel(chat_id, preserve_pending=True)
             contact = self._wa_contact(chat_id)
             contact['attempt_fingerprint'] = None
             self.repo.put('wa_conversation', key, contact)
@@ -181,6 +207,9 @@ class WhatsAppMixin:
                 mkey = _key(self.seller_id, account_id, mid)
                 prior = self.repo.get('wa_message', mkey)
                 if prior:
+                    if prior.get('receipt_projection') and msg['from_me'] and prior.get('chat_id') == chat_id:
+                        prior.update(timestamp_ms=msg['timestamp_ms'], ack=msg.get('ack'), receipt_projection=False)
+                        self.repo.put('wa_message', mkey, prior)
                     continue
                 row = {'seller_id': self.seller_id, 'account_id': account_id, 'chat_id': chat_id, 'message_id': mid,
                        'body': body, 'timestamp_ms': msg['timestamp_ms'], 'from_me': msg['from_me'],
@@ -213,11 +242,11 @@ class WhatsAppMixin:
         self._changed()
         return self.get_whatsapp_state()
 
-    def get_whatsapp_context(self, chat_id):
+    def get_whatsapp_context(self, chat_id, *, exclude_message_ids=()):
         with self._lock:
             self._wa_contact(chat_id)
             account = self._wa_account
-            messages = [r for r in self.repo.list('wa_message') if r.get('seller_id') == self.seller_id and r.get('account_id') == account and r.get('chat_id') == chat_id and r.get('body', '').strip()]
+            messages = [r for r in self.repo.list('wa_message') if r.get('seller_id') == self.seller_id and r.get('account_id') == account and r.get('chat_id') == chat_id and r.get('body', '').strip() and r.get('message_id') not in exclude_message_ids]
             messages.sort(key=lambda r: (r['timestamp_ms'], r['message_id']))
             recent = [{'source_id': 'wa_' + _key(account, r['message_id'])[:20], 'role': 'seller' if r['from_me'] else 'buyer',
                        'timestamp_ms': r['timestamp_ms'], 'text': r['body'][:3000]} for r in messages[-30:]]
@@ -265,8 +294,9 @@ class WhatsAppMixin:
                         raise
             return context
 
-    def _wa_fingerprint(self, chat_id):
-        return hashlib.sha256(encoded(self.get_whatsapp_context(chat_id)).encode('utf-8')).hexdigest()
+    def _wa_fingerprint(self, chat_id, batch=None):
+        own_ids = [p['message_id'] for p in batch['parts'] if p.get('status') == 'accepted' and p.get('message_id')] if batch else []
+        return hashlib.sha256(encoded(self.get_whatsapp_context(chat_id, exclude_message_ids=own_ids)).encode('utf-8')).hexdigest()
 
     def _schedule_whatsapp(self):
         if not self._wa_enabled or self._wa_status != 'connected' or self._closing or self._stop.is_set():
@@ -275,6 +305,8 @@ class WhatsAppMixin:
             if contact.get('seller_id') != self.seller_id or contact.get('account_id') != self._wa_account or not contact.get('pending') or contact.get('human_owned'):
                 continue
             chat = contact['chat_id']
+            if any(b.get('seller_id') == self.seller_id and b.get('account_id') == self._wa_account and b.get('chat_id') == chat and b.get('status') not in ('accepted', 'stopped') for b in self.repo.list('wa_reply_batch')):
+                continue
             if any(o.get('account_id') == self._wa_account and o.get('chat_id') == chat and o.get('status') in ('prepared', 'sending', 'unknown') for o in self.repo.list('wa_operation')):
                 continue
             if any(j.get('kind') == 'whatsapp_reply' and j.get('wa_chat_id') == chat and j.get('status') in ('queued', 'running') for j in self.repo.list('job')):
@@ -307,12 +339,12 @@ class WhatsAppMixin:
             self.repo.put('job', job_id, job, history=True)
             self._emit('job.updated', job)
 
-    def _wa_current(self, params):
+    def _wa_current(self, params, batch=None):
         self._wa_check_connection(params['account_id'], params['connection_epoch'])
         contact = self._wa_contact(params['chat_id'])
         return (self._wa_enabled and not contact.get('human_owned') and contact.get('pending')
                 and contact.get('pending_message_id') == params['pending_message_id']
-                and self._wa_fingerprint(params['chat_id']) == params['fingerprint'])
+                and self._wa_fingerprint(params['chat_id'], batch) == params['fingerprint'])
 
     def _task_whatsapp_reply(self, params, job_id, epoch, facade):
         with self._lock:
@@ -324,7 +356,11 @@ class WhatsAppMixin:
         with self._lock, self.repo.transaction():
             if self._generation_cancel_event(job_id).is_set() or not self._wa_current(params):
                 raise ServiceError('cancelled', 'WhatsApp 来源已变化')
-            if not isinstance(answer, dict) or not isinstance(answer.get('reply'), str) or not answer['reply'].strip() or len(answer['reply']) > 1200 or not isinstance(answer.get('wa_summary'), str) or len(answer['wa_summary']) > 4000 or not isinstance(answer.get('reply_sources'), list):
+            try:
+                answer = normalize_reply_output(answer, allow_legacy=True)
+            except (ValueError, TypeError) as exc:
+                raise ServiceError('invalid_ai_output', 'WhatsApp 回复无效') from exc
+            if not isinstance(answer.get('wa_summary'), str) or len(answer['wa_summary']) > 4000:
                 raise ServiceError('invalid_ai_output', 'WhatsApp 回复无效')
             allowed = {r['source_id'] for r in params['context']['whatsapp_messages']}
             allowed.update(r['source_id'] for r in params['context'].get('international_background', {}).get('messages', []))
@@ -335,20 +371,32 @@ class WhatsAppMixin:
             allowed.update(a.get('id') for a in supplement.get('attachments', []) if isinstance(a, dict) and a.get('text'))
             if any(not isinstance(source, str) or source not in allowed for source in answer['reply_sources']):
                 raise ServiceError('invalid_ai_output', 'WhatsApp 回复来源无效')
-            op_id = new_id('wa_operation')
             stamp = now_ms()
-            op = {'operation_id': op_id, 'seller_id': self.seller_id, 'account_id': params['account_id'], 'connection_epoch': params['connection_epoch'],
-                  'chat_id': params['chat_id'], 'body': answer['reply'].strip(), 'status': 'prepared', 'submission_started': False,
-                  'message_id': None, 'ack': None, 'fingerprint': params['fingerprint'], 'pending_message_id': params['pending_message_id'],
-                  'created_at': stamp, 'updated_at': stamp}
-            self.repo.put('wa_draft', op_id, {'operation_id': op_id, 'reply': op['body'], 'reply_sources': answer['reply_sources']}, history=True)
-            self.repo.put('wa_operation', op_id, op, history=True)
             self.repo.put('wa_summary', self._wa_contact_key(params['chat_id']), {'body': answer['wa_summary'], 'updated_at': stamp})
-            # Summary was generated in this round, so freeze the post-summary context.
-            op['fingerprint'] = self._wa_fingerprint(params['chat_id'])
-            self.repo.put('wa_operation', op_id, op)
+            batch = freeze_reply_batch(answer['reply_messages'], seller_id=self.seller_id, account_id=params['account_id'],
+                                       connection_epoch=params['connection_epoch'], chat_id=params['chat_id'],
+                                       pending_message_id=params['pending_message_id'], fingerprint=self._wa_fingerprint(params['chat_id']))
+            self.repo.put('wa_reply_batch', batch['batch_id'], batch, history=True)
+            self.repo.put('wa_draft', batch['batch_id'], {'batch_id': batch['batch_id'], 'reply': answer['reply'],
+                          'reply_messages': answer['reply_messages'], 'reply_sources': answer['reply_sources']}, history=True)
+            op_id = self._wa_create_part_operation(batch)
         self._emit('whatsapp.send.requested', {'operation_id': op_id})
-        return {'operation_id': op_id}
+        return {'operation_id': op_id, 'batch_id': batch['batch_id']}
+
+    def _wa_create_part_operation(self, batch):
+        part = batch['parts'][batch['next_index']]
+        op_id = new_id('wa_operation')
+        stamp = now_ms()
+        op = {k: batch[k] for k in ('seller_id', 'account_id', 'connection_epoch', 'chat_id', 'fingerprint', 'pending_message_id')}
+        op.update(operation_id=op_id, batch_id=batch['batch_id'], part_index=part['part_index'], part_id=part['part_id'],
+                  body=part['body'], reply_sources=part['reply_sources'], status='prepared', submission_started=False,
+                  message_id=None, ack=None, created_at=stamp, updated_at=stamp)
+        part['status'] = 'prepared'
+        part['operation_ids'].append(op_id)
+        batch['status'] = 'prepared'
+        self.repo.put('wa_reply_batch', batch['batch_id'], batch, history=True)
+        self.repo.put('wa_operation', op_id, op, history=True)
+        return op_id
 
     def _wa_prepare_send(self, operation_id):
         self._executor_health.require()
@@ -358,7 +406,14 @@ class WhatsAppMixin:
             if not op or op.get('seller_id') != self.seller_id or op.get('status') != 'prepared':
                 raise ServiceError('operation_unavailable', '发送操作不可重复提交')
             params = {k: op[k] for k in ('account_id', 'connection_epoch', 'chat_id', 'pending_message_id', 'fingerprint')}
-            if not self._wa_current(params):
+            batch = self.repo.get('wa_reply_batch', op.get('batch_id')) if op.get('batch_id') else None
+            try:
+                current = (not op.get('batch_id') or batch and batch.get('status') == 'prepared' and batch.get('next_index') == op.get('part_index')) and self._wa_current(params, batch)
+            except ServiceError:
+                current = False
+            if not current:
+                if batch:
+                    self._wa_stop_batch(batch)
                 op.update(status='cancelled', updated_at=now_ms())
                 self.repo.put('wa_operation', operation_id, op, history=True)
                 self._schedule_whatsapp()
@@ -366,6 +421,10 @@ class WhatsAppMixin:
             else:
                 op.update(status='unknown', submission_started=True, updated_at=now_ms())
                 self.repo.put('wa_operation', operation_id, op, history=True)
+                if batch:
+                    batch['status'] = 'waiting_receipt'
+                    batch['parts'][op['part_index']]['status'] = 'unknown'
+                    self.repo.put('wa_reply_batch', batch['batch_id'], batch, history=True)
                 result = {k: op[k] for k in ('operation_id', 'account_id', 'connection_epoch', 'chat_id', 'body')}
         if result is None:
             raise ServiceError('source_changed', '发送依据已变化')
@@ -374,6 +433,7 @@ class WhatsAppMixin:
     def _wa_transport_result(self, operation_id, account_id, connection_epoch, status, message_id=None, ack=None):
         if status not in ('accepted', 'submitted', 'unknown', 'failed') or ack is not None and type(ack) is not int:
             raise ServiceError('invalid_params', 'WhatsApp 发送结果无效')
+        next_operation = None
         with self._lock, self.repo.transaction():
             op = self.repo.get('wa_operation', _text(operation_id))
             if not op or op.get('seller_id') != self.seller_id or (op.get('account_id'), op.get('connection_epoch')) != (account_id, connection_epoch) or not op.get('submission_started'):
@@ -392,6 +452,13 @@ class WhatsAppMixin:
             op['updated_at'] = now_ms()
             self.repo.put('wa_operation', operation_id, op, history=True)
             if op['status'] == 'accepted':
+                message_key = _key(self.seller_id, account_id, op['message_id'])
+                if not self.repo.get('wa_message', message_key):
+                    self.repo.put('wa_message', message_key, {'seller_id': self.seller_id, 'account_id': account_id,
+                        'chat_id': op['chat_id'], 'message_id': op['message_id'], 'body': op['body'],
+                        'timestamp_ms': now_ms(), 'from_me': True, 'is_history': False, 'ack': op['ack'],
+                        'receipt_projection': True})
+            if op['status'] == 'accepted' and not op.get('batch_id'):
                 contact = self.repo.get('wa_conversation', self._wa_contact_key(op['chat_id'], account_id))
                 if contact and contact.get('pending_message_id') == op.get('pending_message_id'):
                     contact['pending'] = False
@@ -409,6 +476,32 @@ class WhatsAppMixin:
                         contact.update(human_owned=True, pending=False)
                         self.repo.put('wa_conversation', self._wa_contact_key(op['chat_id'], account_id), contact)
                         self._wa_cancel(op['chat_id'])
+            batch = self.repo.get('wa_reply_batch', op.get('batch_id')) if op.get('batch_id') else None
+            if batch:
+                part = batch['parts'][op['part_index']]
+                was_accepted = part.get('status') == 'accepted'
+                if op['status'] == 'accepted':
+                    part.update(status='accepted', message_id=op['message_id'], ack=op['ack'])
+                    if not was_accepted and batch.get('status') != 'stopped':
+                        batch['next_index'] = op['part_index'] + 1
+                        if batch['next_index'] == len(batch['parts']):
+                            batch['status'] = 'accepted'
+                            contact = self.repo.get('wa_conversation', self._wa_contact_key(op['chat_id'], account_id))
+                            if contact and contact.get('pending_message_id') == op.get('pending_message_id'):
+                                contact['pending'] = False
+                                self.repo.put('wa_conversation', self._wa_contact_key(op['chat_id'], account_id), contact)
+                        else:
+                            try:
+                                current = self._wa_current(batch, batch)
+                            except ServiceError:
+                                current = False
+                            if current:
+                                next_operation = self._wa_create_part_operation(batch)
+                            else:
+                                self._wa_stop_batch(batch)
+                self.repo.put('wa_reply_batch', batch['batch_id'], batch, history=True)
+        if next_operation:
+            self._emit('whatsapp.send.requested', {'operation_id': next_operation})
         self._changed()
         return {'operation_id': operation_id, 'status': op['status'], 'message_id': op.get('message_id'), 'ack': op.get('ack')}
 

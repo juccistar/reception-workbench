@@ -16,12 +16,11 @@ class SupplementFollowupTests(unittest.TestCase):
         self.service = ReceptionService(Path(self.temp.name))
         self.cid = self.service.repo.list('conversation')[0]['conversation_id']
         self.calls = []
-        self.two_issues = False
         self.generate_patch = patch.object(self.service.integrations, 'generate', side_effect=self.generate)
         self.generate_patch.start()
         self.service.set_scope('selected', [self.cid], None)
         self.service.set_reception(True, auto_send=True)
-        self.service.inject_demo(self.cid, 'How much is freight?')
+        self.service.inject_demo(self.cid, 'I need tote bags. How much is freight?')
 
     def tearDown(self):
         self.generate_patch.stop()
@@ -36,23 +35,16 @@ class SupplementFollowupTests(unittest.TestCase):
         continuation = context.get('continuation') or {}
         followup = continuation.get('phase') == 'supplement'
         buyer = next(m for m in reversed(context['recent_messages']) if m['role'] == 'buyer')
-        issue = {'topic': '运费', 'summary': '已有运费' if followup else '需要运费',
-                 'state': 'waiting_customer' if followup else 'needs_input',
-                 'evidence_ids': [buyer['message_id']], 'reply_addresses': followup}
-        if followup:
-            issue.update(issue_id=continuation['issue_ids'][0], evidence_ids=[buyer['message_id'], context['supplement']['source_id']])
-        issues = [issue]
-        if self.two_issues and not followup:
-            issues.append({'topic': '库存', 'summary': '需要库存', 'state': 'needs_input',
-                           'evidence_ids': [buyer['message_id']]})
-        return {'action': 'ask', 'reply': 'We will check freight.' if not followup else 'The freight is 20 USD.',
-                'facts': {}, 'question_keys': [], 'conflicts': [], 'summary': '', 'new_case': False,
-                'procurement_key': context['case']['procurement_key'],
-                'reply_sources': [buyer['message_id']] if not followup else [buyer['message_id'], context['supplement']['source_id']],
-                'requirements': {'product': {'value': '样品', 'evidence_ids': [buyer['message_id']]}},
-                'conversation_summary': '客户询问运费，运费条件需要核实。',
-                'quality_notes': [{'code': 'scope_unclear', 'detail': '旧提醒'}],
-                'followup_progress': {'issues': issues}}
+        sources = [buyer['message_id']] if not followup else [buyer['message_id'], context['supplement']['source_id']]
+        result = {'action': 'ask', 'reply_messages': [{'body': 'We will check freight.' if not followup else 'The freight is 20 USD.',
+                    'reply_sources': sources}], 'conversation_summary': '客户询问运费，运费条件需要核实。'}
+        if not followup:
+            ref = next(row['case_ref'] for row in context['case_catalog'] if row['case_id'] == context['case']['case_id'])
+            result['requirement_changes'] = [{'action': 'update', 'case_ref': ref,
+                'trigger_evidence_ids': [buyer['message_id']], 'set_fields': {'product': {
+                    'value': '手提袋', 'evidence_ids': [buyer['message_id']],
+                    'source_excerpts': {buyer['message_id']: 'tote bags'}}}}]
+        return result
 
     def wait_for(self, predicate):
         end = time.monotonic() + 8
@@ -82,13 +74,18 @@ class SupplementFollowupTests(unittest.TestCase):
         self.real_schedule(s)
 
     def test_canonical_requirements_drive_waiting_quote(self):
+        self.service.inject_demo(self.cid, 'I need tote bags, 100 pieces, blue cotton, shipping to France.')
         def complete(context, request_id, *, on_call_start=None, photo_inputs=None):
             on_call_start()
             mid = next(m['message_id'] for m in reversed(context['recent_messages']) if m['role'] == 'buyer')
-            return {'action': 'wait_quote', 'reply': 'Thank you.', 'facts': {}, 'question_keys': [],
-                    'conflicts': [], 'reply_sources': [mid], 'conversation_summary': '客户正在询问产品报价。',
-                    'requirements': {key: {'value': value, 'evidence_ids': [mid]} for key, value in
-                        {'product': '手提袋', 'quantity': '100件', 'specifications': '蓝色棉布', 'destination': '法国'}.items()}}
+            ref = next(row['case_ref'] for row in context['case_catalog'] if row['case_id'] == context['case']['case_id'])
+            values = {'product': ('手提袋', 'tote bags'), 'quantity': ('100件', '100 pieces'),
+                      'specifications': ('蓝色棉布', 'blue cotton'), 'destination': ('法国', 'France')}
+            return {'action': 'wait_quote', 'reply_messages': [{'body': 'Thank you.', 'reply_sources': [mid]}],
+                    'conversation_summary': '客户正在询问产品报价。', 'requirement_changes': [{
+                        'action': 'update', 'case_ref': ref, 'trigger_evidence_ids': [mid],
+                        'set_fields': {key: {'value': value, 'evidence_ids': [mid], 'source_excerpts': {mid: excerpt}}
+                                       for key, (value, excerpt) in values.items()}}]}
         with patch.object(self.service.integrations, 'generate', side_effect=complete):
             case = self.service.repo.get('case', self.service.repo.get('conversation', self.cid)['case_id'])
             ack = self.service._enqueue('generate_draft', {'case_id': case['case_id'], 'expected_case_revision': case['revision']}, automatic=True)
@@ -102,7 +99,7 @@ class SupplementFollowupTests(unittest.TestCase):
         self.initial_reply()
         s = self.service
         detail = s.get_conversation(self.cid)
-        self.assertEqual(detail['case']['requirements']['product']['value'], '样品')
+        self.assertEqual(detail['case']['requirements']['product']['value'], '手提袋')
         self.assertEqual(detail['conversation_summary']['body'], '客户询问运费，运费条件需要核实。')
         self.assertNotIn('quality_warnings', detail['draft'])
         self.assertNotIn('warnings', detail['draft']['validation'])
@@ -129,8 +126,7 @@ class SupplementFollowupTests(unittest.TestCase):
                                       for o in s.repo.list('operation', conversation_id=self.cid)))
         self.assertEqual(len(self.calls), 2)
 
-    def test_two_issues_can_be_answered_in_separate_followups(self):
-        self.two_issues = True
+    def test_distinct_supplements_have_distinct_completed_followup_identities(self):
         self.initial_reply()
         s = self.service
         note = s.save_conversation_supplement(self.cid, 'Freight is 20 USD.', None, 'note1')

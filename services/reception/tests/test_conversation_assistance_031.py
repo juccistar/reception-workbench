@@ -34,9 +34,15 @@ class AssistanceTests(unittest.TestCase):
         buyer = next(m for m in s._messages(cid) if m['role'] == 'buyer')
         def model(context, request_id, *, on_call_start, cancel_event, photo_inputs=None):
             on_call_start()
-            return {'reply': 'Thank you.', 'conversation_summary': '客户正在询问产品，价格需要核实。',
-                    'requirements': {'product': {'value': '手提袋', 'evidence_ids': [buyer['message_id']]},
-                                     'quantity': {'value': '100件', 'evidence_ids': ['foreign']}},
+            if context.get('unsent_reply'):
+                return {'reply': 'Thank you.', 'reply_sources': [buyer['message_id']]}
+            ref = next(row['case_ref'] for row in context['case_catalog'] if row['case_id'] == case_id)
+            return {'reply_messages': [{'body': 'Thank you.', 'reply_sources': [buyer['message_id']]}],
+                    'conversation_summary': '客户正在询问产品，价格需要核实。',
+                    'requirement_changes': [{'action': 'update', 'case_ref': ref,
+                        'trigger_evidence_ids': [buyer['message_id']], 'set_fields': {'product': {
+                            'value': '手提袋', 'evidence_ids': [buyer['message_id']],
+                            'source_excerpts': {buyer['message_id']: buyer['text']}}}}],
                     'quality_notes': [{'code': 'scope_unclear', 'detail': '旧提醒'}]}
         with patch.object(s.integrations, 'generate_manual', side_effect=model):
             job = s.generate_manual_suggestion(cid, 'new-schema', case_id=case_id)['job_id']
@@ -134,6 +140,32 @@ class AssistanceTests(unittest.TestCase):
         self.assertEqual(suggestion['input_hash'], digest)
         self.assertEqual(s.repo.get('chat_draft', cid), saved)
         s.save_chat_draft(cid, 'Updated input', saved['revision'], 'changed-input')
+        self.assertEqual(s.get_conversation(cid)['manual_suggestion']['status'], 'stale')
+
+    def test_manual_suggestion_preserves_ordered_reply_messages(self):
+        s, cid = self.service, self.cid
+        def model(context, request_id, *, on_call_start, cancel_event, photo_inputs=None):
+            on_call_start()
+            return {'reply_messages': [{'body': 'first', 'reply_sources': []}, {'body': 'second', 'reply_sources': []}]}
+        with patch.object(s.integrations, 'generate_manual', side_effect=model):
+            job = s.generate_manual_suggestion(cid, 'parts-suggestion')['job_id']
+            self.assertEqual(self.wait(job)['status'], 'succeeded')
+        suggestion = s.get_conversation(cid)['manual_suggestion']
+        self.assertEqual(suggestion['body'], 'first\n\nsecond')
+        self.assertEqual([row['body'] for row in suggestion['reply_messages']], ['first', 'second'])
+
+    def test_polish_part_uses_frozen_entry_and_stales_after_reorder(self):
+        s, cid = self.service, self.cid
+        saved = s.save_chat_draft(cid, 'first\n\nsecond', None, 'parts', message_parts=['first', 'second'])
+        digest = hashlib.sha256(b'second').hexdigest()
+        with self.assertRaises(ServiceError):
+            s.generate_manual_suggestion(cid, 'wrong-part', input_body='second', input_revision=saved['revision'], input_hash=digest, part_index=0)
+        job = s.generate_manual_suggestion(cid, 'part-polish', input_body='second', input_revision=saved['revision'], input_hash=digest, part_index=1)['job_id']
+        self.assertEqual(self.wait(job)['status'], 'succeeded')
+        suggestion = s.get_conversation(cid)['manual_suggestion']
+        self.assertEqual(suggestion['input_part_index'], 1)
+        self.assertEqual(suggestion['status'], 'ready')
+        s.save_chat_draft(cid, 'second\n\nfirst', saved['revision'], 'reorder', message_parts=['second', 'first'])
         self.assertEqual(s.get_conversation(cid)['manual_suggestion']['status'], 'stale')
 
     def test_polish_late_result_does_not_publish_after_draft_changes(self):
