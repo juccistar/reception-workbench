@@ -5,7 +5,7 @@
   "base_commit": "3feee61",
   "branch": "feat/natural-auto-replies-0.3.21",
   "authorization": "用户确认新版方案并明确要求开发、打包发布；人工建议不兼容旧多项结果",
-  "status": "source_window_verified_ready_for_candidate",
+  "status": "published_and_verified",
   "changes": [
     "human_like_natural_automatic_reply_pacing",
     "strict_single_manual_suggestion_and_plain_text_editor",
@@ -17,11 +17,36 @@
   ],
   "tests": {
     "backend_unique_final_passed": 200,
-    "backend_scope": ["test_manual_chat", "test_conversation_assistance_031", "test_manual_reception", "test_manual_receipts", "test_requirement_changes_0316", "test_reply_batches_0319", "test_reply_sync_0320", "test_whatsapp_0317", "test_reception_prompts_0314", "test_send_retry_policy", "test_continuity_service", "test_supplement_followup", "test_031_ai_integration"],
+    "backend_scope": [
+      "test_manual_chat",
+      "test_conversation_assistance_031",
+      "test_manual_reception",
+      "test_manual_receipts",
+      "test_requirement_changes_0316",
+      "test_reply_batches_0319",
+      "test_reply_sync_0320",
+      "test_whatsapp_0317",
+      "test_reception_prompts_0314",
+      "test_send_retry_policy",
+      "test_continuity_service",
+      "test_supplement_followup",
+      "test_031_ai_integration"
+    ],
     "desktop_unique_final_passed": 191,
-    "desktop_scope": ["renderer-workbench", "whatsapp-page", "reply-batch-records", "chat-host", "whatsapp-session-host", "whatsapp-coordinator", "whatsapp-connection", "whatsapp-transport"],
+    "desktop_scope": [
+      "renderer-workbench",
+      "whatsapp-page",
+      "reply-batch-records",
+      "chat-host",
+      "whatsapp-session-host",
+      "whatsapp-coordinator",
+      "whatsapp-connection",
+      "whatsapp-transport"
+    ],
     "tools_passed": 1,
-    "tools_scope": ["scripts/tests/whatsapp-runtime.test.mjs"],
+    "tools_scope": [
+      "scripts/tests/whatsapp-runtime.test.mjs"
+    ],
     "typecheck": "passed",
     "reviewed_prompt_sync": "matched_reception-0.3.21",
     "obsolete_manual_multipart_tests_removed": 7,
@@ -29,16 +54,169 @@
     "synthetic_window_seed": "validated_two_and_three_parts",
     "full_suite_run": false
   },
-  "builds": [{ "kind": "desktop_source", "commit": "4770407", "status": "passed", "committed_immediately_after_build": true }],
+  "builds": [
+    {
+      "kind": "desktop_source",
+      "commit": "4770407",
+      "status": "passed",
+      "committed_immediately_after_build": true
+    },
+    {
+      "kind": "installer_candidate",
+      "commit": "307018f",
+      "status": "passed",
+      "committed_immediately_after_build": true,
+      "command": "npm run package:release -- --candidate --output relase/release-0.3.21-a"
+    }
+  ],
   "windows": {
-    "source": { "status": "passed", "report": "artifacts/verification/auto-0321-source-e/report.json", "actual_window": true, "screenshots": 8, "screenshots_visually_reviewed": true, "automatic_two_and_three_independent_demo_receipts": true, "single_manual_suggestion_polish_ctrl_enter": true, "new_input_preserved": true, "normal_close": true },
-    "final_executable": "pending",
-    "scope": { "synthetic_data_only": true, "ai_reply_seeded": true, "native_demo_authorization_stubbed": true, "intermediate_wait_receipt_stop_screenshots_use_projection_fixture": true, "automatic_and_manual_sends_use_actual_demo_business_ipc": true },
-    "fixture_failures_retained": { "source-a": "native Demo authorization dialog was not handled; cancelled owned dialog", "source-b/source-c": "synthetic preseed omitted normal generated-draft related case versions; fixture corrected without altering automatic execution", "source-d": "driver read suggestion before queued result completed; explicit result wait added" }
+    "source": {
+      "status": "passed",
+      "report": "artifacts/verification/auto-0321-source-e/report.json",
+      "actual_window": true,
+      "screenshots": 8,
+      "screenshots_visually_reviewed": true,
+      "automatic_two_and_three_independent_demo_receipts": true,
+      "single_manual_suggestion_polish_ctrl_enter": true,
+      "new_input_preserved": true,
+      "normal_close": true
+    },
+    "final_executable": {
+      "status": "passed",
+      "report": "artifacts/verification/auto-0321-exe-a/report.json",
+      "actual_window": true,
+      "screenshots": 8,
+      "screenshots_visually_reviewed": true,
+      "automatic_two_and_three_independent_demo_receipts": true,
+      "single_manual_suggestion_polish_ctrl_enter": true,
+      "new_input_preserved": true,
+      "normal_close": true
+    },
+    "scope": {
+      "synthetic_data_only": true,
+      "ai_reply_seeded": true,
+      "native_demo_authorization_stubbed": true,
+      "intermediate_wait_receipt_stop_screenshots_use_projection_fixture": true,
+      "automatic_and_manual_sends_use_actual_demo_business_ipc": true
+    },
+    "fixture_failures_retained": {
+      "source-a": "native Demo authorization dialog was not handled; cancelled owned dialog",
+      "source-b/source-c": "synthetic preseed omitted normal generated-draft related case versions; fixture corrected without altering automatic execution",
+      "source-d": "driver read suggestion before queued result completed; explicit result wait added"
+    }
   },
-  "prompt_boundary_check": { "product_image_and_id_block_unchanged_from_0320": true, "requirement_change_block_unchanged_from_0320": true, "product_block_sha256": "64e9a8bd6bf5afb306966879658c5365d48b4ee7e1c12bb573ebb5c45e61d65f" },
-  "whatsapp_public_page": "pending_final_package_check",
-  "release": { "repository": "juccistar/reception-workbench-releases", "status": "not_created" },
+  "prompt_boundary_check": {
+    "product_image_and_id_block_unchanged_from_0320": true,
+    "requirement_change_block_unchanged_from_0320": true,
+    "product_block_sha256": "64e9a8bd6bf5afb306966879658c5365d48b4ee7e1c12bb573ebb5c45e61d65f"
+  },
+  "whatsapp_public_page": {
+    "status": "passed",
+    "normal": {
+      "status": "passed",
+      "report": "artifacts/verification/whatsapp-native-0321-exe-a/report.json",
+      "controlled_sdk_failure": false,
+      "packaged_host_and_sdk": true,
+      "sdk_inject_completed": true,
+      "stable_observation_ms": 60557,
+      "qr_refresh_observed": true,
+      "final_host_status": "qr",
+      "final_page_state": "available",
+      "profile_path_length": 93,
+      "partition_name_length": 27,
+      "current_session_host_used": true,
+      "post_login_history_disabled": true,
+      "production_data_accessed": false,
+      "logged_in": false,
+      "screenshot": "artifacts/verification/whatsapp-native-0321-exe-a/public-page-redacted.png",
+      "screenshots_visually_reviewed": true,
+      "normal_close": true
+    },
+    "controlled_failure": {
+      "status": "passed",
+      "report": "artifacts/verification/whatsapp-native-0321-exe-fault-a/report.json",
+      "controlled_sdk_failure": true,
+      "packaged_host_and_sdk": true,
+      "sdk_inject_completed": true,
+      "stable_observation_ms": 60561,
+      "qr_refresh_observed": true,
+      "final_host_status": "error",
+      "final_page_state": "available",
+      "profile_path_length": 93,
+      "partition_name_length": 27,
+      "current_session_host_used": true,
+      "post_login_history_disabled": true,
+      "production_data_accessed": false,
+      "logged_in": false,
+      "screenshot": "artifacts/verification/whatsapp-native-0321-exe-fault-a/public-page-redacted.png",
+      "screenshots_visually_reviewed": true,
+      "normal_close": true
+    },
+    "real_account_login_send_receive_validated": false
+  },
+  "release": {
+    "repository": "juccistar/reception-workbench-releases",
+    "status": "published_and_verified",
+    "release_id": 445519573,
+    "tag": "v0.3.21",
+    "url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.21",
+    "published_at": "2026-11-14T19:08:59Z",
+    "anonymous_latest_verified": true,
+    "draft_assets_verified_before_publication": true,
+    "draft_report": "artifacts/verification/release-0321/draft-verified.json",
+    "draft_tag_lookup_404": "Draft creation and four uploads succeeded; the unpublished tag lookup returned 404. Read and verified the same draft by release ID before publication; no duplicate release was created.",
+    "public_download_report": "artifacts/verification/public-0321-a/report.json",
+    "anonymous": true,
+    "complete_download": true,
+    "assets": [
+      {
+        "name": "latest.yml",
+        "bytes": 726,
+        "sha256": "ed61850d64ba3d319023b916658a9726548a4a87503b46aba9d770818bb8c2da",
+        "sha512": "f1Mv09izhSo9iFeVivCbX5QDFEaeDkINW1W7Ig18qkKqv3Cx2+TdreQbrYfRvp2CNvdhrXOMlm2yBHK2KWpzHw==",
+        "server_digest": "sha256:ed61850d64ba3d319023b916658a9726548a4a87503b46aba9d770818bb8c2da",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.21/latest.yml",
+        "saved_path": "artifacts/verification/public-0321-a/latest.yml/latest.yml",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.21.zip",
+        "bytes": 183463697,
+        "sha256": "6292f76e014c7c7a8c5defe099cb693dd38bb14595d42f9c2b0de90225adc6e0",
+        "sha512": "ouZeq3kGHAF3TXDUGmq6B+UBCoXk04BOMXghvvURTNQPIJirG3vi5XORwyhL5HT4f2fVzRo/Ux3bnRtYQsEujQ==",
+        "server_digest": "sha256:6292f76e014c7c7a8c5defe099cb693dd38bb14595d42f9c2b0de90225adc6e0",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.21/ReceptionWorkbench-0.3.21.zip",
+        "saved_path": "artifacts/verification/public-0321-a/ReceptionWorkbench-0.3.21.zip/ReceptionWorkbench-0.3.21.zip",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.21.exe",
+        "bytes": 140112305,
+        "sha256": "a3b235ba032c4ca501ef5231aee696dd0d6a236333e3fde8971bbd13eb6bd4fe",
+        "sha512": "xkKaO2o1WmQmOW98qR2RBVccPDcuqd5sPBV3jdWYsfEajUSDZ5b2nKEO/vIXS4QUoNrQwJ0R+ybAnt2IjrSsXw==",
+        "server_digest": "sha256:a3b235ba032c4ca501ef5231aee696dd0d6a236333e3fde8971bbd13eb6bd4fe",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.21/ReceptionWorkbench-Setup-0.3.21.exe",
+        "saved_path": "artifacts/verification/public-0321-a/ReceptionWorkbench-Setup-0.3.21.exe/ReceptionWorkbench-Setup-0.3.21.exe",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.21.exe.blockmap",
+        "bytes": 146720,
+        "sha256": "93e1091eda5cddc6b77f0a34fbb7916713437e46b8c286e71343b3a9cf5aec06",
+        "sha512": "CGDZba4pXUvztf159Z67jgVc5DjZlZIEbhv7JNrJaixPZWGLTfpmNZw+DuFUbUo3PQU7LRrPWLryqGBm3cbdyQ==",
+        "server_digest": "sha256:93e1091eda5cddc6b77f0a34fbb7916713437e46b8c286e71343b3a9cf5aec06",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.21/ReceptionWorkbench-Setup-0.3.21.exe.blockmap",
+        "saved_path": "artifacts/verification/public-0321-a/ReceptionWorkbench-Setup-0.3.21.exe.blockmap/ReceptionWorkbench-Setup-0.3.21.exe.blockmap",
+        "complete": true
+      }
+    ],
+    "signature": {
+      "status": "passed",
+      "algorithm": "ed25519",
+      "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+      "installer_sha512_matches_complete_download": true
+    }
+  },
   "boundaries": {
     "real_customer_messages_sent": false,
     "real_model_semantics_validated": false,
@@ -47,5 +225,79 @@
     "real_business_data_migrated_or_cleaned": false,
     "private_source_pushed": false,
     "default_delivery_entry_promoted": false
-  }
+  },
+  "candidate": {
+    "status": "passed",
+    "version": "0.3.21",
+    "candidate": "relase/release-0.3.21-a",
+    "assets": [
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.21.exe",
+        "bytes": 140112305,
+        "sha256": "a3b235ba032c4ca501ef5231aee696dd0d6a236333e3fde8971bbd13eb6bd4fe",
+        "sha512": "xkKaO2o1WmQmOW98qR2RBVccPDcuqd5sPBV3jdWYsfEajUSDZ5b2nKEO/vIXS4QUoNrQwJ0R+ybAnt2IjrSsXw=="
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.21.zip",
+        "bytes": 183463697,
+        "sha256": "6292f76e014c7c7a8c5defe099cb693dd38bb14595d42f9c2b0de90225adc6e0",
+        "sha512": "ouZeq3kGHAF3TXDUGmq6B+UBCoXk04BOMXghvvURTNQPIJirG3vi5XORwyhL5HT4f2fVzRo/Ux3bnRtYQsEujQ=="
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.21.exe.blockmap",
+        "bytes": 146720,
+        "sha256": "93e1091eda5cddc6b77f0a34fbb7916713437e46b8c286e71343b3a9cf5aec06",
+        "sha512": "CGDZba4pXUvztf159Z67jgVc5DjZlZIEbhv7JNrJaixPZWGLTfpmNZw+DuFUbUo3PQU7LRrPWLryqGBm3cbdyQ=="
+      },
+      {
+        "name": "latest.yml",
+        "bytes": 726,
+        "sha256": "ed61850d64ba3d319023b916658a9726548a4a87503b46aba9d770818bb8c2da",
+        "sha512": "f1Mv09izhSo9iFeVivCbX5QDFEaeDkINW1W7Ig18qkKqv3Cx2+TdreQbrYfRvp2CNvdhrXOMlm2yBHK2KWpzHw=="
+      }
+    ],
+    "signature": {
+      "status": "passed",
+      "algorithm": "ed25519",
+      "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078"
+    },
+    "bundles": [
+      {
+        "path": "win-unpacked",
+        "compiled_app_files_matched": 5,
+        "runtime_packages": 193,
+        "runtime_files": 3377,
+        "runtime_archive_sha256": "eaee2930b1140de6363549f9f1212aa0ade411b640581bb48ec18f600779f317",
+        "app_asar_sha256": "994298f1294ebf33a3ea1d2df2e6f2224477e62c4334f58c74633c325838b653",
+        "backend_exe_sha256": "1ca8d719ccfc7ba7c91fb0b3bcc7e4f76ec577d9197d99060b08ce2b09d6000b",
+        "all_frozen_backend_files_matched": true
+      },
+      {
+        "path": "installer-build/win-unpacked",
+        "compiled_app_files_matched": 5,
+        "runtime_packages": 193,
+        "runtime_files": 3377,
+        "runtime_archive_sha256": "eaee2930b1140de6363549f9f1212aa0ade411b640581bb48ec18f600779f317",
+        "app_asar_sha256": "994298f1294ebf33a3ea1d2df2e6f2224477e62c4334f58c74633c325838b653",
+        "backend_exe_sha256": "1ca8d719ccfc7ba7c91fb0b3bcc7e4f76ec577d9197d99060b08ce2b09d6000b",
+        "all_frozen_backend_files_matched": true
+      }
+    ],
+    "python_inputs": 89,
+    "frozen_backend_files": 75,
+    "windows_authenticode": "NotSigned",
+    "package_staging": "artifacts/build/package-input-1794682376912",
+    "final_build_commit": "307018f",
+    "installed": false,
+    "zip": {
+      "status": "passed",
+      "version": "0.3.21",
+      "crc_verified": true,
+      "all_manifest_files_hash_verified": true,
+      "files": 165,
+      "zip_bytes": 183463697,
+      "extracted_or_executed": false
+    }
+  },
+  "current_acceptance_screenshots_visually_reviewed": 18
 }
