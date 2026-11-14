@@ -1,7 +1,7 @@
 {
   "version": "0.3.18",
   "date": "2026-11-14",
-  "status": "final-source-built-public-sdk-verified",
+  "status": "final-source-built-awaiting-final-window",
   "public_latest": "0.3.17",
   "architecture": "single-electron-webcontentsview-shared-with-sdk",
   "targeted_tests": {
@@ -16,14 +16,14 @@
       "status": "passed"
     },
     "desktop": {
-      "whatsapp_connection": 17,
+      "whatsapp_connection": 19,
       "whatsapp_transport": 3,
       "whatsapp_host_lifecycle": 2,
       "whatsapp_coordinator": 6,
       "whatsapp_ledger": 1,
       "renderer_workbench_and_whatsapp_page": 104,
       "product_pages_0313": 11,
-      "distinct_cases": 144,
+      "distinct_cases": 146,
       "status": "passed"
     },
     "tools": {
@@ -36,6 +36,17 @@
   "whatsapp_public_page": {
     "status": "passed-source-sdk-to-qr",
     "source_report": "artifacts/verification/whatsapp-native-source-0318-i/report.json",
+    "final_build_report": "artifacts/verification/whatsapp-native-final-source-0318-a/report.json",
+    "source_commit": "9568ded",
+    "packaged_sdk_resources": false,
+    "no_cdp_reference_after_fix": {
+      "report": "artifacts/verification/whatsapp-native-reference-0318-c/report.json",
+      "status": "reference-ready",
+      "browser_supported": true,
+      "native_qr_visible": true,
+      "sdk_used": false,
+      "media_redacted_screenshot_visually_reviewed": true
+    },
     "formal_chinese_application_name": true,
     "http_status": 200,
     "view_and_session_user_agents_ascii": true,
@@ -56,6 +67,12 @@
     "qr_or_credentials_recorded": false,
     "experimental_automation_patches_adopted": false,
     "sdk_dependency_versions_changed": false,
+    "http_429_retry_after": {
+      "status": "passed-targeted",
+      "seconds_and_http_date_supported": true,
+      "missing_header_fallback_seconds": 60,
+      "early_manual_reconnect_sends_no_request": true
+    },
     "earlier_observations": {
       "minimum_ascii_product_replacement": "Resolved HTTP 400 but did not establish browser support or SDK readiness.",
       "initial_sdk_report": "artifacts/verification/whatsapp-native-source-0318-h/report.json",
@@ -79,12 +96,28 @@
   "desktop_build": {
     "status": "passed",
     "output": "artifacts/app",
-    "main_sha256": "b86ff610d007d27e92a12af1e43c5b96910d392814d04e5a1060ff3e7fcc8301",
+    "main_sha256": "6bea5308409431ee21b61710d55b81c635d824aef72af80f16167675d63aaf19",
     "preload_sha256": "effa011702592db24c3d8003c0f84d623ad67a6bacdc39ccc84262470e138504"
   },
   "actual_window": {
-    "status": "pending-final-rebuild",
-    "synthetic_only": true
+    "status": "passed",
+    "source_commit": "9568ded",
+    "report": "artifacts/verification/workbench-0318-source-b/report.json",
+    "synthetic_only": true,
+    "packaged_executable": false,
+    "screenshots": 7,
+    "screenshots_visually_reviewed": true,
+    "health_event_injected": true,
+    "backend_fault_injected_in_window": false,
+    "backend_fault_scope": "Separate Python tests exercise real worker faults, revocation, queue cleanup and restart; window test injects a restricted host event through the actual preload.",
+    "completed": [
+      "actual-backend-health-and-synthetic-reception-ready",
+      "photo-coverage-removed-with-summary-preserved",
+      "independent-health-event-overrides-green-state-without-blocking-editor-save",
+      "health-failure-disables-new-checks-and-grants-in-both-channels",
+      "wide-and-narrow-reception-and-whatsapp-layouts",
+      "normal-close"
+    ]
   },
   "packaging": {
     "status": "not-run"

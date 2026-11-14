@@ -5,7 +5,7 @@ import puppeteer, { type Frame, type HTTPResponse, type Page } from 'puppeteer';
 import type { WhatsAppHostInfo } from '../../shared/whatsapp';
 import { SendLedger, type FrozenIntent, type SendResult } from './ledger';
 import { ViewTransport } from './transport';
-import { connectionFailure, whatsappUserAgent, WhatsAppConnectionError } from './connection';
+import { connectionFailure, retryAfterDelay, whatsappUserAgent, WhatsAppConnectionError } from './connection';
 
 // whatsapp-web.js 1.34.8, Apache-2.0. The instance-specific initialize adapter
 // follows Client.initialize, replacing browser creation and guarding frame reinjection.
@@ -29,6 +29,7 @@ export class WhatsAppHost {
   private client: any;
   private generation = 0;
   private observedDocument = 0;
+  private retryNotBefore = 0;
   private transport?: ViewTransport;
   private browser?: Awaited<ReturnType<typeof puppeteer.connect>>;
   private phaseTimer?: ReturnType<typeof setTimeout>;
@@ -157,6 +158,7 @@ export class WhatsAppHost {
   async connect(): Promise<void> {
     if (this.started) return;
     if (this.closing) throw new Error('WhatsApp host is closed');
+    if (Date.now() < this.retryNotBefore) return;
     this.started = true;
     this.failure = undefined;
     const generation = ++this.generation;
@@ -166,11 +168,15 @@ export class WhatsAppHost {
     this.update('connecting');
     void this.initialize(client, generation).catch(error => this.retire(generation, 'error', connectionFailure(error)));
   }
+  private httpFailure(response: HTTPResponse): WhatsAppConnectionError {
+    if (response.status() === 429) this.retryNotBefore = Date.now() + retryAfterDelay(response.headers?.()['retry-after']);
+    return new WhatsAppConnectionError('http_error', response.status());
+  }
   private observePage(page: Page, client: any, generation: number): void {
     const fail = (error: unknown) => this.retire(generation, 'error', connectionFailure(error));
     const response = (result: HTTPResponse) => {
       if (result.request().isNavigationRequest() && result.frame() === page.mainFrame() && result.status() >= 400)
-        fail(new WhatsAppConnectionError('http_error', result.status()));
+        fail(this.httpFailure(result));
     };
     const navigated = (frame: Frame) => {
       if (frame.parentFrame() !== null || this.closing || this.generation !== generation || this.observedDocument !== generation) return;
@@ -208,7 +214,7 @@ export class WhatsAppHost {
     const response = await page.goto('https://web.whatsapp.com/', { waitUntil: 'load', timeout: PHASE_TIMEOUT_MS, referer: 'https://whatsapp.com/' })
       .catch(error => { throw connectionFailure(error, 'navigation_timeout'); }); ensureCurrent();
     if (!response || response.status() < 200) throw new WhatsAppConnectionError('invalid_response');
-    if (response.status() >= 400) throw new WhatsAppConnectionError('http_error', response.status());
+    if (response.status() >= 400) throw this.httpFailure(response);
     if (!this.allowed(page.url())) throw new WhatsAppConnectionError('unexpected_navigation');
     this.observedDocument = generation;
     this.phase(generation, 'sdk_timeout');

@@ -18,6 +18,15 @@ export function whatsappUserAgent(original: string, applicationName: string, ver
   return normalized;
 }
 
+export function retryAfterDelay(value: string | undefined, now = Date.now()): number {
+  if (value && /^\d+$/.test(value.trim())) {
+    const delay = Number(value.trim()) * 1000;
+    if (Number.isFinite(delay)) return delay;
+  }
+  const date = value ? Date.parse(value) : NaN;
+  return Number.isFinite(date) ? Math.max(0, date - now) : 60_000;
+}
+
 export function connectionFailure(error: unknown, timeout: 'navigation_timeout' | 'sdk_timeout' = 'sdk_timeout'): WhatsAppConnectionError {
   if (error instanceof WhatsAppConnectionError) return error;
   // Inspect only to select a fixed code; never expose or persist the source text.

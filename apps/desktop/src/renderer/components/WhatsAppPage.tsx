@@ -10,6 +10,7 @@ const hostLabels: Record<string, string> = { disconnected: '未连接', connecti
 const hostErrors: Record<string, string> = { browser_unsupported: 'WhatsApp 未识别为受支持的浏览器，请检查更新', http_error: '登录页请求失败', network_error: '网络连接失败，请重新连接', tls_error: '安全连接失败，请检查网络', navigation_timeout: '连接超时，请重新连接', sdk_timeout: '初始化超时，请重新连接', ready_timeout: '加载聊天超时，请重新连接', auth_failed: '认证失败，请重新连接', sdk_error: '初始化失败，请重新连接', invalid_response: '登录页响应无效，请重新连接', page_closed: '页面已关闭，请重新连接', unexpected_navigation: '页面导航异常，请重新连接' };
 function hostLabel(host: WhatsAppHostInfo): string {
   if (host.status !== 'error') return hostLabels[host.status] ?? '正在读取连接状态';
+  if (host.error_code === 'http_error' && host.http_status === 429) return '请求过于频繁（HTTP 429），请等待后重连';
   if (host.error_code === 'http_error' && Number.isInteger(host.http_status) && host.http_status! >= 100 && host.http_status! <= 599) return `登录页请求失败（HTTP ${host.http_status}）`;
   const code = host.error_code ?? '';
   return Object.hasOwn(hostErrors, code) ? hostErrors[code] : hostLabels.error;

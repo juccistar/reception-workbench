@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WhatsAppHost } from '../src/main/whatsapp/host';
-import { connectionFailure, whatsappUserAgent, WhatsAppConnectionError } from '../src/main/whatsapp/connection';
+import { connectionFailure, retryAfterDelay, whatsappUserAgent, WhatsAppConnectionError } from '../src/main/whatsapp/connection';
 
 const runtime = vi.hoisted(() => ({ contents: null as any, connect: vi.fn() }));
 vi.mock('electron', () => ({ app: { getName: () => '询盘接待助手', getVersion: () => '0.3.18' }, WebContentsView: class { webContents = runtime.contents; setBounds = vi.fn(); } }));
@@ -69,6 +69,23 @@ describe('WhatsApp connection compatibility', () => {
     navigation.resolve({ status: () => 403 }); await Promise.resolve();
     expect(host.getStatus()).toMatchObject({ status: 'error', error_code: 'http_error', http_status: 403 });
     expect(clients[0].inject).not.toHaveBeenCalled();
+  });
+  it('honors Retry-After before a user can start another connection attempt', async () => {
+    const { host, page } = setup();
+    page.goto.mockResolvedValue({ status: () => 429, headers: () => ({ 'retry-after': '120' }) });
+    await host.connect(); await vi.waitFor(() => expect(host.getStatus().http_status).toBe(429));
+    await host.connect();
+    expect(runtime.connect).toHaveBeenCalledTimes(1);
+    expect(host.getStatus()).toMatchObject({ status: 'error', error_code: 'http_error', http_status: 429 });
+    host.retryNotBefore = Date.now() - 1;
+    await host.connect(); await vi.waitFor(() => expect(runtime.connect).toHaveBeenCalledTimes(2));
+  });
+  it('accepts both Retry-After forms and uses a finite fallback for missing data', () => {
+    const now = Date.UTC(2030, 0, 1);
+    expect(retryAfterDelay('120', now)).toBe(120_000);
+    expect(retryAfterDelay(new Date(now + 90_000).toUTCString(), now)).toBe(90_000);
+    expect(retryAfterDelay(undefined, now)).toBe(60_000);
+    expect(retryAfterDelay('invalid', now)).toBe(60_000);
   });
   it('rejects a navigation without an effective response', async () => {
     const { host, clients } = setup(null); await host.connect();
