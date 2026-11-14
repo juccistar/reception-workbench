@@ -95,8 +95,7 @@ class FakeBridge implements ReceptionBridge {
       const result = makeDraft(id, String(params.body), Number(params.expected_revision ?? 0) + 1);
       const previous = this.details[id].chat_draft;
       const linked = previous?.blocked_batch_id ?? previous?.batch_id;
-      if (linked && !params.remaining_batch_id) { result.blocked_batch_id = linked; result.blocked_accepted_parts = previous?.blocked_accepted_parts; }
-      if (Array.isArray(params.message_parts)) result.message_parts = [...params.message_parts] as string[];
+      if (linked && params.body !== '') { result.blocked_batch_id = linked; result.blocked_accepted_parts = previous?.blocked_accepted_parts; }
       this.details[id].chat_draft = result; return clone(result) as T;
     }
     if (method === 'reconcile_operation') return (this.reconcileHandler ? await this.reconcileHandler(params) : { status: 'unknown', message: '合成操作尚无权威回执' }) as T;
@@ -132,108 +131,82 @@ describe('0.3.15 compact workspace', () => {
   const ready = (bridge: FakeBridge, id = 'pending-0315') => {
     bridge.details.emma.manual_suggestion = { suggestion_id: id, conversation_id: 'emma', case_id: 'case-emma', body: 'A synthetic reply for review.', request_id: id, context_fingerprint: 'synthetic', status: 'ready', updated_at: 1 };
   };
-  it('adopts ordered suggestion parts, edits, deletes and merges them', async () => {
+  it.each(['multiple messages', 'part polish'] as const)('refuses a legacy %s suggestion without changing the editor', async kind => {
     const bridge = new FakeBridge(); ready(bridge);
-    bridge.details.emma.manual_suggestion!.body = 'first\n\nsecond';
-    bridge.details.emma.manual_suggestion!.reply_messages = [{ body: 'first', reply_sources: [] }, { body: 'second', reply_sources: [] }];
+    const suggestion = bridge.details.emma.manual_suggestion!;
+    if (kind === 'multiple messages') suggestion.reply_messages = [{ body: 'first', reply_sources: [] }, { body: 'second', reply_sources: [] }];
+    else { suggestion.mode = 'polish'; suggestion.input_part_index = 1; }
     await openApp(bridge);
-    expect(screen.getByRole('region', { name: '待处理回复建议' })).toHaveTextContent('1. first');
+    const original = (textarea() as HTMLTextAreaElement).value;
     fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
-    expect(await screen.findByRole('textbox', { name: '第 1 条回复正文' })).toHaveValue('first');
-    fireEvent.change(screen.getByRole('textbox', { name: '第 2 条回复正文' }), { target: { value: 'changed' } });
-    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => JSON.stringify(call.params.message_parts) === JSON.stringify(['first', 'changed']))).toBe(true));
-    fireEvent.click(screen.getByRole('button', { name: '删除第 1 条' }));
-    expect(screen.getByRole('textbox', { name: '第 1 条回复正文' })).toHaveValue('changed');
-    fireEvent.click(screen.getByRole('button', { name: '合为一条' }));
-    expect(textarea()).toHaveValue('changed');
-    expect(screen.queryByRole('region', { name: '待处理回复建议' })).not.toBeInTheDocument();
+    expect(await screen.findByText('旧版多条建议不可采用，请重新生成单条建议。')).toBeInTheDocument();
+    expect(textarea()).toHaveValue(original);
+    expect(screen.getByRole('region', { name: '待处理回复建议' })).toBeInTheDocument();
+    expect(calls(bridge, 'begin_manual_edit')).toHaveLength(0);
+    expect(calls(bridge, 'send_chat')).toHaveLength(0);
   });
-  it('preserves later edits when an earlier reply batch completes', async () => {
-    const bridge = new FakeBridge(); ready(bridge);
-    bridge.details.emma.manual_suggestion!.body = 'first\n\nsecond';
-    bridge.details.emma.manual_suggestion!.reply_messages = [{ body: 'first', reply_sources: [] }, { body: 'second', reply_sources: [] }];
-    bridge.sendHandler = async params => {
-      const ack = bridge.enqueue(params);
-      bridge.details.emma.reply_batches = [{ batch_id: 'batch-1', status: 'sending', total: 2, accepted: 0, current_index: 0, pending_operation_ids: [] }];
-      return { ...ack, batch_id: 'batch-1' };
-    };
+  it('sends a normal single body with Ctrl+Enter', async () => {
+    const bridge = new FakeBridge(); bridge.details.emma.chat_draft = null;
+    await openApp(bridge); await edit('First paragraph\n\nSecond paragraph');
+    fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(1));
+    expect(calls(bridge, 'save_chat_draft')[0].params).toMatchObject({ body: 'First paragraph\n\nSecond paragraph' });
+    expect(calls(bridge, 'save_chat_draft')[0].params).not.toHaveProperty('message_parts');
+    expect(calls(bridge, 'send_chat')[0].params.expected_revision).toBe(1);
+  });
+  it('saves an unsent legacy multipart draft as one body before sending', async () => {
+    const bridge = new FakeBridge();
+    bridge.details.emma.chat_draft = { ...makeDraft('emma', 'first\n\nsecond'), message_parts: ['first', 'second'] };
     await openApp(bridge);
-    fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
-    await screen.findByRole('textbox', { name: '第 2 条回复正文' });
-    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => Array.isArray(call.params.message_parts))).toBe(true));
+    expect(textarea()).toHaveValue('first\n\nsecond');
     fireEvent.click(sendButton());
     await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(1));
-    fireEvent.change(screen.getByRole('textbox', { name: '第 2 条回复正文' }), { target: { value: 'later input' } });
-    bridge.details.emma.reply_batches = [{ batch_id: 'batch-1', status: 'accepted', total: 2, accepted: 2, current_index: null, pending_operation_ids: [] }];
-    act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
-    await screen.findByText('已发送 2/2 条');
-    expect(screen.getByRole('textbox', { name: '第 2 条回复正文' })).toHaveValue('later input');
-    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => call.params.body === 'first\n\nlater input')).toBe(true));
+    const saved = calls(bridge, 'save_chat_draft')[0];
+    expect(saved.params).toMatchObject({ body: 'first\n\nsecond', expected_revision: 1 });
+    expect(saved.params).not.toHaveProperty('message_parts');
+    expect(bridge.calls.indexOf(saved)).toBeLessThan(bridge.calls.indexOf(calls(bridge, 'send_chat')[0]));
+    expect(calls(bridge, 'send_chat')[0].params.expected_revision).toBe(2);
   });
-  it('requires an explicit remaining-only draft after partial acceptance', async () => {
-    const bridge = new FakeBridge(); ready(bridge);
-    bridge.details.emma.manual_suggestion!.body = 'first\n\nsecond';
-    bridge.details.emma.manual_suggestion!.reply_messages = [{ body: 'first', reply_sources: [] }, { body: 'second', reply_sources: [] }];
-    bridge.sendHandler = async params => {
-      const ack = bridge.enqueue(params);
-      if (bridge.requests.size === 1) {
-        bridge.details.emma.chat_draft!.batch_id = 'batch-partial';
-        bridge.details.emma.reply_batches = [{ batch_id: 'batch-partial', status: 'sending', total: 2, accepted: 0, current_index: 0, pending_operation_ids: [] }];
-        return { ...ack, batch_id: 'batch-partial' };
-      }
-      return ack;
-    };
+  it('retains a stopped legacy draft when no part was accepted', async () => {
+    const bridge = new FakeBridge();
+    bridge.details.emma.chat_draft = { ...makeDraft('emma', 'unsent first\n\nunsent second'), status: 'rejected', message_parts: ['unsent first', 'unsent second'], blocked_batch_id: 'batch-rejected' };
+    bridge.details.emma.reply_batches = [{ batch_id: 'batch-rejected', status: 'stopped', total: 2, accepted: 0, current_index: 0, pending_operation_ids: [] }];
     await openApp(bridge);
-    fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
-    await screen.findByRole('textbox', { name: '第 2 条回复正文' });
-    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => Array.isArray(call.params.message_parts))).toBe(true));
+    expect(textarea()).toHaveValue('unsent first\n\nunsent second');
+    expect(screen.queryByRole('button', { name: '清空并开启新草稿' })).not.toBeInTheDocument();
     fireEvent.click(sendButton());
     await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(1));
-    fireEvent.change(screen.getByRole('textbox', { name: '第 2 条回复正文' }), { target: { value: 'new second' } });
-    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => call.params.body === 'first\n\nnew second')).toBe(true));
-    bridge.details.emma.chat_draft!.blocked_batch_id = 'batch-partial';
-    bridge.details.emma.chat_draft!.blocked_accepted_parts = ['first'];
+    expect(calls(bridge, 'save_chat_draft')[0].params).not.toHaveProperty('message_parts');
+  });
+  it('preserves new text saved during a legacy batch when it later stops', async () => {
+    const bridge = new FakeBridge();
+    bridge.details.emma.chat_draft = { ...makeDraft('emma', 'new input during sending'), blocked_batch_id: 'batch-partial', blocked_accepted_parts: ['first'] };
     bridge.details.emma.reply_batches = [{ batch_id: 'batch-partial', status: 'stopped', total: 2, accepted: 1, current_index: 1, pending_operation_ids: [] }];
-    bridge.snapshot.jobs[0].status = 'failed';
-    act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
-    await screen.findByRole('button', { name: '只保留未发送内容' });
+    await openApp(bridge);
+    expect(textarea()).toHaveValue('new input during sending');
+    expect(textarea()).toBeDisabled();
     expect(sendButton()).toBeDisabled();
-    expect(screen.getByRole('textbox', { name: '第 2 条回复正文' })).toHaveValue('new second');
-    fireEvent.click(screen.getByRole('button', { name: '只保留未发送内容' }));
-    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => call.params.remaining_batch_id === 'batch-partial' && call.params.body === 'new second')).toBe(true));
-    expect(screen.getByRole('textbox', { name: '第 1 条回复正文' })).toHaveValue('new second');
-    await waitFor(() => expect(sendButton()).toBeEnabled());
-    fireEvent.click(sendButton());
-    await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(2));
-    expect(bridge.details.emma.chat_draft!.body).toBe('new second');
   });
-  it('polishes only the selected saved part and rejects a stale replacement', async () => {
-    const originalSubtle = Object.getOwnPropertyDescriptor(globalThis.crypto, 'subtle');
-    Object.defineProperty(globalThis.crypto, 'subtle', { configurable: true, value: webcrypto.subtle });
-    try {
-      const bridge = new FakeBridge(); ready(bridge);
-      bridge.details.emma.manual_suggestion!.body = 'first\n\nsecond';
-      bridge.details.emma.manual_suggestion!.reply_messages = [{ body: 'first', reply_sources: [] }, { body: 'second', reply_sources: [] }];
-      await openApp(bridge);
-      fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
-      const second = await screen.findByRole('textbox', { name: '第 2 条回复正文' });
-      fireEvent.focus(second);
-      await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => Array.isArray(call.params.message_parts))).toBe(true));
-      fireEvent.click(screen.getByRole('button', { name: '润色当前回复' }));
-      await waitFor(() => expect(calls(bridge, 'generate_manual_suggestion')).toHaveLength(1));
-      const params = calls(bridge, 'generate_manual_suggestion')[0].params;
-      expect(params).toMatchObject({ input_body: 'second', part_index: 1 });
-      bridge.details.emma.manual_suggestion = { suggestion_id: 'part-result', conversation_id: 'emma', case_id: 'case-emma', body: 'polished', request_id: 'part-result', context_fingerprint: 'synthetic', status: 'ready', updated_at: 1, mode: 'polish', input_part_index: 1, input_revision: params.input_revision as number, input_hash: params.input_hash as string };
-      act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
-      await screen.findByText('polished');
-      fireEvent.change(second, { target: { value: 'newer edit' } });
-      fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
-      expect(screen.getByRole('textbox', { name: '第 2 条回复正文' })).toHaveValue('newer edit');
-      expect(screen.getByRole('textbox', { name: '第 1 条回复正文' })).toHaveValue('first');
-    } finally {
-      if (originalSubtle) Object.defineProperty(globalThis.crypto, 'subtle', originalSubtle);
-      else Reflect.deleteProperty(globalThis.crypto, 'subtle');
-    }
+  it('requires an explicit blank draft after a legacy batch was partially accepted', async () => {
+    const bridge = new FakeBridge();
+    bridge.details.emma.chat_draft = { ...makeDraft('emma', 'first\n\nsecond'), message_parts: ['first', 'second'], blocked_batch_id: 'batch-partial', blocked_accepted_parts: ['first'] };
+    bridge.details.emma.reply_batches = [{ batch_id: 'batch-partial', status: 'stopped', total: 2, accepted: 1, current_index: 1, pending_operation_ids: [] }];
+    await openApp(bridge);
+    expect(textarea()).toHaveValue('');
+    expect(sendButton()).toBeDisabled();
+    fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: true });
+    expect(calls(bridge, 'send_chat')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '清空并开启新草稿' }));
+    await waitFor(() => expect(calls(bridge, 'save_chat_draft')).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '清空并开启新草稿' })).not.toBeInTheDocument());
+    expect(textarea()).toHaveValue('');
+    expect(calls(bridge, 'save_chat_draft')[0].params).toMatchObject({ body: '', expected_revision: 1 });
+    expect(calls(bridge, 'save_chat_draft')[0].params).not.toHaveProperty('remaining_batch_id');
+    expect(sendButton()).toBeDisabled();
+    await edit('A new message');
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(1));
+    expect(bridge.details.emma.chat_draft!.body).toBe('A new message');
   });
   it('shows full local timestamps above messages without date separators', async () => {
     const bridge = new FakeBridge();
@@ -490,26 +463,6 @@ describe('manual suggestion and supplement', () => {
     expect(screen.getByRole('textbox', { name: '业务补充内容' })).toHaveValue('正在输入的新正文');
     await waitFor(() => expect(calls(bridge, 'save_conversation_supplement').some(call => call.params.body === '正在输入的新正文' && call.params.expected_revision === 1)).toBe(true), { timeout: 3000 });
   });
-  it('preserves later input while recovering an automatic tail', async () => {
-    const bridge = new FakeBridge();
-    bridge.details.emma.chat_draft = null;
-    bridge.details.emma.reply_batches = [{ batch_id: 'old', status: 'stopped', total: 2, accepted: 1, current_index: null, pending_operation_ids: [] }];
-    bridge.details.emma.recoverable_reply_batches = [{ batch_id: 'old', messages_hash: 'a'.repeat(64), total: 2, accepted: 1, remaining: 1 }];
-    const pending = deferred<Draft>();
-    const invoke = bridge.invoke.bind(bridge);
-    bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => {
-      if (method === 'recover_reply_batch_draft') { bridge.calls.push({ method, params }); return await pending.promise as T; }
-      return invoke<T>(method, params);
-    };
-    await openApp(bridge);
-    fireEvent.click(screen.getByRole('button', { name: '取出未发送内容' }));
-    fireEvent.change(textarea(), { target: { value: '迟到的新输入' } });
-    const recovered = makeDraft('emma', '原冻结尾部', 1); recovered.message_parts = ['原冻结尾部'];
-    bridge.details.emma.chat_draft = recovered;
-    await act(async () => pending.resolve(recovered));
-    expect(textarea()).toHaveValue('迟到的新输入');
-    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => call.params.body === '迟到的新输入' && call.params.expected_revision === 1)).toBe(true));
-  });
   it('validates the frozen polish source at the desktop bridge', () => {
     const valid = { conversation_id: 'emma', case_id: null, client_request_id: 'polish-1',
       input_body: '14.5 USD each, shipping excluded', input_revision: 2, input_hash: 'a'.repeat(64) };
@@ -517,18 +470,11 @@ describe('manual suggestion and supplement', () => {
     expect(() => validateChatParameters('generate_manual_suggestion', { ...valid, input_revision: null })).toThrow();
     expect(() => validateChatParameters('generate_manual_suggestion', { ...valid, input_body: 'changed', input_hash: null })).toThrow();
     expect(() => validateChatParameters('generate_manual_suggestion', { ...valid, foreign_body: 'other customer' })).toThrow();
-    expect(() => validateChatParameters('generate_manual_suggestion', { ...valid, part_index: 2 })).not.toThrow();
-    expect(() => validateChatParameters('generate_manual_suggestion', { ...valid, part_index: 3 })).toThrow();
-    const parts = { conversation_id: 'emma', body: 'one\n\ntwo', expected_revision: null, client_mutation_id: 'm', message_parts: ['one', 'two'] };
-    expect(() => validateChatParameters('save_chat_draft', parts)).not.toThrow();
-    expect(() => validateChatParameters('save_chat_draft', { ...parts, body: 'different' })).toThrow();
-    expect(() => validateChatParameters('save_chat_draft', { ...parts, remaining_batch_id: 'batch' })).not.toThrow();
-    expect(() => validateChatParameters('save_chat_draft', { ...parts, remaining_batch_id: '' })).toThrow();
-    expect(() => validateChatParameters('save_chat_draft', { ...parts, message_parts: undefined, remaining_batch_id: 'batch' })).toThrow();
-    const recovery = { conversation_id: 'emma', batch_id: 'batch', expected_messages_hash: 'a'.repeat(64), expected_chat_draft_revision: null, client_mutation_id: 'm' };
-    expect(() => validateChatParameters('recover_reply_batch_draft', recovery)).not.toThrow();
-    expect(() => validateChatParameters('recover_reply_batch_draft', { ...recovery, body: 'injected' })).toThrow();
-    expect(() => validateChatParameters('recover_reply_batch_draft', { ...recovery, expected_messages_hash: 'bad' })).toThrow();
+    expect(() => validateChatParameters('generate_manual_suggestion', { ...valid, part_index: 1 })).toThrow();
+    const draft = { conversation_id: 'emma', body: 'one\n\ntwo', expected_revision: null, client_mutation_id: 'm' };
+    expect(() => validateChatParameters('save_chat_draft', draft)).not.toThrow();
+    expect(() => validateChatParameters('save_chat_draft', { ...draft, message_parts: ['one', 'two'] })).toThrow();
+    expect(() => validateChatParameters('save_chat_draft', { ...draft, remaining_batch_id: 'batch' })).toThrow();
   });
   it('polishes the exact saved body and displays the suggestion translation without editing the reply', async () => {
     const originalSubtle = Object.getOwnPropertyDescriptor(globalThis.crypto, 'subtle');

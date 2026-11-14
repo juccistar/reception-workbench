@@ -51,6 +51,17 @@ class WhatsAppTests(unittest.TestCase):
             self.service._wa_prepare_send(second['operation_id'])
             self.service._wa_transport_result(second['operation_id'], 'wa-account', 'epoch-1', 'unknown')
             self.assertEqual(len(self.service.repo.list('wa_operation')), 2)
+            progress = self.service.get_whatsapp_state()['reply_batches'][0]
+            self.assertEqual((progress['origin'], progress['channel'], progress['phase']), ('automatic', 'whatsapp', 'reply'))
+            self.assertEqual(progress['chat_id'], 'contact')
+            self.assertIsInstance(progress['created_at'], int)
+            self.assertIsInstance(progress['updated_at'], int)
+            self.assertEqual(progress['parts'], [
+                {'part_index': 0, 'status': 'accepted', 'message_id': 'sent-1'},
+                {'part_index': 1, 'status': 'unknown', 'message_id': None},
+                {'part_index': 2, 'status': 'planned', 'message_id': None}])
+            self.assertEqual(progress['pending_operation_ids'], [second['operation_id']])
+            self.assertNotIn('body', str(progress))
             self.service._wa_transport_result(second['operation_id'], 'wa-account', 'epoch-1', 'submitted', 'sent-2', 1)
             third = next(op for op in self.service.repo.list('wa_operation') if op['body'] == 'Third')
             self.service._wa_prepare_send(third['operation_id'])

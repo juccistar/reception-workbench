@@ -314,6 +314,8 @@ class LiveIntegration:
         if not context.get('unsent_reply'):
             try:
                 answer = normalize_reply_output(answer)
+                if len(answer['reply_messages']) != 1:
+                    raise ValueError('manual suggestions require exactly one message')
             except ValueError:
                 raise ServiceError('answer_non_json', 'AI 未返回有效回复正文', stage='answer') from None
             if any(invalid_reply_body(item['body']) for item in answer['reply_messages']):

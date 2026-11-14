@@ -32,7 +32,7 @@ const prompts = {
   LEGACY_OBSERVATION: block('## 10. P08：'),
 };
 const output = ['"""Reviewed, shared generation prompts. Regenerate with scripts/sync-reception-prompts.mjs."""',
-  'PROMPT_VERSION = "reception-0.3.19"',
+  'PROMPT_VERSION = "reception-0.3.21"',
   ...Object.entries(prompts).map(([name, value]) => `${name} = ${JSON.stringify(value)}`),
   'AUTOMATIC = COMMON + "\\n" + AUTOMATIC_TASK + "\\n" + REQUIREMENT_CHANGE_RULES + "\\ncontext =\\n"',
   'WHATSAPP = COMMON + "\\n" + WHATSAPP_TASK + "\\ncontext =\\n"',
@@ -48,4 +48,4 @@ if (check) {
 } else {
   await writeFile(target, output, 'utf8');
 }
-console.log(JSON.stringify({ status: check ? 'matched' : 'generated', prompts: Object.keys(prompts), version: 'reception-0.3.19' }));
+console.log(JSON.stringify({ status: check ? 'matched' : 'generated', prompts: Object.keys(prompts), version: 'reception-0.3.21' }));

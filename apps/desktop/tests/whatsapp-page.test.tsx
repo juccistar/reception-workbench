@@ -61,8 +61,8 @@ it('shows batch progress and reconciles the original pending part', async () => 
   state.reply_batches = [{ batch_id: 'batch', chat_id: 'synthetic@lid', status: 'waiting_receipt', total: 3, accepted: 1, current_index: 1, pending_operation_ids: ['part-2'] }];
   state.pending_operations = [{ operation_id: 'part-2', chat_id: 'synthetic@lid', status: 'unknown' }];
   render(<WhatsAppPage model={model} bridge={bridge} />);
-  expect(await screen.findByText(/已发送 1\/3 条，第 2 条等待回执/)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '核查 合成单聊客户 的回执' }));
+  expect(await screen.findByText('已发送 1/3 条，正在确认第 2 条发送结果')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '核查原发送' }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('reconcile_whatsapp_operation', { operation_id: 'part-2' }));
 });
 it('does not keep a background preview after choosing a different customer', async () => {

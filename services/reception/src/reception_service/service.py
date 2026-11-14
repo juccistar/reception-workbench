@@ -23,7 +23,7 @@ from .continuity import ContinuityMixin, text_hash
 from .manual_chat import ManualChatMixin
 from .conversation_assistance import ConversationAssistanceMixin
 from .requirement_changes import RequirementChangesMixin, requirement_revision
-from .reply_batches import ReplyBatchMixin, reply_batch_progress
+from .reply_batches import ReplyBatchMixin
 from .send_gate import SendAuthorization, SendGateDecision
 from .reply_messages import normalize_reply_output
 from .cached_media import CachedMediaMixin
@@ -54,7 +54,7 @@ SLOW = frozenset({'sync_messages', 'fill_history', 'generate_draft', 'check_conn
 FAST = frozenset({'get_snapshot', 'get_executor_health', 'get_conversation', 'get_messages', 'get_message_image', 'get_requirement_media',
                   'set_requirement_media_cover', 'set_product_image_source', 'load_requirement_media', 'get_context', 'list_jobs',
                   'list_outbox', 'save_draft', 'save_policy', 'list_builtin_policies', 'adopt_builtin_policy', 'save_settings', 'set_scope',
-                  'set_reception', 'takeover', 'begin_manual_edit', 'save_chat_draft', 'recover_reply_batch_draft', 'prepare_send', 'inject_demo', 'mark_messages_read',
+                  'set_reception', 'takeover', 'begin_manual_edit', 'save_chat_draft', 'prepare_send', 'inject_demo', 'mark_messages_read',
                   'save_conversation_supplement', 'upload_supplement_attachment', 'remove_supplement_attachment',
                   'generate_manual_suggestion', 'get_translations', 'request_translations',
                   'get_translation_info', 'get_translation_config', 'save_translation_settings',
@@ -506,7 +506,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                     'conversation_summary': summary,
                     'requirement_media': self.get_requirement_media(case['case_id']) if case else None,
                     'manual_suggestion': self._manual_suggestion(conversation_id),
-                    'reply_batches': [reply_batch_progress(row) for row in self.repo.list('reply_batch', conversation_id=conversation_id)],
+                    'reply_batches': [self._reply_batch_progress(row) for row in self.repo.list('reply_batch', conversation_id=conversation_id)],
                     'recoverable_reply_batches': self._recoverable_reply_batches(conversation_id)}
 
     def get_messages(self, conversation_id, before_id=None, limit=50):

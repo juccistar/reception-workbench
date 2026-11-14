@@ -1,0 +1,16 @@
+.reply-batch-records{flex:none;padding:8px 18px;background:#f8faf9;border-top:1px solid #e4ebe6;color:#536b5a;font-size:12px;line-height:1.5}
+.reply-batch-current{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:4px 0}
+.reply-batch-current strong{color:#315b40;font-weight:600}
+.reply-batch-contact{font-weight:600;color:#496454}
+.reply-batch-records .button{font-size:11px;padding:4px 8px}
+.reply-batch-history>summary,.reply-batch-entry>summary{cursor:pointer}
+.reply-batch-history>summary{color:#647e6b;padding:4px 0}
+.reply-batch-history-list{max-height:210px;overflow:auto;padding:2px 0}
+.reply-batch-entry{border-top:1px solid #e4ebe6;padding:6px 0}
+.reply-batch-entry>summary{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center}
+.reply-batch-entry>summary::before{content:'▸';color:#7d9584}
+.reply-batch-entry[open]>summary::before{content:'▾'}
+.reply-batch-entry-content{padding:4px 12px;color:#667d6d}
+.reply-batch-entry-content p,.reply-batch-entry-content ol{margin:4px 0}
+.reply-batch-entry-content ol{padding-left:0;list-style:none}
+.whatsapp-page>.reply-batch-records{border-bottom:1px solid #e4ebe6;padding-left:22px;padding-right:22px;max-height:35%;overflow:auto}

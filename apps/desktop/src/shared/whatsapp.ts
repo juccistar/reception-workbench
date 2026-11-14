@@ -1,8 +1,10 @@
+import type { ReplyBatchProgress } from './api';
+
 export interface WhatsAppContact { chat_id: string; name: string }
 export interface WhatsAppBinding { chat_id: string; conversation_id: string | null; revision: number }
 export interface WhatsAppConversation extends WhatsAppContact { human_owned: boolean; pending: boolean }
 export interface WhatsAppOperation { operation_id: string; chat_id: string; status: string; message_id?: string | null; ack?: number | null }
-export interface WhatsAppReplyBatch { batch_id: string; chat_id: string; status: string; total: number; accepted: number; current_index: number | null; pending_operation_ids: string[] }
+export type WhatsAppReplyBatch = ReplyBatchProgress;
 export interface WhatsAppState {
   connected: boolean;
   account_id: string | null;

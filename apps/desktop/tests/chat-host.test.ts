@@ -88,6 +88,23 @@ describe('native chat IPC boundary', () => {
     expect(host.invoke).not.toHaveBeenCalled();
   });
 
+  it('accepts whole-text drafts and polishing, and rejects legacy batch parameters at both IPC boundaries', async () => {
+    const call = host.handlers.get('reception:invoke')!;
+    const save = { conversation_id: 'synthetic-customer', body: 'First\n\nSecond', expected_revision: null, client_mutation_id: 'save-1' };
+    const polish = { conversation_id: 'synthetic-customer', client_request_id: 'polish-1', input_body: save.body, input_revision: 1, input_hash: 'a'.repeat(64) };
+    for (const invoke of [
+      (method: any, params: any) => call(validEvent(), method, params),
+      (method: any, params: any) => host.exposed!.invoke(method, params),
+    ]) {
+      await expect(invoke('save_chat_draft', save)).resolves.toBeDefined();
+      await expect(invoke('generate_manual_suggestion', polish)).resolves.toBeDefined();
+      await expect(invoke('save_chat_draft', { ...save, message_parts: ['First', 'Second'] })).rejects.toThrow();
+      await expect(invoke('save_chat_draft', { ...save, remaining_batch_id: 'batch' })).rejects.toThrow();
+      await expect(invoke('generate_manual_suggestion', { ...polish, part_index: 0 })).rejects.toThrow();
+      await expect(invoke('recover_reply_batch_draft', {})).rejects.toThrow('不允许');
+    }
+  });
+
   it('rejects raw body injection, missing dedupe keys, shell methods and direct legacy confirmation', async () => {
     const call = host.handlers.get('reception:invoke')!; host.invoke.mockClear();
     await expect(call(validEvent(), 'send_chat', { ...request, body: 'not a saved version' })).rejects.toThrow();
@@ -191,6 +208,6 @@ describe('native chat IPC boundary', () => {
     await expect(bridge.invoke('shell' as any, {})).rejects.toThrow('不允许');
     await expect(bridge.invoke('confirm_send', {})).rejects.toThrow('不允许');
     expect(host.ipcInvoke).not.toHaveBeenCalled();
-    expect(Object.keys(bridge).sort()).toEqual(['chooseWorkctl', 'chooseSupplementAttachment', 'chooseSupplementAttachments', 'uploadSupplementAttachments', 'pasteSupplementAttachments', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate', 'getTranslationSettings', 'saveTranslationSettings', 'checkTranslationProvider', 'clearTranslationCache', 'connectWhatsApp', 'disconnectWhatsApp', 'getWhatsAppHostInfo', 'listWhatsAppChats', 'setWhatsAppView', 'copyProductText', 'openProductLink', 'getImageOriginal', 'showImageMenu'].sort());
+    expect(Object.keys(bridge).sort()).toEqual(['chooseWorkctl', 'chooseSupplementAttachment', 'chooseSupplementAttachments', 'uploadSupplementAttachments', 'pasteSupplementAttachments', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate', 'getTranslationSettings', 'saveTranslationSettings', 'checkTranslationProvider', 'clearTranslationCache', 'connectWhatsApp', 'disconnectWhatsApp', 'rebuildWhatsAppSession', 'getWhatsAppHostInfo', 'listWhatsAppChats', 'setWhatsAppView', 'copyProductText', 'openProductLink', 'getImageOriginal', 'showImageMenu'].sort());
   });
 });

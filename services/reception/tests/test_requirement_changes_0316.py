@@ -223,7 +223,7 @@ class RequirementChangesTests(unittest.TestCase):
     def test_real_manual_job_saves_only_explicit_changes_before_adoption(self):
         self.seed()
         self.message('m2', 'Change to 800 pairs.')
-        output = {'reply': 'Noted.', 'reply_sources': ['m2'],
+        output = {'reply_messages': [{'body': 'Noted.', 'reply_sources': ['m2']}],
                   'requirement_changes': [self.update('c1', 'quantity', '800副', 'm2', '800 pairs')]}
         self.service.integrations.generate_manual = lambda context, request_id, **options: copy.deepcopy(output)
         self.wait(self.service.call('generate_manual_suggestion', {'conversation_id': self.owner['conversation_id'],
@@ -263,7 +263,7 @@ class RequirementChangesTests(unittest.TestCase):
         self.message('m2', 'Also I need red caps.')
         second = self.apply([self.create(mid='m2', name='红色帽子', excerpt='red caps')], request='caps')['reply_case_ids'][0]
         prepared = []
-        self.service.integrations.generate_manual = lambda context, request_id, **options: {'reply': 'Noted.', 'reply_sources': ['m2']}
+        self.service.integrations.generate_manual = lambda context, request_id, **options: {'reply_messages': [{'body': 'Noted.', 'reply_sources': ['m2']}]}
         self.service._prepare_direct_photos = lambda cid, job, epoch, facade: (prepared.append(cid) or (lambda: None))
         def sources(repo, case, messages):
             return [{'message_id': 'm1'}] if case and case['case_id'] == self.initial_case else []

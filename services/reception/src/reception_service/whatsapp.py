@@ -113,7 +113,7 @@ class WhatsAppMixin:
             ops = [r for r in all_pending if r.get('account_id') == account]
             other_pending = [r for r in all_pending if r.get('account_id') != account]
             batches = [r for r in self.repo.list('wa_reply_batch') if r.get('seller_id') == self.seller_id and r.get('account_id') == account]
-            return {'reply_batches': [{**reply_batch_progress(b), 'chat_id': b['chat_id']} for b in batches],
+            return {'reply_batches': [reply_batch_progress(b) for b in batches],
                     'connected': self._wa_status == 'connected', 'account_id': account, 'connection_epoch': self._wa_epoch,
                     'enabled': self._wa_enabled, 'conversations': [{k: r.get(k) for k in ('chat_id', 'name', 'human_owned', 'pending')} for r in rows],
                     'bindings': [{k: b.get(k) for k in ('chat_id', 'conversation_id', 'revision')} for b in bindings],

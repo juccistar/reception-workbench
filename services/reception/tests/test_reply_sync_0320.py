@@ -96,6 +96,33 @@ class ReplySyncTests(unittest.TestCase):
         self.assertEqual(len({r['part_id'] for r in calls[1:]}), 1)
         self.assertTrue(all(j['status'] not in ('queued', 'running') for j in self.service.repo.list('job')))
 
+    def test_progress_projects_current_retry_and_receipts_without_bodies(self):
+        frozen = self.generate()
+        self.tick()
+        batch = self.batch(frozen)
+        child = self.service.repo.get('draft', batch['parts'][1]['draft_id'])
+        child['retry_after'] = now_ms() + 5000
+        self.service.repo.put('draft', child['draft_id'], child)
+        batch.update(status='waiting_retry', message='等待重试', last_gate_reason='rate_limit')
+        batch['parts'][1]['status'] = 'rejected'
+        self.service.repo.put('reply_batch', batch['batch_id'], batch)
+        progress = self.service.get_conversation(self.owner['conversation_id'])['reply_batches'][0]
+        self.assertEqual((progress['origin'], progress['channel'], progress['phase']), ('automatic', 'international', 'reply'))
+        self.assertEqual(progress['conversation_id'], self.owner['conversation_id'])
+        self.assertEqual(progress['created_at'], batch['created_at'])
+        self.assertEqual(progress['updated_at'], batch['updated_at'])
+        self.assertEqual(progress['message'], '等待重试')
+        self.assertEqual(progress['last_gate_reason'], 'rate_limit')
+        self.assertEqual(progress['retry_at'], child['retry_after'])
+        self.assertEqual(progress['parts'], [
+            {'part_index': 0, 'status': 'accepted', 'message_id': batch['parts'][0]['message_id']},
+            {'part_index': 1, 'status': 'rejected', 'message_id': None}])
+        self.assertNotIn('body', str(progress))
+        batch['status'] = 'stopped'
+        self.service.repo.put('reply_batch', batch['batch_id'], batch)
+        stopped = self.service.get_conversation(self.owner['conversation_id'])['reply_batches'][0]
+        self.assertNotIn('retry_at', stopped)
+
     def test_prequeue_wait_creates_no_operation_and_keeps_first_deadline(self):
         batch = self.generate()
         self.pending()

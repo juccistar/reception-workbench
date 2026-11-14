@@ -13,6 +13,10 @@ const hostEntry = path.resolve(root, option('--host-entry') || 'artifacts/app/ma
 const directory = path.join(root, 'artifacts/verification', 'whatsapp-native-' + label);
 await mkdir(directory);
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'arw-wa-native-'));
+const profileLength = 93;
+assert(temporary.length < profileLength - 1, 'Temporary path is too long for the fixed-length storage check');
+const profile = path.join(temporary, 'p'.repeat(profileLength - temporary.length - 1));
+await mkdir(profile);
 const entry = path.join(directory, 'fixture.cjs');
 await writeFile(path.join(directory, 'package.json'), JSON.stringify({ name: 'inquiry-reception-workbench', version: JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version, main: 'fixture.cjs' }) + '\n');
 await build({ entryPoints: [path.join(root, 'scripts/fixtures/whatsapp-native.ts')], outfile: entry, bundle: true, format: 'cjs', platform: 'node', target: 'node22', external: ['electron', 'puppeteer', 'whatsapp-web.js'], banner: { js: 'require = require("node:module").createRequire(process.env.RECEPTION_WA_RUNTIME_ENTRY);' } });
@@ -20,7 +24,7 @@ const env = { ...process.env };
 for (const key of Object.keys(env)) if (/^(ACCIO|PHOENIX|RECEPTION)_/i.test(key) || /^(ELECTRON_RUN_AS_NODE|PYTHONPATH|PYTHONHOME|GH_TOKEN|GITHUB_TOKEN)$/i.test(key) || /credential|secret|token|password|api.?key/i.test(key)) delete env[key];
 env.RECEPTION_WA_RUNTIME_ENTRY = runtime;
 env.RECEPTION_WA_HOST_ENTRY = hostEntry;
-env.RECEPTION_WA_FIXTURE_TEMP = temporary;
+env.RECEPTION_WA_FIXTURE_TEMP = profile;
 env.RECEPTION_WA_SCREENSHOT_OUTPUT = path.join(directory, 'public-page-redacted.png');
 if (process.argv.includes('--fault-after-qr')) env.RECEPTION_WA_SYNTHETIC_FAILURE = '1';
 if (process.argv.includes('--reference-no-cdp')) {
@@ -47,7 +51,7 @@ try {
   report.host_entry = path.relative(root, hostEntry).replaceAll('\\', '/');
   report.packaged_host_resources = hostEntry.includes('.asar' + path.sep) || hostEntry.includes('.asar/');
   report.packaged_sdk_resources = runtime.includes('.asar' + path.sep) || runtime.includes('.asar/');
-  try { await writeFile(path.join(directory, 'host-diagnostics.jsonl'), await readFile(path.join(temporary, 'diagnostics/whatsapp-host.jsonl'))); report.diagnostics_saved = true; } catch { report.diagnostics_saved = false; }
+  try { await writeFile(path.join(directory, 'host-diagnostics.jsonl'), await readFile(path.join(profile, 'diagnostics/whatsapp-host.jsonl'))); report.diagnostics_saved = true; } catch { report.diagnostics_saved = false; }
 } finally {
   await rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   await writeFile(path.join(directory, 'report.json'), JSON.stringify(report, null, 2) + '\n');

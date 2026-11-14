@@ -150,6 +150,19 @@ class ReplyBatchServiceTests(unittest.TestCase):
         self.assertEqual(detail['draft']['draft_id'], final['parent_draft_id'])
         self.assertEqual(detail['reply_batches'][0]['accepted'], 2)
 
+    def test_three_parts_advance_only_after_each_distinct_receipt(self):
+        batch = self.generate(3)
+        for index in range(3):
+            self.tick()
+            current = self.service.repo.get('reply_batch', batch['batch_id'])
+            self.assertEqual([part['status'] for part in current['parts']],
+                             ['accepted'] * (index + 1) + ['planned'] * (2 - index))
+            self.assertEqual(len(self.service.repo.list('operation', conversation_id=self.owner['conversation_id'])), index + 1)
+        self.assertEqual(current['status'], 'accepted')
+        self.assertEqual(len({part['message_id'] for part in current['parts']}), 3)
+        self.tick()
+        self.assertEqual(len(self.service.repo.list('operation', conversation_id=self.owner['conversation_id'])), 3)
+
     def test_pending_sync_and_scope_and_source_identity_stop_batch(self):
         batch = self.generate()
         cid = self.owner['conversation_id']

@@ -1,0 +1,93 @@
+{
+  "date": "2026-11-15",
+  "baseline_version": "0.3.20",
+  "baseline_commit": "3feee61",
+  "status": "path_length_trigger_reproduced_source_fix_verified_unreleased",
+  "incident": {
+    "user_installed_published_package": true,
+    "user_rebuilt_generation": 1,
+    "rebuilt_generation_also_failed": true,
+    "reported_error": "page_database_error",
+    "web_version": "2.3000.1054638848",
+    "generation_one_database_created_fresh": true,
+    "installed_app_and_sdk_match_published_package": true
+  },
+  "authorized_maintenance": {
+    "user_allowed_temporary_maintenance": true,
+    "target_window_and_backend_closed_normally": true,
+    "target_not_running_before_profile_probes": true,
+    "profile_probes_used_single_instance_lock": true,
+    "other_merchant_untouched": true,
+    "manual_login_storage_deletion_or_copy": false,
+    "generation_configuration_changed": false,
+    "business_databases_opened_by_diagnostic": false,
+    "manual_business_database_changes": false,
+    "send_ledger_path_changed": false,
+    "actual_account_login": false,
+    "real_ai_calls": 0,
+    "customer_sends": 0
+  },
+  "controls": [
+    { "case": "existing_generation_one_raw_page", "sdk": false, "cdp": false, "result": "database_error" },
+    { "case": "existing_profile_new_long_partition_raw_page", "sdk": false, "cdp": false, "result": "database_error" },
+    { "case": "existing_profile_new_long_partition_compiled_sdk", "sdk": true, "result": "database_error" },
+    { "case": "fresh_profile_same_length_long_partition", "profile_path_length": 93, "partition_name_length": 73, "result": "database_error" },
+    { "case": "existing_profile_short_partition_raw_page", "profile_path_length": 93, "partition_name_length": 11, "result": "qr_stable" },
+    { "case": "fixed_short_profile_partition_length_matrix", "profile_path_length": 57, "successful_partition_name_lengths": [47, 48, 52, 56], "failed_partition_name_lengths": [73] },
+    { "case": "short_profile_length64_partition", "profile_path_length": 56, "partition_name_length": 64, "storage_path_length": 132, "longest_created_child_path_length": 257, "result": "qr_stable" },
+    { "case": "long_profile_length27_partition", "profile_path_length": 93, "partition_name_length": 27, "storage_path_length": 132, "longest_created_child_path_length": 257, "result": "qr_stable" },
+    { "case": "long_profile_length35_partition", "profile_path_length": 93, "partition_name_length": 35, "storage_path_length": 140, "result": "database_error" },
+    { "case": "short_profile_length73_partition", "profile_path_length": 56, "partition_name_length": 73, "storage_path_length": 141, "result": "database_error" },
+    {
+      "case": "existing_profile_compact_partition_compiled_sdk",
+      "profile_path_length": 93,
+      "partition_name_length": 27,
+      "result": "passed",
+      "stable_observation_ms": 60521,
+      "qr_refresh_observed": true,
+      "sdk_inject_completed": true,
+      "normal_close": true,
+      "actual_account_login": false,
+      "screenshot_visually_reviewed": true
+    }
+  ],
+  "conclusion": {
+    "established_trigger": "Long persistent storage paths reproduce the WhatsApp database error on this Windows environment. Changing only the newly created partition to a short name restores the raw page and compiled SDK in the same merchant profile.",
+    "old_partition_state_required": false,
+    "sdk_or_cdp_required_to_trigger": false,
+    "partition_name_only_hard_limit_established": false,
+    "arbitrary_merchant_profile_corruption_established": false,
+    "physical_leveldb_corruption_established": false,
+    "windows_long_paths_enabled_observed": 0,
+    "registry_changed": false,
+    "native_windows_error_code_captured": false,
+    "exact_universal_path_limit_claimed": false
+  },
+  "source_fix": {
+    "new_confirmed_partition_name": "wa- followed by 24 lowercase hexadecimal characters",
+    "new_partition_name_length": 27,
+    "existing_generation_zero_and_v1_generations_preserved": true,
+    "switch_requires_existing_native_confirmation": true,
+    "session_file_version_after_confirmed_switch": 2,
+    "legacy_other_merchant_records_preserved": true,
+    "occupied_directory_rejected_without_reuse": true,
+    "stale_generation_rejected": true,
+    "send_ledger_location_unchanged": true,
+    "installed_application_modified": false,
+    "new_release_published": false,
+    "scope_limit": "Very deep custom data roots still require separate validation; a compact name does not guarantee all possible paths work."
+  },
+  "checks": {
+    "session_host_targeted_tests_passed": 8,
+    "typecheck": "passed",
+    "full_test_suite_run": false,
+    "git_diff_check": "passed"
+  },
+  "local_artifacts": [
+    "artifacts/verification/wa-incident-0320-1115/profile-comparison.json",
+    "artifacts/verification/wa-incident-0320-1115/path-comparison.json",
+    "artifacts/verification/wa-incident-0320-1115/partition-length-comparison.json",
+    "artifacts/verification/wa-incident-0320-1115/path-budget-controls.json",
+    "artifacts/verification/wa-incident-0320-1115/compact-sdk-real-root-a/report.json"
+  ]
+}

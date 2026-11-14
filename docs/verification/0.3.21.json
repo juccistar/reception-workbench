@@ -1,0 +1,45 @@
+{
+  "version": "0.3.21",
+  "started_date": "2026-11-15",
+  "last_updated_date": "2026-11-15",
+  "base_commit": "3feee61",
+  "branch": "feat/natural-auto-replies-0.3.21",
+  "authorization": "用户确认新版方案并明确要求开发、打包发布；人工建议不兼容旧多项结果",
+  "status": "ready_for_source_build",
+  "changes": [
+    "human_like_natural_automatic_reply_pacing",
+    "strict_single_manual_suggestion_and_plain_text_editor",
+    "whole_body_polish_and_ctrl_enter",
+    "separate_current_automatic_progress_and_historical_batches",
+    "typed_per_part_receipts_and_wait_reasons",
+    "remove_routine_automatic_tail_recovery_entry",
+    "confirmed_compact_whatsapp_partition_with_legacy_session_preservation"
+  ],
+  "tests": {
+    "backend_unique_final_passed": 200,
+    "backend_scope": ["test_manual_chat", "test_conversation_assistance_031", "test_manual_reception", "test_manual_receipts", "test_requirement_changes_0316", "test_reply_batches_0319", "test_reply_sync_0320", "test_whatsapp_0317", "test_reception_prompts_0314", "test_send_retry_policy", "test_continuity_service", "test_supplement_followup", "test_031_ai_integration"],
+    "desktop_unique_final_passed": 191,
+    "desktop_scope": ["renderer-workbench", "whatsapp-page", "reply-batch-records", "chat-host", "whatsapp-session-host", "whatsapp-coordinator", "whatsapp-connection", "whatsapp-transport"],
+    "tools_passed": 1,
+    "tools_scope": ["scripts/tests/whatsapp-runtime.test.mjs"],
+    "typecheck": "passed",
+    "reviewed_prompt_sync": "matched_reception-0.3.21",
+    "obsolete_manual_multipart_tests_removed": 7,
+    "legacy_ai_fixtures_updated_and_retested": "5 passed; retired display_value fixture replaced by Chinese requirement evidence and manual request uses the current single-item contract",
+    "synthetic_window_seed": "validated_two_and_three_parts",
+    "full_suite_run": false
+  },
+  "builds": [],
+  "windows": { "source": "pending", "final_executable": "pending", "screenshots_visually_reviewed": false },
+  "whatsapp_public_page": "pending_final_package_check",
+  "release": { "repository": "juccistar/reception-workbench-releases", "status": "not_created" },
+  "boundaries": {
+    "real_customer_messages_sent": false,
+    "real_model_semantics_validated": false,
+    "real_whatsapp_account_login_send_receive_validated": false,
+    "installed_application_replaced": false,
+    "real_business_data_migrated_or_cleaned": false,
+    "private_source_pushed": false,
+    "default_delivery_entry_promoted": false
+  }
+}

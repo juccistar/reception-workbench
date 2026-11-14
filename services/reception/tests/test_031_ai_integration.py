@@ -11,7 +11,6 @@ from unittest.mock import patch
 from reception_service.integrations.demo import DemoIntegration
 from reception_service.integrations.live import LiveIntegration
 from reception_service.integrations.analysis import validate_analysis
-from reception_service.context import validated_facts
 from reception_service.integrations.accio_native.vendor.adapters.desktop_query import DesktopQueryRunner
 from reception_service.integrations.accio_native.vendor.adapters.common import AdapterError
 
@@ -36,10 +35,13 @@ class AssistanceTests(unittest.TestCase):
         live.resolve_identity = lambda seller: seller
         seen = []
         live._assistance_query = lambda prompt, context, request, started, event, **options: (
-            seen.append((prompt, context)) or {'reply': 'Thank you for waiting.'})
+            seen.append((prompt, context)) or {'reply_messages': [
+                {'body': 'Thank you for waiting.', 'reply_sources': ['buyer-message']}]})
         context = {'seller_id': '1', 'buyer_id': '2', 'conversation_id': '1-2#test', 'case_id': None,
-                   'supplement': '', 'recent_messages': [{'role': 'buyer', 'text': 'Price?'},
-                                                         {'role': 'seller', 'text': 'Please wait.'}]}
+                   'case': {'seller_id': '1', 'buyer_id': '2', 'conversation_id': '1-2#test', 'requirements': {}},
+                   'supplement': '', 'historical_evidence': [], 'recent_messages': [
+                       {'message_id': 'buyer-message', 'role': 'buyer', 'text': 'Price?'},
+                       {'message_id': 'seller-message', 'role': 'seller', 'text': 'Please wait.'}]}
         self.assertEqual(live.generate_manual(context, 'r')['reply'], 'Thank you for waiting.')
         self.assertIs(seen[0][1], context)
         self.assertIn('supplement', seen[0][0])
@@ -53,18 +55,22 @@ class AssistanceTests(unittest.TestCase):
         with self.assertRaises(Exception):
             live.translate([{'key': 'a', 'text': 'x'}, {'key': 'b', 'text': 'y'}], 'r')
 
-    def test_fact_original_and_display(self):
+    def test_chinese_requirement_change_keeps_original_evidence(self):
         msg = {'seller_id': 's', 'buyer_id': 'b', 'conversation_id': 'c', 'message_id': 'm', 'role': 'buyer', 'text': 'I need 100 blue bags'}
-        context = {'case': {'seller_id': 's', 'buyer_id': 'b', 'conversation_id': 'c', 'facts': {}},
+        context = {'case': {'case_id': 'case-1', 'seller_id': 's', 'buyer_id': 'b', 'conversation_id': 'c', 'requirements': {}},
+                   'case_catalog': [{'case_ref': 'c1', 'case_id': 'case-1', 'requirements': {}}],
                    'recent_messages': [msg], 'historical_evidence': [], 'knowledge': [], 'required_fields': ['product']}
-        raw = {'action': 'ask', 'reply': 'Thanks', 'facts': {'product': {'value': 'blue bags', 'display_value': '蓝色袋子', 'evidence_ids': ['m']}},
-               'summary': 'Blue bags', 'question_keys': [], 'missing': [], 'conflicts': [], 'procurement_key': 'main', 'new_case': False, 'reply_sources': ['m']}
+        raw = {'action': 'ask', 'reply_messages': [{'body': 'Thanks', 'reply_sources': ['m']}],
+               'conversation_summary': '客户需要100个蓝色袋子。',
+               'requirement_changes': [{'action': 'update', 'case_ref': 'c1', 'trigger_evidence_ids': ['m'],
+                   'set_fields': {'product': {'value': '蓝色袋子', 'evidence_ids': ['m'],
+                                               'source_excerpts': {'m': 'blue bags'}}}}]}
         output = validate_analysis(raw, context)
-        facts = validated_facts(output, context)
-        self.assertEqual(facts['product']['value'], 'blue bags')
-        self.assertEqual(facts['product']['display_value'], '蓝色袋子')
-        raw['facts']['product']['display_value'] = None
-        self.assertNotIn('display_value', validated_facts(validate_analysis(raw, context), context)['product'])
+        product = output['requirement_changes'][0]['set_fields']['product']
+        self.assertEqual(product['value'], '蓝色袋子')
+        self.assertEqual(product['source_excerpts'], {'m': 'blue bags'})
+        self.assertNotIn('display_value', product)
+        self.assertEqual(context['recent_messages'][0]['text'], 'I need 100 blue bags')
 
     def test_cancellation_and_timeout_with_and_without_recovery(self):
         class Records:

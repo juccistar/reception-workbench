@@ -35,21 +35,39 @@ def freeze_reply_batch(messages, **owner):
             'created_at': stamp, 'updated_at': stamp}
 
 
-def reply_batch_progress(batch):
+def reply_batch_progress(batch, *, retry_at=None):
     rows = batch.get('parts', [])
     current = next((row.get('part_index') for row in rows
                     if row.get('status') not in ('accepted', 'cancelled')), None)
     pending = [row['operation_ids'][-1] for row in rows
                if row.get('status') in ('sending', 'unknown') and row.get('operation_ids')]
+    whatsapp = 'chat_id' in batch
     return {'batch_id': batch['batch_id'], 'status': batch.get('status', 'stopped'),
+            'origin': batch.get('origin', 'automatic'),
+            'channel': batch.get('channel', 'whatsapp' if whatsapp else 'international'),
+            'phase': batch.get('phase') or 'reply',
+            'created_at': batch.get('created_at'), 'updated_at': batch.get('updated_at'),
+            **({'chat_id': batch.get('chat_id')} if whatsapp else {'conversation_id': batch.get('conversation_id')}),
+            'parts': [{key: row.get(key) for key in ('part_index', 'status', 'message_id')} for row in rows],
+            'message': batch.get('message'),
             'total': len(rows), 'accepted': sum(row.get('status') == 'accepted' for row in rows),
             'current_index': current, 'pending_operation_ids': pending,
+            **({'retry_at': retry_at} if type(retry_at) is int and batch.get('status') == 'waiting_retry' else {}),
             **{key: batch[key] for key in ('wait_reason', 'sync_wait_started_at', 'sync_wait_deadline_at', 'last_gate_reason')
                if key in batch}}
 
 
 class ReplyBatchMixin:
     """International automatic replies reuse the ordinary guarded send per part."""
+
+    def _reply_batch_progress(self, batch):
+        retry_at = None
+        index = batch.get('next_index')
+        parts = batch.get('parts', [])
+        if batch.get('status') == 'waiting_retry' and type(index) is int and 0 <= index < len(parts):
+            child = self.repo.get('draft', parts[index].get('draft_id')) if parts[index].get('draft_id') else None
+            retry_at = child.get('retry_after') if child else None
+        return reply_batch_progress(batch, retry_at=retry_at)
 
     def _begin_reply_batch(self, draft, case, epoch, job_id, *, plan=None):
         with self._lock, self.repo.transaction():

@@ -147,7 +147,7 @@ function whatsApp(): WhatsAppCoordinator {
       if (!window || closing || storageBusy || updateTask) throw new Error('当前工作区正在关闭。');
       const merchant = createHash('sha256').update(snapshot.app.seller_id).digest('hex');
       const generation = await whatsappSessions.generation(snapshot.app.seller_id);
-      const partition = whatsappSessions.partition(snapshot.app.seller_id, generation);
+      const partition = await whatsappSessions.partition(snapshot.app.seller_id, generation);
       return new WhatsAppHost({ window, partition, directory: path.join(dataRoot, mode, 'whatsapp-ledgers', merchant),
         diagnosticsDirectory: path.join(dataRoot, mode, 'diagnostics', merchant), applicationVersion: programVersion, sessionGeneration: generation, onEvent });
     },

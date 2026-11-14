@@ -78,8 +78,8 @@ class ManualChatMixin:
         self._changed(conversation_id)
         return self.get_snapshot()
 
-    def save_chat_draft(self, conversation_id, body, expected_revision, client_mutation_id, message_parts=None, remaining_batch_id=None):
-        return self._save_chat_draft(conversation_id, body, expected_revision, client_mutation_id, message_parts, remaining_batch_id)
+    def save_chat_draft(self, conversation_id, body, expected_revision, client_mutation_id):
+        return self._save_chat_draft(conversation_id, body, expected_revision, client_mutation_id)
 
     def _save_chat_draft(self, conversation_id, body, expected_revision, client_mutation_id, message_parts=None, remaining_batch_id=None, *, notify=True):
         self._chat_body(body)
@@ -115,6 +115,13 @@ class ManualChatMixin:
             if linked_batch and (linked_batch.get('origin') != 'manual' or linked_batch.get('conversation_id') != conversation_id
                                  or linked_batch.get('seller_id') != self.seller_id or linked_batch.get('buyer_id') != conversation['buyer_id']):
                 raise ServiceError('operation_owner_mismatch', '回复批次不属于当前客户')
+            archive_old_batch = bool(linked_batch and remaining_batch_id is None and message_parts is None
+                and linked_batch.get('status') == 'stopped' and not self._conversation_unresolved(conversation_id)
+                and not any(part.get('status') in ('sending', 'unknown') for part in linked_batch.get('parts', [])))
+            if archive_old_batch:
+                if any(part.get('status') == 'accepted' for part in linked_batch.get('parts', [])) and body.strip():
+                    raise ServiceError('partial_batch', '请先清空旧批次正文，再开始独立的新草稿')
+                linked_batch_id = None
             if remaining_batch_id is not None:
                 accepted = [part['body'] for part in (linked_batch or {}).get('parts', []) if part.get('status') == 'accepted']
                 old_parts = previous.get('message_parts') if previous else None
@@ -130,7 +137,7 @@ class ManualChatMixin:
             source = self._latest_buyer(conversation_id)
             case = self.repo.get('case', conversation.get('case_id'))
             revision = max(conversation.get('chat_revision', 0), previous['revision'] if previous else 0) + 1
-            draft = {'draft_id': previous['draft_id'] if previous and previous['status'] == 'pending' else new_id('chat'),
+            draft = {'draft_id': previous['draft_id'] if previous and previous['status'] == 'pending' and not archive_old_batch else new_id('chat'),
                      'purpose': 'chat', 'conversation_id': conversation_id, 'seller_id': self.seller_id,
                      'buyer_id': conversation['buyer_id'], 'revision': revision, 'body': body, 'status': 'pending',
                      'case_id': case['case_id'] if case else None,
@@ -430,17 +437,13 @@ class ManualChatMixin:
                 raise ServiceError('draft_not_sendable', '请保存新草稿后再发送')
             blocked_id = draft.get('blocked_batch_id') or draft.get('batch_id')
             blocked = self.repo.get('reply_batch', blocked_id) if blocked_id else None
+            if blocked and any(part.get('status') in ('sending', 'unknown') for part in blocked.get('parts', [])):
+                raise ServiceError('send_unresolved', '原人工批次回执待核查')
             if blocked and blocked.get('status') == 'stopped' and any(part.get('status') == 'accepted' for part in blocked.get('parts', [])):
-                raise ServiceError('partial_batch', '此轮已有消息发送，请先确认只保留未发送内容')
+                raise ServiceError('partial_batch', '此轮已有消息发送，请先清空旧正文并开始新草稿')
             self._chat_body(draft['body'], sending=True)
-            parts = draft.get('message_parts')
-            if parts is not None:
-                for part in parts:
-                    self._chat_body(part, sending=True)
-                if len(parts) > 1:
-                    if len(rid) + len(':part:2') > 200:
-                        raise ServiceError('invalid_params', '分条发送请求编号过长')
-                    return self._enqueue_manual_batch_locked(conversation, draft, request)
+            if draft.get('message_parts') is not None:
+                raise ServiceError('draft_not_sendable', '请先将旧草稿保存为单条正文')
             self._begin_manual_edit_locked(conversation)
             operation_id, job_id, stamp = new_id('send'), new_id('job'), now_ms()
             intent = {'seller_id': self.seller_id, 'buyer_id': conversation['buyer_id'], 'conversation_id': cid,

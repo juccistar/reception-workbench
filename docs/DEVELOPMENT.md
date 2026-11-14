@@ -34,6 +34,10 @@ node --test scripts/tests/release-paths.test.mjs
 
 共享翻译配置的窗口回归先构建，再运行 `node scripts/smoke-shared-translation.mjs --label <未使用标签> --legacy-migration`；可加 `--executable` 指向候选EXE。它用两个临时Demo数据根及独立共享目录检查旧格式密钥迁移、跨窗口同步、开关隔离、冲突和重开。`smoke-demo.mjs` 继续检查缓存和原有回复建议。两者显式设置 `RECEPTION_SHARED_SETTINGS_DIR`，不得让自动测试写真实Windows共享配置；截图须实际查看，Demo不替代真实平台验收。
 
+0.3.21窗口检查使用`node scripts/smoke-auto-replies-0321.mjs --label <未使用标签>`，可加`--executable`指定最终候选EXE。脚本用临时Demo数据和预置合成AI回复，实际经业务IPC完成自动两条、三条独立受理、单条建议采用、整段润色、Ctrl+Enter及新输入保留；同步、核查和停止的中间状态截图明确采用投影夹具，不冒充真实平台发送。当前自动进度与折叠历史分别检查，截图须逐张查看。`smoke-whatsapp-native.mjs`使用当前编译的WhatsAppSessionHost提交新的合成登录代次，验证93字符宿主根与27字符分区，公共扫码稳定超过60秒并刷新；原生产资料不访问，意外认证立即停止且禁用历史读取。窗口脚本串行执行。
+
+以下0.3.20与0.3.19旧分条/尾部恢复脚本只对应其原版本，0.3.21不执行已退役的人工分条或尾部提取入口。
+
 0.3.20恢复窗口检查使用`node scripts/smoke-recovery-0320.mjs --label <未使用标签>`，可加`--executable`指定候选EXE。它在隔离Demo库核对历史尾部提取的真实业务接口、只提取未发送内容和人工草稿保护；同步等待投影、WhatsApp数据库错误及恢复进度采用受限合成夹具，不代表真实商家重建或发送。截图须实际查看，同一候选的窗口脚本串行运行。公共扫码及原生恢复协调器的实际范围见[0.3.20验证记录](verification/0.3.20.json)。
 
 0.3.19分条窗口检查使用`node scripts/smoke-replies-0319.mjs --label <未使用标签>`，可加`--executable`指定候选EXE。它在独立临时Demo库预置合成两条建议，实际驱动建议采用、逐条编辑保存、当前条目Demo润色、两次独立Demo发送与回执、新输入保存及宽窄窗口；业务IPC不使用替身，预置建议不证明真实模型语义。诊断窗口检查使用`node scripts/smoke-workbench-0319.mjs --label <未使用标签>`，检查实际renderer/preload和Demo后台上的宽窄窗口、页面可用但SDK失败、加载中与HTTP错误展示。宿主状态采用事件替身，公共页SDK故障另行检查。`node scripts/smoke-whatsapp-native.mjs --label <未使用标签>`使用实际`artifacts/app/main/index.js`中的宿主和锁定SDK进行无预热冷启动，等待inject结束后观察原始二维码至少60秒及一次刷新；添加`--fault-after-qr`检查首次二维码后的受控SDK异常与原生页面保留。`--host-entry`和`--runtime-entry`可分别指定包内编译宿主与SDK入口；夹具仅在内存替换业务启动，不代表真实商家启动。截图先遮去二维码等媒体，结果须逐张查看；这些脚本不登录实号或发送消息。窗口脚本串行执行。

@@ -98,8 +98,18 @@ app.whenReady().then(async () => {
   report.compiled_host_used = true;
   report.fixture_startup_replaced = true;
   report.host_sha256 = classes.host_sha256;
+  if (!classes.WhatsAppSessionHost) throw new Error('CURRENT_SESSION_HOST_REQUIRED');
+  const sessions = new classes.WhatsAppSessionHost(process.env.RECEPTION_WA_FIXTURE_TEMP!);
+  const seller = '9000000000321';
+  const generation = await sessions.commit(seller, 0, 'wa_recovery_' + randomUUID());
+  const partition = await sessions.partition(seller, generation);
+  report.current_session_host_used = true;
+  report.session_generation = generation;
+  report.partition_name_length = partition.slice(8).length;
+  report.profile_path_length = process.env.RECEPTION_WA_FIXTURE_TEMP!.length;
+  if (report.partition_name_length !== 27 || report.profile_path_length !== 93) throw new Error('COMPACT_STORAGE_CHECK_INVALID');
   fixtureWindow = new BrowserWindow({ width: 980, height: 740, show: true, webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
-  host = new classes.WhatsAppHost({ window: fixtureWindow, partition: 'persist:wa-fixture-' + randomUUID(),
+  host = new classes.WhatsAppHost({ window: fixtureWindow, partition,
     directory: join(process.env.RECEPTION_WA_FIXTURE_TEMP!, 'ledger'), diagnosticsDirectory: join(process.env.RECEPTION_WA_FIXTURE_TEMP!, 'diagnostics'),
     onEvent: event => {
       if (event.type !== 'account' || finished) return;
@@ -112,9 +122,14 @@ app.whenReady().then(async () => {
         else void finish(event.error_code || 'PUBLIC_PAGE_INJECTION_FAILED');
       }
     } });
-  host.setVisible(true, { x: 0, y: 0, width: 980, height: 740 });
   const internal = host as any;
+  internal.readHistory = async () => undefined;
+  report.post_login_history_disabled = true;
+  host.setVisible(true, { x: 0, y: 0, width: 980, height: 740 });
   const contents = internal.view.webContents;
+  report.partition_path_matches_expected = contents.session.storagePath?.replaceAll('\\', '/').toLowerCase()
+    === join(process.env.RECEPTION_WA_FIXTURE_TEMP!, 'Partitions', partition.slice(8)).replaceAll('\\', '/').toLowerCase();
+  if (!report.partition_path_matches_expected) throw new Error('PARTITION_PATH_MISMATCH');
   const preferences = contents.getLastWebPreferences();
   report.remote_node_integration_disabled = preferences.nodeIntegration === false && preferences.contextIsolation === true && preferences.sandbox === true;
   report.session_ascii_user_agent = !/[^\x20-\x7e]/.test(contents.session.getUserAgent());

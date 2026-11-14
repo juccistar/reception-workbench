@@ -142,31 +142,32 @@ class AssistanceTests(unittest.TestCase):
         s.save_chat_draft(cid, 'Updated input', saved['revision'], 'changed-input')
         self.assertEqual(s.get_conversation(cid)['manual_suggestion']['status'], 'stale')
 
-    def test_manual_suggestion_preserves_ordered_reply_messages(self):
+    def test_manual_suggestion_rejects_multiple_and_legacy_reply(self):
         s, cid = self.service, self.cid
-        def model(context, request_id, *, on_call_start, cancel_event, photo_inputs=None):
-            on_call_start()
-            return {'reply_messages': [{'body': 'first', 'reply_sources': []}, {'body': 'second', 'reply_sources': []}]}
-        with patch.object(s.integrations, 'generate_manual', side_effect=model):
-            job = s.generate_manual_suggestion(cid, 'parts-suggestion')['job_id']
-            self.assertEqual(self.wait(job)['status'], 'succeeded')
-        suggestion = s.get_conversation(cid)['manual_suggestion']
-        self.assertEqual(suggestion['body'], 'first\n\nsecond')
-        self.assertEqual([row['body'] for row in suggestion['reply_messages']], ['first', 'second'])
+        for index, output in enumerate((
+            {'reply_messages': [{'body': 'first', 'reply_sources': []}, {'body': 'second', 'reply_sources': []}]},
+            {'reply': 'legacy', 'reply_sources': []},
+        )):
+            with patch.object(s.integrations, 'generate_manual', return_value=output):
+                job = s.generate_manual_suggestion(cid, f'invalid-suggestion-{index}')['job_id']
+                self.assertEqual(self.wait(job)['status'], 'failed')
+            self.assertIsNone(s.repo.get('manual_suggestion', cid))
 
-    def test_polish_part_uses_frozen_entry_and_stales_after_reorder(self):
+    def test_polish_uses_whole_saved_body(self):
         s, cid = self.service, self.cid
-        saved = s.save_chat_draft(cid, 'first\n\nsecond', None, 'parts', message_parts=['first', 'second'])
-        digest = hashlib.sha256(b'second').hexdigest()
+        body = 'first\n\nsecond'
+        saved = s.save_chat_draft(cid, body, None, 'whole')
+        digest = hashlib.sha256(body.encode()).hexdigest()
         with self.assertRaises(ServiceError):
-            s.generate_manual_suggestion(cid, 'wrong-part', input_body='second', input_revision=saved['revision'], input_hash=digest, part_index=0)
-        job = s.generate_manual_suggestion(cid, 'part-polish', input_body='second', input_revision=saved['revision'], input_hash=digest, part_index=1)['job_id']
+            s.call('generate_manual_suggestion', {'conversation_id': cid, 'client_request_id': 'old-part',
+                'input_body': body, 'input_revision': saved['revision'], 'input_hash': digest, 'part_index': 0})
+        job = s.generate_manual_suggestion(cid, 'whole-polish', input_body=body,
+            input_revision=saved['revision'], input_hash=digest)['job_id']
         self.assertEqual(self.wait(job)['status'], 'succeeded')
         suggestion = s.get_conversation(cid)['manual_suggestion']
-        self.assertEqual(suggestion['input_part_index'], 1)
+        self.assertEqual(suggestion['body'], body)
+        self.assertNotIn('input_part_index', suggestion)
         self.assertEqual(suggestion['status'], 'ready')
-        s.save_chat_draft(cid, 'second\n\nfirst', saved['revision'], 'reorder', message_parts=['second', 'first'])
-        self.assertEqual(s.get_conversation(cid)['manual_suggestion']['status'], 'stale')
 
     def test_polish_late_result_does_not_publish_after_draft_changes(self):
         s, cid = self.service, self.cid
@@ -199,7 +200,7 @@ class AssistanceTests(unittest.TestCase):
             on_call_start()
             started.set()
             release.wait(3)
-            return {'reply': 'old'}
+            return {'reply_messages': [{'body': 'old', 'reply_sources': []}]}
         s.integrations.generate_manual = slow
         first = s.generate_manual_suggestion(cid, 'first')['job_id']
         self.assertTrue(started.wait(2))

@@ -79,7 +79,7 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         for irrelevant in ('商品主图仅供展示和找货', '另一客户的数量、预算', '未入清单的展示图',
                            '【兼容图片输入】', '【本轮图片附件与聊天记录】'):
             self.assertNotIn(irrelevant, instruction)
-        self.assertEqual(prompts.PROMPT_VERSION, 'reception-0.3.19')
+        self.assertEqual(prompts.PROMPT_VERSION, 'reception-0.3.21')
 
     def test_automatic_live_request_carries_restored_rules_and_current_contract(self):
         context = self.context()
@@ -185,13 +185,14 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         result = self.live.generate(context, 'multi')
         self.assertEqual(result['reply'], 'Noted.\n\nWhich product?')
         self.assertEqual(len(result['reply_messages']), 2)
-        manual = self.live.generate_manual(context, 'manual-multi')
-        self.assertEqual(manual['reply_messages'], result['reply_messages'])
+        with self.assertRaises(ServiceError):
+            self.live.generate_manual(context, 'manual-multi')
         self.answer = lambda: {'action': 'ask', 'reply_messages': [
             {'body': 'a' * 600, 'reply_sources': ['buyer-1']},
             {'body': 'b' * 600, 'reply_sources': ['buyer-1']}], 'conversation_summary': ''}
         self.assertEqual(len(self.live.generate(context, 'budget')['reply']), 1202)
-        self.assertEqual(len(self.live.generate_manual(context, 'manual-budget')['reply']), 1202)
+        with self.assertRaises(ServiceError):
+            self.live.generate_manual(context, 'manual-budget')
         self.answer = lambda: {'action': 'ask', 'reply_messages': [
             {'body': 'Valid', 'reply_sources': ['buyer-1']},
             {'body': '{invalid}', 'reply_sources': ['buyer-1']}]}
@@ -235,6 +236,17 @@ class ReceptionPromptRequestTests(unittest.TestCase):
             self.assertIn('reply_messages', prompt)
             self.assertIn('整轮正文合计最多1200字符', prompt)
         self.assertNotIn('reply_messages', prompts.POLISH_TASK)
+
+    def test_natural_auto_chat_and_single_manual_contract_are_separate(self):
+        self.assertNotIn('简单内容一条即可', prompts.COMMON)
+        self.assertIn('真实业务员即时聊天', prompts.COMMON)
+        for prompt in (prompts.AUTOMATIC_TASK, prompts.WHATSAPP_TASK):
+            self.assertIn('输出1至3条非空消息', prompt)
+            self.assertIn('不以压成一条为目标', prompt)
+            self.assertIn('不套固定条数、固定顺序或每条一句的模板', prompt)
+        self.assertIn('必须且仅含一个条目', prompts.MANUAL_TASK)
+        self.assertNotIn('输出1至3条', prompts.MANUAL_TASK)
+        self.assertNotIn('当前条目', prompts.POLISH_TASK)
 
     def test_requirements_prompt_keeps_grounding_without_retired_output_fields(self):
         context = self.context()
