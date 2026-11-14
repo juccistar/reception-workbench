@@ -180,7 +180,7 @@ class ReplyBatchMixin:
                          related_case_versions=self._related_case_versions(child.get('reply_case_ids', [case['case_id']])))
             # Ingest invalidates pending drafts. Only the proven self echo may restore them.
             if child['status'] == 'stale' and validation['ready']:
-                child['status'] = 'planned'
+                child['status'] = 'pending' if remaining['part_index'] == batch['next_index'] else 'planned'
             self.repo.put('draft', child['draft_id'], child, history=True)
         batch['basis_snapshot'] = self._reply_batch_send_snapshot(batch)
 
@@ -278,6 +278,8 @@ class ReplyBatchMixin:
             return None
         batch = self._require('reply_batch', draft['batch_id'])
         decision = self._reply_batch_gate(batch)
+        if decision.reason == 'basis_changed' and self._reply_batch_rebase_self_sync(batch):
+            decision = self._reply_batch_gate(batch)
         if decision.reason == 'source_sync_pending':
             self._wait_reply_batch_sync(batch)
             return {'_job_status': 'deferred', 'batch_id': batch['batch_id'],

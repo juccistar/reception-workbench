@@ -16,7 +16,7 @@
     "old_account_pending_visibility"
   ],
   "tests": {
-    "backend_unique_final_passed": 172,
+    "backend_unique_final_passed": 173,
     "backend_scope": ["test_reply_sync_0320", "test_reply_batches_0319", "test_send_retry_policy", "test_continuity_service", "test_supplement_followup", "test_whatsapp_0317", "test_native_automatic_chat", "test_native_manual_guards", "test_native_chat", "test_native_continuation", "test_send_failure_diagnostics_031", "test_manual_chat"],
     "desktop_unique_final_passed": 165,
     "desktop_scope": ["whatsapp-connection", "whatsapp-coordinator", "whatsapp-session-host", "whatsapp-page", "whatsapp-page-probe", "whatsapp-transport", "renderer-workbench"],
@@ -31,7 +31,7 @@
   },
   "build": { "status": "passed", "command": "npm run build", "typecheck": "passed", "immediate_local_commit": "recorded_in_git_history" },
   "source_window": { "status": "passed", "source_commit": "af25756", "recovery_report": "artifacts/verification/recovery-0320-source-a/report.json", "reply_report": "artifacts/verification/replies-0319-source-0320-a/report.json", "screenshots_visually_reviewed": 12, "waiting_projection_and_whatsapp_fault_events_are_synthetic": true, "tail_recovery_uses_real_demo_rpc": true, "normal_close": true },
-  "candidate": { "status": "built_pending_final_verification", "directory": "relase/release-0.3.20-a", "command": "npm run package:release -- --candidate --output relase/release-0.3.20-a", "immediate_local_commit": "recorded_in_git_history", "installed": false },
+  "candidate": { "status": "built_pending_final_verification", "directory": "relase/release-0.3.20-b", "previous_local_candidate": "relase/release-0.3.20-a", "command": "npm run package:release -- --candidate --output relase/release-0.3.20-b", "immediate_local_commit": "recorded_in_git_history", "installed": false, "queued_self_echo_regression": "passed", "latest_targeted_rerun": { "backend_passed": 74, "scope": ["test_reply_sync_0320", "test_reply_batches_0319", "test_manual_chat"] } },
   "release": { "status": "pending" },
   "boundaries": {
     "synthetic_only_for_business_verification": true,

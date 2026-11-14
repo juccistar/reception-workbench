@@ -111,6 +111,24 @@ class ReplySyncTests(unittest.TestCase):
         self.tick()
         self.assertEqual(self.batch(batch)['status'], 'accepted')
 
+    def test_queued_job_adopts_only_proven_self_echo_before_wait(self):
+        batch = self.generate()
+        self.tick()
+        current = self.batch(batch)
+        child = self.service.repo.get('draft', current['parts'][1]['draft_id'])
+        child['status'] = 'pending'
+        self.service.repo.put('draft', child['draft_id'], child)
+        self.add_message(current['parts'][0]['message_id'], current['parts'][0]['body'], role='seller')
+        self.pending()
+        result = self.service._task_automatic_send({'draft_id': child['draft_id'], 'expected_revision': child['revision']},
+            'synthetic-queued-job', self.service._epoch, self.service.integrations)
+        self.assertEqual(result['_job_status'], 'deferred')
+        self.assertEqual(self.batch(batch)['status'], 'waiting_sync')
+        self.assertEqual(len(self.service.repo.list('operation', conversation_id=self.owner['conversation_id'])), 1)
+        self.caught_up()
+        self.tick()
+        self.assertEqual(self.batch(batch)['status'], 'accepted')
+
     def test_queued_job_defers_before_claim_without_counting_attempt(self):
         batch = self.generate()
         part = batch['parts'][0]

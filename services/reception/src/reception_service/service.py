@@ -2537,7 +2537,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                 waiting = self._reply_batch_preflight_wait(draft)
                 if waiting:
                     return waiting
-            self._validate_send(draft['draft_id'], draft['revision'], manual=not automatic)
+            draft, case, _ = self._validate_send(draft['draft_id'], draft['revision'], manual=not automatic)
             self._intent_source(draft, case)
             if automatic:
                 retry_state, _, retry_at = send_retry_decision(self.repo, self.seller_id, draft['conversation_id'], draft['source_message_id'],
