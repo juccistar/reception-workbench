@@ -18,6 +18,18 @@ export function whatsappUserAgent(original: string, applicationName: string, ver
   return normalized;
 }
 
+/** Serialized into the official page; only booleans and a numeric build leave it. */
+export function whatsappPageProbe(): { databaseError: boolean; available: boolean; webVersion: string } {
+  const chat = document.querySelector('#pane-side, [data-testid=chat-list]');
+  const login = chat ? null : document.querySelector('[data-testid=landing-wrapper]') || document.querySelector('#app') || document.body;
+  const text = (login as HTMLElement | null)?.innerText || login?.textContent || '';
+  const databaseError = /(?:database|数据库)[\s\S]{0,80}(?:error|failed|problem|错误|失败)|(?:error|failed|problem|错误|失败)[\s\S]{0,80}(?:database|数据库)/i.test(text);
+  const node = document.querySelector('canvas[data-ref], [data-testid=qrcode], [data-ref] canvas, #pane-side, [data-testid=chat-list]');
+  const version = (window as unknown as { Debug?: { VERSION?: unknown } }).Debug?.VERSION;
+  return { databaseError, webVersion: typeof version === 'string' && /^[0-9]+(?:\.[0-9]+){1,5}$/.test(version) ? version : '',
+    available: !databaseError && !!node && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0 };
+}
+
 export function retryAfterDelay(value: string | undefined, now = Date.now()): number {
   if (value && /^\d+$/.test(value.trim())) {
     const delay = Number(value.trim()) * 1000;

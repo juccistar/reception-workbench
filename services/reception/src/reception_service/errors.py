@@ -52,9 +52,11 @@ def safe_diagnostics(source):
         safe['read_category'] = source['read_category']
     from .integrations.accio_native.vendor.diagnostics import process_diagnostics, snapshot_diagnostics
     safe.update(snapshot_diagnostics(source))
-    exception_class = process_diagnostics(source).get('exception_class')
-    if exception_class:
-        safe['exception_class'] = exception_class
+    process = process_diagnostics(source)
+    for key in ('exception_class', 'gate_reason', 'gate_checkpoint', 'token_acquired',
+                'sync_target_version', 'sync_target_timestamp', 'authorization_epoch', 'source_version'):
+        if key in process:
+            safe[key] = process[key]
     return safe
 
 

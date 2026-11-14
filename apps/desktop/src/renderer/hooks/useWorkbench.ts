@@ -726,6 +726,32 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     });
   }, [action, chatBlocker, beginManualEdit, flush, invoke, syncSends, updateJobs, refreshSnapshot, loadDetail]);
 
+  const recoverReplyBatch = useCallback(async (batchId: string) => {
+    const cid = selectionRef.current.conversationId;
+    const entry = editors.current.get(cid);
+    const batch = detailRef.current?.conversation.conversation_id === cid && detailRef.current.recoverable_reply_batches?.find(item => item.batch_id === batchId);
+    if (!bridge || !entry || !batch || entry.body.trim() || entry.dirty || entry.saving || saves.current.has(cid) || sendUnsettled(entry.send)) return;
+    const version = entry.editVersion, revision = entry.server?.revision ?? null;
+    entry.saving = true; entry.saveState = 'saving'; redraw();
+    const operation = (async () => {
+      try {
+        const draft = await bridge.invoke<Draft>('recover_reply_batch_draft', { conversation_id: cid, batch_id: batchId, expected_messages_hash: batch.messages_hash, expected_chat_draft_revision: revision, client_mutation_id: mutationId() });
+        if (draft.conversation_id !== cid || draft.purpose !== 'chat' || draft.status !== 'pending') throw new Error('提取结果与当前客户不匹配。');
+        if (!entry.server || draft.revision >= entry.server.revision) entry.server = draft;
+        if (entry.editVersion === version && !entry.dirty) {
+          entry.body = draft.body; entry.parts = draft.message_parts ? [...draft.message_parts] : null; entry.selectedPart = 0;
+          entry.edited = false; entry.saveState = 'saved';
+        } else { entry.saveState = 'pending'; }
+        return true;
+      } catch (failure) { entry.error = errorText(failure); entry.saveState = 'error'; return false; }
+      finally { entry.saving = false; saves.current.delete(cid); if (mounted.current) redraw(); }
+    })();
+    saves.current.set(cid, operation);
+    await operation;
+    if (entry.dirty) void saveDraft(cid);
+    if (selectionRef.current.conversationId === cid) void loadDetail(cid, selectionRef.current.caseId, true);
+  }, [bridge, loadDetail, saveDraft]);
+
   const keepUnsentParts = useCallback(async () => {
     const cid = selectionRef.current.conversationId;
     const entry = editors.current.get(cid);
@@ -763,7 +789,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const partStructureLocked = !!editor?.parts && !editor.remainingBatchId && (!!editorBatch && (['prepared', 'sending', 'waiting_retry', 'waiting_receipt'].includes(editorBatch.status) || editorBatch.status === 'stopped' && editorBatch.accepted > 0) || !!editor?.send?.batchId && sendUnsettled(editor.send));
   const partialBatch = editorBatch?.status === 'stopped' && editorBatch.accepted > 0 ? editorBatch : null;
 
-  return { bridge, snapshot, connected, closing, loading, error, notice, setError, setNotice, page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, historyRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, editParts, selectPart, partStructureLocked, partialBatch, keepUnsentParts, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
+  return { bridge, snapshot, connected, closing, loading, error, notice, setError, setNotice, page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, historyRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, editParts, selectPart, partStructureLocked, partialBatch, keepUnsentParts, recoverReplyBatch, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
     aiReady, aiReceptionReady, executorReady: health.ready, executorMessage: health.message, sendIssue, generationIssue, reconcileOperation,
     unknownOperations: snapshot?.outbox.filter(item => isSendOperation(item) && item.status === 'unknown' && (item.conversation_id === selection.conversationId || caseOwners.current.get(item.case_id) === selection.conversationId)) ?? [],
     canSave: connected && !closing && !!editor?.dirty,

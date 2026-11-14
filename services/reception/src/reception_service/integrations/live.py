@@ -17,7 +17,7 @@ from .accio_native.gateway import NativeGateway, account_path
 from .accio_native.vendor.adapters.ai_runtime import desktop_agent_args
 from .accio_native.vendor.adapters.common import AdapterError, target
 from .accio_native.vendor.adapters.desktop_query import DesktopQueryRunner
-from .accio_native.vendor.adapters.live import SEND_ERROR_STAGES, SNAPSHOT_ERROR_MESSAGES
+from .accio_native.vendor.adapters.live import GATE_ERROR_MESSAGES, SEND_ERROR_STAGES, SNAPSHOT_ERROR_MESSAGES
 from .accio_native.vendor.adapters.tool_signals import output_has_tools
 from .accio_native.vendor.diagnostics import CODES, process_diagnostics
 
@@ -425,7 +425,8 @@ class LiveIntegration:
         failure = LiveIntegration._send_diagnostics(result)
         message = messages[status]
         if status == 'rejected':
-            message = SNAPSHOT_ERROR_MESSAGES.get(failure.get('error_code'), message)
+            code = failure.get('error_code')
+            message = GATE_ERROR_MESSAGES.get(code, SNAPSHOT_ERROR_MESSAGES.get(code, message))
         mid = result.get('message_id')
         receipt = dict(status=status, message_id=mid if isinstance(mid, str) else '',
                        submission_started=result.get('submission_started') is True or status == 'unknown', message=message, **failure)

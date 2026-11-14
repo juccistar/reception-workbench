@@ -63,6 +63,73 @@ class ReplyBatchServiceTests(unittest.TestCase):
             self.service._schedule_reply_batches()
         self.idle()
 
+    def test_waiting_sync_takeover_stops_only_unsubmitted_tail(self):
+        batch = self.generate()
+        self.tick()
+        batch = self.service.repo.get('reply_batch', batch['batch_id'])
+        batch['status'] = 'waiting_sync'
+        batch['parts'][1]['status'] = 'waiting_sync'
+        self.service.repo.put('reply_batch', batch['batch_id'], batch)
+        self.assertTrue(self.service._conversation_unresolved(self.owner['conversation_id']))
+        self.service.begin_manual_edit(self.owner['conversation_id'])
+        batch = self.service.repo.get('reply_batch', batch['batch_id'])
+        self.assertEqual(batch['status'], 'stopped')
+        self.assertEqual([p['status'] for p in batch['parts']], ['accepted', 'cancelled'])
+        self.assertFalse(self.service._conversation_unresolved(self.owner['conversation_id']))
+
+    def test_recover_stopped_tail_requires_evidence_and_preserves_draft(self):
+        batch = self.generate()
+        self.tick()
+        batch = self.service.repo.get('reply_batch', batch['batch_id'])
+        with self.service._lock, self.service.repo.transaction():
+            self.service._stop_reply_batch(batch, 'test')
+        cid = self.owner['conversation_id']
+        available = self.service._recoverable_reply_batches(cid)
+        self.assertEqual([(row['accepted'], row['remaining']) for row in available], [(1, 1)])
+        args = (cid, batch['batch_id'], batch['messages_hash'], None, 'recover-test')
+        result = self.service.recover_reply_batch_draft(*args)
+        self.assertEqual(result['message_parts'], [batch['parts'][1]['body']])
+        self.assertEqual(self.service.recover_reply_batch_draft(*args), result)
+        with self.assertRaises(Exception):
+            self.service.recover_reply_batch_draft(cid, batch['batch_id'], batch['messages_hash'], result['revision'], 'recover-again')
+        self.assertEqual(self.service.repo.get('reply_batch', batch['batch_id'])['status'], 'stopped')
+
+    def test_recover_checks_each_rejected_attempt_and_unresolved_fence(self):
+        batch = self.generate()
+        self.tick()
+        batch = self.service.repo.get('reply_batch', batch['batch_id'])
+        with self.service._lock, self.service.repo.transaction():
+            self.service._stop_reply_batch(batch, 'test')
+            first = self.service.repo.get('operation', batch['parts'][0]['operation_ids'][0])
+            op = {**first, 'operation_id': 'tail-op', 'part_id': batch['parts'][1]['part_id'], 'part_index': 1,
+                  'intent': {**first['intent'], 'reply': batch['parts'][1]['body']},
+                  'status': 'rejected', 'submission_started': False, 'message_id': None}
+            batch['parts'][1]['operation_ids'] = ['tail-op']
+            self.service.repo.put('operation', 'tail-op', op)
+            self.service.repo.put('reply_batch', batch['batch_id'], batch)
+        cid = self.owner['conversation_id']
+        self.assertEqual(len(self.service._recoverable_reply_batches(cid)), 1)
+        op['submission_started'] = None
+        self.service.repo.put('operation', 'tail-op', op)
+        self.assertEqual(self.service._recoverable_reply_batches(cid), [])
+        op['submission_started'] = False
+        self.service.repo.put('operation', 'tail-op', op)
+        other = {**op, 'operation_id': 'other-op', 'batch_id': 'other', 'status': 'unknown'}
+        self.service.repo.put('operation', 'other-op', other)
+        self.assertEqual(self.service._recoverable_reply_batches(cid), [])
+
+    def test_recover_rejects_missing_or_ambiguous_tail_operation(self):
+        batch = self.generate()
+        self.tick()
+        batch = self.service.repo.get('reply_batch', batch['batch_id'])
+        with self.service._lock, self.service.repo.transaction():
+            self.service._stop_reply_batch(batch, 'test')
+            batch['parts'][1]['operation_ids'] = ['missing']
+            self.service.repo.put('reply_batch', batch['batch_id'], batch)
+        self.assertEqual(self.service._recoverable_reply_batches(self.owner['conversation_id']), [])
+        with self.assertRaises(Exception):
+            self.service.recover_reply_batch_draft(self.owner['conversation_id'], batch['batch_id'], batch['messages_hash'], None, 'missing-op')
+
     def test_two_parts_use_distinct_receipts_and_self_history_does_not_cancel_tail(self):
         batch = self.generate()
         self.tick()
@@ -159,7 +226,8 @@ class ReplyBatchServiceTests(unittest.TestCase):
                 self.tick()
                 self.tick()
                 current = self.service.repo.get('reply_batch', batch['batch_id'])
-                self.assertEqual([row['status'] for row in current['parts']], ['accepted', 'cancelled'])
+                self.assertEqual([row['status'] for row in current['parts']],
+                                 ['accepted', 'waiting_sync' if change == 'pending' else 'cancelled'])
                 self.assertEqual(len(calls), 1)
 
     def test_unknown_middle_part_never_submits_tail_or_replays_prefix(self):

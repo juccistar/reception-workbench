@@ -108,13 +108,19 @@ class WhatsAppMixin:
             account = self._wa_account
             rows = [r for r in self.repo.list('wa_conversation') if r.get('seller_id') == self.seller_id and r.get('account_id') == account]
             bindings = [self.repo.get('wa_binding', self._wa_contact_key(r['chat_id'])) or {'chat_id': r['chat_id'], 'conversation_id': None, 'revision': 0} for r in rows]
-            ops = [r for r in self.repo.list('wa_operation') if r.get('seller_id') == self.seller_id and r.get('account_id') == account and r.get('status') in ('prepared', 'sending', 'unknown')]
+            all_pending = [r for r in self.repo.list('wa_operation') if r.get('seller_id') == self.seller_id
+                           and r.get('status') in ('prepared', 'sending', 'unknown')]
+            ops = [r for r in all_pending if r.get('account_id') == account]
+            other_pending = [r for r in all_pending if r.get('account_id') != account]
             batches = [r for r in self.repo.list('wa_reply_batch') if r.get('seller_id') == self.seller_id and r.get('account_id') == account]
             return {'reply_batches': [{**reply_batch_progress(b), 'chat_id': b['chat_id']} for b in batches],
                     'connected': self._wa_status == 'connected', 'account_id': account, 'connection_epoch': self._wa_epoch,
                     'enabled': self._wa_enabled, 'conversations': [{k: r.get(k) for k in ('chat_id', 'name', 'human_owned', 'pending')} for r in rows],
                     'bindings': [{k: b.get(k) for k in ('chat_id', 'conversation_id', 'revision')} for b in bindings],
-                    'pending_operations': [{k: o.get(k) for k in ('operation_id', 'chat_id', 'status', 'message_id', 'ack')} for o in ops]}
+                    'pending_operations': [{k: o.get(k) for k in ('operation_id', 'chat_id', 'status', 'message_id', 'ack')} for o in ops],
+                    'other_account_pending_count': len(other_pending),
+                    'other_account_pending_operations': [{k: o.get(k) for k in ('operation_id', 'status')}
+                                                         for o in other_pending]}
 
     def _wa_expected_identity(self, expected_account_id, expected_connection_epoch):
         if expected_account_id is not None or expected_connection_epoch is not None:

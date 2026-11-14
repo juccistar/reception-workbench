@@ -23,6 +23,23 @@ class SendFailureDiagnostics031Tests(unittest.TestCase):
         self.assertEqual(error.to_dict()['diagnostics']['exception_class'], 'JSONDecodeError')
         self.assertNotIn('PRIVATE_SYNTHETIC', str(error.to_dict()))
 
+    def test_gate_facts_survive_live_filter_without_private_data(self):
+        receipt = LiveIntegration._send_result({
+            'status': 'rejected', 'submission_started': False,
+            'error_code': 'source_sync_pending', 'stage': 'send',
+            'diagnostics': {'gate_reason': 'source_sync_pending', 'gate_checkpoint': 'after_token',
+                            'sync_target_version': 7, 'sync_target_timestamp': 42,
+                            'authorization_epoch': 3, 'token_acquired': True,
+                            'reply': 'PRIVATE', 'token': 'PRIVATE'},
+        })
+        self.assertEqual(receipt['diagnostics']['gate_checkpoint'], 'after_token')
+        self.assertEqual(receipt['diagnostics']['sync_target_version'], 7)
+        self.assertIs(receipt['diagnostics']['token_acquired'], True)
+        self.assertNotIn('PRIVATE', str(receipt))
+        self.assertIn('同步', receipt['message'])
+        self.assertEqual(process_diagnostics({'gate_reason': 'PRIVATE', 'gate_checkpoint': 'PRIVATE',
+                                              'sync_target_version': True}), {})
+
     def test_incomplete_rejection_never_becomes_retryable_pre_submission(self):
         for flag in ('missing', None, 0, '', True, 'false'):
             with self.subTest(flag=flag):

@@ -40,6 +40,9 @@ export class WhatsAppCoordinator {
   private creating: Promise<WhatsAppTransportHost> | null = null;
   private observations: Promise<void> = Promise.resolve();
   private readonly sends = new Map<string, Promise<void>>();
+  private readonly reconciliations = new Set<Promise<void>>();
+  private recovering = false;
+  private settlementFailed = false;
   private stopping = false;
   private generation = 0;
   private accountProjection = '';
@@ -52,6 +55,7 @@ export class WhatsAppCoordinator {
     return next;
   }
   async connect(): Promise<WhatsAppHostInfo> {
+    if (this.recovering) throw new Error('WhatsApp 登录环境正在重建。');
     this.stopping = false;
     if (!this.host) {
       if (!this.creating) {
@@ -126,9 +130,15 @@ export class WhatsAppCoordinator {
       await this.enqueue(() => this.options.invoke('_wa_transport_result', { operation_id: intent.operation_id, account_id: intent.account_id, connection_epoch: intent.connection_epoch, status: result ? 'submitted' : 'unknown', ...(result ?? {}) }));
     })();
     this.sends.set(operationId, task);
-    void task.catch(() => this.error()).finally(() => { this.sends.delete(operationId); });
+    void task.catch(() => { this.settlementFailed = true; this.error(); }).finally(() => { this.sends.delete(operationId); });
   }
   async reconcile(operationId: string): Promise<void> {
+    if (this.stopping || this.recovering) return;
+    const task = this.reconcileExisting(operationId);
+    this.reconciliations.add(task);
+    try { await task; } finally { this.reconciliations.delete(task); }
+  }
+  private async reconcileExisting(operationId: string): Promise<void> {
     const host = this.host;
     if (!host) return;
     const record = host.readLedger(operationId);
@@ -142,12 +152,26 @@ export class WhatsAppCoordinator {
     const evidence = result && result.ack > record.result.ack ? result : record.result;
     await this.enqueue(() => this.options.invoke('_wa_transport_result', { operation_id: record.intent.operation_id, account_id: record.intent.account_id, connection_epoch: record.intent.connection_epoch, status: 'submitted', ...evidence }));
   }
+  async rebuild(commit: () => Promise<void>): Promise<WhatsAppHostInfo> {
+    if (this.recovering) throw new Error('WhatsApp 登录环境正在重建。');
+    this.recovering = true;
+    try {
+      this.options.notify({ event: 'whatsapp.recovery.changed', data: { stage: 'waiting' } });
+      await this.stop();
+      this.options.notify({ event: 'whatsapp.recovery.changed', data: { stage: 'committing' } });
+      await commit();
+      this.recovering = false;
+      this.options.notify({ event: 'whatsapp.recovery.changed', data: { stage: 'connecting' } });
+      return await this.connect();
+    } finally { this.recovering = false; }
+  }
   async stop(): Promise<void> {
     this.stopping = true;
     if (this.creating) await this.creating.catch(() => {});
     await this.enqueue(() => this.options.invoke('set_whatsapp_reception', { enabled: false }));
-    await Promise.allSettled([...this.sends.values()]);
+    const settled = await Promise.allSettled([...this.sends.values(), ...this.reconciliations]);
     await this.observations;
+    if (this.settlementFailed || settled.some(result => result.status === 'rejected')) throw new Error('WhatsApp 在途操作收尾未完成，请保留原环境。');
     const host = this.host;
     if (host) { host.setVisible(false); await host.close(); }
     await this.observations;

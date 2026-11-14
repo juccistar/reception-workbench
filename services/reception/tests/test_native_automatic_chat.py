@@ -7,6 +7,7 @@ import test_native_chat as fixtures
 from reception_service.integrations.accio_native.gateway import NativeGateway
 from reception_service.integrations.accio_native.vendor.adapters.common import AdapterError, digest
 from reception_service.integrations.live import LiveIntegration
+from reception_service.send_gate import SendAuthorization, SendGateDecision, evaluate_authorization
 
 SELLER, BUYER, CID = fixtures.SELLER, fixtures.BUYER, fixtures.CID
 
@@ -150,15 +151,62 @@ class NativeAutomaticChatTests(unittest.TestCase):
         self.assertEqual(self.native.reconcile_chat('automatic-one')['status'], 'accepted')
         self.assertEqual(sum(name == 'send_msg' for name, _ in self.calls), 1)
 
-    def test_token_timeout_preserves_definite_transient_error_for_retry_policy(self):
+    def test_token_timeout_is_distinguished_from_authorization(self):
         def call(*args, **kwargs):
             raise AdapterError('private token error', code='timeout', stage='cli')
         self.native._chat_call = call
         result = self.send()
         self.assertEqual(result['status'], 'rejected')
         self.assertFalse(result['submission_started'])
-        self.assertEqual(result['error_code'], 'timeout')
+        self.assertEqual(result['error_code'], 'communication_token_missing')
+        self.assertIs(result['diagnostics']['token_acquired'], False)
         self.assertNotIn('private token error', json.dumps(result))
+
+    def test_token_response_without_token_is_not_sync_pending(self):
+        self.native._chat_call = lambda *args, **kwargs: {'success': False, 'data': {}}
+        result = self.send(authorization=SendAuthorization(lambda: SendGateDecision(True)))
+        self.assertEqual(result['error_code'], 'communication_token_missing')
+        self.assertEqual(result['diagnostics']['gate_checkpoint'], 'after_token')
+        self.assertIs(result['diagnostics']['token_acquired'], False)
+        self.assertEqual(self.native.ledger.get('automatic-one')[2], result)
+
+    def test_gate_checkpoints_freeze_safe_diagnostics(self):
+        for checkpoint in ('before_claim', 'after_token', 'before_submit'):
+            with self.subTest(checkpoint=checkpoint):
+                state = {'reject': checkpoint == 'before_claim'}
+                original = self.native._chat_call
+                def call(name, args, *, before_submit=None):
+                    if name == 'send_msg' and checkpoint == 'before_submit':
+                        state['reject'] = True
+                    return original(name, args, before_submit=before_submit)
+                self.native._chat_call = call
+                self.after_token = lambda: state.update(reject=checkpoint == 'after_token')
+                gate = SendAuthorization(lambda: SendGateDecision(not state['reject'],
+                    'source_sync_pending' if state['reject'] else '',
+                    {'sync_target_version': 12, 'reply': 'PRIVATE', 'authorization_epoch': 3}))
+                operation = 'gate-' + checkpoint
+                result = self.send(self.intent(operation, source_message_id=operation), gate)
+                self.assertEqual(result['error_code'], 'source_sync_pending')
+                self.assertFalse(result['submission_started'])
+                self.assertEqual(result['diagnostics']['gate_checkpoint'], checkpoint)
+                self.assertEqual(result['diagnostics']['sync_target_version'], 12)
+                self.assertNotIn('PRIVATE', str(result))
+                if checkpoint != 'before_claim':
+                    self.assertIs(result['diagnostics']['token_acquired'], True)
+                    self.assertEqual(self.native.ledger.get(operation)[2], result)
+                self.native._chat_call = original
+
+    def test_legacy_gate_and_revocation_reasons(self):
+        self.assertEqual(evaluate_authorization(lambda: 1, 'before_claim').reason, 'authorization_rejected')
+        def broken():
+            raise ValueError('PRIVATE')
+        self.assertEqual(evaluate_authorization(broken, 'before_claim').reason, 'guard_evaluation_failed')
+        self.assertIs(SendAuthorization(lambda: SendGateDecision(True))(), True)
+        self.after_token = self.native.revoke
+        result = self.send()
+        self.assertEqual(result['error_code'], 'authorization_revoked')
+        self.assertEqual(result['diagnostics']['gate_checkpoint'], 'after_token')
+        self.assertIs(result['submission_started'], False)
 
     def test_target_source_and_body_constraints_are_kept(self):
         for changes in ({'buyer_id': '1234'}, {'source_message_id': ''}, {'source_timestamp_ms': 0},

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import unicodedata
 
 from .errors import ServiceError
@@ -28,7 +29,7 @@ class ManualChatMixin:
             return True
         excluded = next((o for o in operations if o.get('operation_id') == excluding), None)
         excluded_batch = excluded.get('batch_id') if excluded else excluding
-        return any(batch.get('status') in ('prepared', 'sending', 'waiting_retry', 'waiting_receipt')
+        return any(batch.get('status') in ('prepared', 'sending', 'waiting_retry', 'waiting_receipt', 'waiting_sync')
                    and (not excluded_batch or batch.get('batch_id') != excluded_batch)
                    for batch in self.repo.list('reply_batch', conversation_id=conversation_id))
 
@@ -51,6 +52,24 @@ class ManualChatMixin:
             self._invalidate(conversation['conversation_id'])
         conversation['manual_chat'] = True
         self.repo.put('conversation', conversation['conversation_id'], conversation)
+        for batch in self.repo.list('reply_batch', conversation_id=conversation['conversation_id']):
+            if batch.get('origin') != 'automatic' or batch.get('status') != 'waiting_sync':
+                continue
+            for part in batch.get('parts', []):
+                if part.get('status') != 'waiting_sync':
+                    continue
+                ids = part.get('operation_ids')
+                operations = [self.repo.get('operation', oid) if isinstance(oid, str) else None for oid in ids] if isinstance(ids, list) else [None]
+                unlisted = any(op.get('operation_id') not in ids for op in self.repo.list('operation')
+                               if isinstance(ids, list) and op.get('batch_id') == batch.get('batch_id')
+                               and op.get('part_id') == part.get('part_id'))
+                if (not unlisted and all(op and op.get('status') == 'rejected' and op.get('submission_started') is False
+                                         and op.get('batch_id') == batch.get('batch_id') and op.get('part_id') == part.get('part_id')
+                                         and op.get('part_index') == part.get('part_index') for op in operations)):
+                    part['status'] = 'planned'
+                else:
+                    part['status'] = 'unknown'
+            self._stop_reply_batch(batch, '人工接管，未提交的自动回复已停止')
 
     def begin_manual_edit(self, conversation_id):
         with self._lock, self.repo.transaction():
@@ -60,6 +79,9 @@ class ManualChatMixin:
         return self.get_snapshot()
 
     def save_chat_draft(self, conversation_id, body, expected_revision, client_mutation_id, message_parts=None, remaining_batch_id=None):
+        return self._save_chat_draft(conversation_id, body, expected_revision, client_mutation_id, message_parts, remaining_batch_id)
+
+    def _save_chat_draft(self, conversation_id, body, expected_revision, client_mutation_id, message_parts=None, remaining_batch_id=None, *, notify=True):
         self._chat_body(body)
         if message_parts is not None:
             if (not isinstance(message_parts, list) or not 1 <= len(message_parts) <= 3
@@ -88,7 +110,7 @@ class ManualChatMixin:
             previous = self.repo.get('chat_draft', conversation_id)
             if expected_revision != (previous['revision'] if previous else None):
                 raise ServiceError('revision_conflict', '聊天草稿版本已变化，请保留输入并重新读取')
-            linked_batch_id = (previous.get('blocked_batch_id') or previous.get('batch_id')) if previous else None
+            linked_batch_id = (previous.get('blocked_batch_id') or previous.get('batch_id')) if previous and previous.get('status') != 'accepted' else None
             linked_batch = self.repo.get('reply_batch', linked_batch_id) if linked_batch_id else None
             if linked_batch and (linked_batch.get('origin') != 'manual' or linked_batch.get('conversation_id') != conversation_id
                                  or linked_batch.get('seller_id') != self.seller_id or linked_batch.get('buyer_id') != conversation['buyer_id']):
@@ -130,6 +152,107 @@ class ManualChatMixin:
             conversation['chat_revision'] = revision
             self.repo.put('conversation', conversation_id, conversation)
             self.repo.put('chat_draft', conversation_id, draft, history=True)
+            self.repo.put('chat_mutation', client_mutation_id, {'request': request, 'result': draft})
+        if notify:
+            self._changed(conversation_id)
+        return draft
+
+    def _recoverable_batch_parts(self, batch, conversation):
+        if (batch.get('origin') != 'automatic' or batch.get('status') != 'stopped'
+                or batch.get('seller_id') != self.seller_id or batch.get('buyer_id') != conversation['buyer_id']
+                or batch.get('conversation_id') != conversation['conversation_id']):
+            return None
+        parts = batch.get('parts')
+        if not isinstance(parts, list) or not 1 <= len(parts) <= 3:
+            return None
+        identity, referenced, accepted, tail = [], set(), 0, []
+        for index, part in enumerate(parts):
+            if not isinstance(part, dict):
+                return None
+            body, sources, ids = part.get('body'), part.get('reply_sources'), part.get('operation_ids')
+            if (not isinstance(body, str) or not body.strip() or not isinstance(sources, list)
+                    or any(not isinstance(s, str) for s in sources) or not isinstance(ids, list)
+                    or part.get('part_index') != index or not isinstance(part.get('part_id'), str)
+                    or part.get('body_sha256') != hashlib.sha256(body.encode('utf-8')).hexdigest()):
+                return None
+            identity.append({'body': body, 'reply_sources': sources})
+            operations = []
+            for oid in ids:
+                if not isinstance(oid, str) or not oid or oid in referenced:
+                    return None
+                referenced.add(oid)
+                op = self.repo.get('operation', oid)
+                if (not op or op.get('operation_id') != oid or op.get('batch_id') != batch['batch_id']
+                        or op.get('part_id') != part['part_id'] or op.get('part_index') != index
+                        or op.get('seller_id') != self.seller_id or op.get('buyer_id') != conversation['buyer_id']
+                        or op.get('conversation_id') != conversation['conversation_id']
+                        or not isinstance(op.get('intent'), dict) or op['intent'].get('reply') != body):
+                    return None
+                operations.append(op)
+            if part.get('status') == 'accepted' and not tail:
+                mid = part.get('message_id')
+                if (not isinstance(mid, str) or not mid.strip() or not operations
+                        or operations[-1].get('status') != 'accepted'
+                        or operations[-1].get('submission_started') is not True
+                        or operations[-1].get('message_id') != mid
+                        or any(op.get('status') != 'rejected' or op.get('submission_started') is not False for op in operations[:-1])):
+                    return None
+                accepted += 1
+            else:
+                if (part.get('status') not in ('planned', 'cancelled', 'rejected')
+                        or not operations and part.get('status') not in ('planned', 'cancelled')
+                        or any(op.get('status') != 'rejected' or op.get('submission_started') is not False for op in operations)):
+                    return None
+                tail.append(body)
+        if not tail or batch.get('messages_hash') != hashlib.sha256(encoded(identity).encode('utf-8')).hexdigest():
+            return None
+        if any(op.get('operation_id') not in referenced for op in self.repo.list('operation')
+               if op.get('batch_id') == batch['batch_id']):
+            return None
+        return accepted, tail
+
+    def _recoverable_reply_batches(self, conversation_id):
+        with self._lock:
+            conversation = self._chat_owner(conversation_id)
+            if self._conversation_unresolved(conversation_id):
+                return []
+            result = []
+            for batch in self.repo.list('reply_batch', conversation_id=conversation_id):
+                parts = self._recoverable_batch_parts(batch, conversation)
+                if parts:
+                    result.append({'batch_id': batch['batch_id'], 'messages_hash': batch['messages_hash'],
+                                   'accepted': parts[0], 'remaining': len(parts[1]), 'total': len(batch['parts'])})
+            return result
+
+    def recover_reply_batch_draft(self, conversation_id, batch_id, expected_messages_hash, expected_chat_draft_revision, client_mutation_id):
+        if (any(not isinstance(value, str) or not value.strip() or len(value) > 256
+                for value in (conversation_id, batch_id, client_mutation_id))
+                or not isinstance(expected_messages_hash, str) or len(expected_messages_hash) != 64
+                or expected_chat_draft_revision is not None and
+                (type(expected_chat_draft_revision) is not int or expected_chat_draft_revision < 1)):
+            raise ServiceError('invalid_params', '提取参数无效')
+        request = {'conversation_id': conversation_id, 'batch_id': batch_id, 'expected_messages_hash': expected_messages_hash,
+                   'expected_chat_draft_revision': expected_chat_draft_revision, 'client_mutation_id': client_mutation_id}
+        with self._lock, self.repo.transaction():
+            conversation = self._chat_owner(conversation_id)
+            mutation = self.repo.get('chat_mutation', client_mutation_id)
+            if mutation:
+                if mutation.get('request') != request:
+                    raise ServiceError('mutation_conflict', '同一幂等编号不能用于不同操作')
+                return mutation['result']
+            previous = self.repo.get('chat_draft', conversation_id)
+            if expected_chat_draft_revision != (previous['revision'] if previous else None):
+                raise ServiceError('revision_conflict', '聊天草稿版本已变化，请保留输入并重新读取')
+            if previous and previous.get('status') != 'accepted' and (previous.get('body') or '').strip():
+                raise ServiceError('draft_not_empty', '请先处理现有草稿')
+            self._assert_conversation_resolved(conversation_id)
+            batch = self.repo.get('reply_batch', batch_id)
+            parts = self._recoverable_batch_parts(batch, conversation) if batch else None
+            if not parts or batch.get('messages_hash') != expected_messages_hash:
+                raise ServiceError('batch_not_recoverable', '原批次或未提交证据已变化，无法提取')
+            # save_chat_draft uses the same reentrant lock and joins this transaction.
+            draft = self._save_chat_draft(conversation_id, '\n\n'.join(parts[1]), expected_chat_draft_revision,
+                                          client_mutation_id + ':recover-save', message_parts=parts[1], notify=False)
             self.repo.put('chat_mutation', client_mutation_id, {'request': request, 'result': draft})
         self._changed(conversation_id)
         return draft
@@ -269,7 +392,7 @@ class ManualChatMixin:
 
     def _recover_manual_reply_batches(self):
         for batch in self.repo.list('reply_batch'):
-            if batch.get('origin') == 'manual' and batch.get('status') in ('prepared', 'sending', 'waiting_retry', 'waiting_receipt'):
+            if batch.get('origin') == 'manual' and batch.get('status') in ('prepared', 'sending', 'waiting_retry', 'waiting_receipt', 'waiting_sync'):
                 for part in batch['parts']:
                     if part.get('status') == 'sending' and part.get('operation_ids'):
                         operation = self.repo.get('operation', part['operation_ids'][-1])

@@ -108,6 +108,15 @@ export function validateChatParameters(method: ApiMethod, params: Record<string,
     if (params.category_label !== undefined && (typeof params.category_label !== 'string' || !/^[一-鿿A-Za-z]{1,8}$/.test(params.category_label) || !/[一-鿿]/.test(params.category_label))) fail();
     return;
   }
+  if (method === 'recover_reply_batch_draft') {
+    const keys = ['conversation_id', 'batch_id', 'expected_messages_hash', 'expected_chat_draft_revision', 'client_mutation_id'];
+    const id = (value: unknown) => typeof value === 'string' && !!value.trim() && value.length <= 256;
+    if (Object.keys(params).length !== keys.length || keys.some(key => !Object.hasOwn(params, key)) ||
+        !id(params.conversation_id) || !id(params.batch_id) || !id(params.client_mutation_id) ||
+        typeof params.expected_messages_hash !== 'string' || !/^[0-9a-f]{64}$/.test(params.expected_messages_hash) ||
+        !(params.expected_chat_draft_revision === null || typeof params.expected_chat_draft_revision === 'number' && Number.isSafeInteger(params.expected_chat_draft_revision) && params.expected_chat_draft_revision >= 1)) throw new Error('提取未发送内容参数无效。');
+    return;
+  }
   if (!['begin_manual_edit', 'save_chat_draft', 'send_chat', 'generate_manual_suggestion'].includes(method)) return;
   if (method === 'generate_manual_suggestion') {
     const allowed = ['conversation_id', 'case_id', 'client_request_id', 'input_body', 'input_revision', 'input_hash', 'part_index'];

@@ -8,7 +8,11 @@ NATIVE_ERROR_CATEGORIES = frozenset({
     'internal_error', 'backend_timeout', 'rate_limit',
     'desktop_response_timeout', 'io_timeout', 'cli_unclassified_error',
 })
-CODES = NATIVE_ERROR_CATEGORIES | frozenset({
+GATE_REASONS = frozenset({'source_sync_pending', 'communication_token_missing', 'authorization_revoked',
+                          'source_changed', 'basis_changed', 'conversation_taken_over', 'closing',
+                          'authorization_rejected', 'guard_evaluation_failed'})
+GATE_CHECKPOINTS = frozenset({'before_claim', 'after_token', 'before_submit'})
+CODES = NATIVE_ERROR_CATEGORIES | GATE_REASONS | frozenset({
     "ok", "adapter_error", "send_receipt_invalid", "agent_missing", "agent_metadata_invalid", "agent_ambiguous",
     "identity_invalid", "context_too_long", "cli_invalid", "analysis_invalid",
     "spawn", "timeout", "encoding", "exit", "non_json", "native_error",
@@ -64,6 +68,15 @@ def process_diagnostics(source):
     if not isinstance(source, dict):
         return {}
     safe = snapshot_diagnostics(source)
+    if isinstance(source.get('gate_reason'), str) and source['gate_reason'] in GATE_REASONS:
+        safe['gate_reason'] = source['gate_reason']
+    if isinstance(source.get('gate_checkpoint'), str) and source['gate_checkpoint'] in GATE_CHECKPOINTS:
+        safe['gate_checkpoint'] = source['gate_checkpoint']
+    if type(source.get('token_acquired')) is bool:
+        safe['token_acquired'] = source['token_acquired']
+    for key in ('sync_target_version', 'sync_target_timestamp', 'authorization_epoch', 'source_version'):
+        if type(source.get(key)) is int and 0 <= source[key] <= 9007199254740991:
+            safe[key] = source[key]
     elapsed = source.get('elapsed_ms')
     if type(elapsed) is int and elapsed >= 0:
         safe['elapsed_ms'] = elapsed

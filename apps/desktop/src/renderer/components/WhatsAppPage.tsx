@@ -9,7 +9,8 @@ import { Badge, Button, Drawer, Empty, messageDateTime } from './ui';
 const hostLabels: Record<string, string> = { disconnected: '未连接', connecting: '正在连接', qr: '请在原始页面扫码', authenticated: '正在加载聊天', ready: '已连接', error: '连接失败，可重新连接' };
 const hostErrors: Record<string, string> = { browser_unsupported: 'WhatsApp 未识别为受支持的浏览器，请检查更新', http_error: '登录页请求失败', network_error: '网络连接失败，请重新连接', tls_error: '安全连接失败，请检查网络', navigation_timeout: '连接超时，请重新连接', sdk_timeout: '初始化超时，请重新连接', ready_timeout: '加载聊天超时，请重新连接', auth_failed: '认证失败，请重新连接', sdk_error: '初始化失败，请重新连接', invalid_response: '登录页响应无效，请重新连接', page_closed: '页面已关闭，请重新连接', unexpected_navigation: '页面导航异常，请重新连接' };
 const phaseLabels: Record<string, string> = { view_setup: '创建页面', cdp_connect: '连接页面', auth_setup: '准备认证', version_cache: '准备版本缓存', page_navigation: '加载登录页', app_modules: '加载网页模块', sdk_inject: '注入接待组件', sdk_callbacks: '注册接待回调', qr_wait: '等待扫码', authenticated: '加载聊天', ready: '接待就绪' };
-Object.assign(hostErrors, { cdp_error: '页面连接失败，请重新连接', sdk_resource_missing: '接待组件资源缺失，请检查安装', page_context_lost: '页面环境已变化，请重新连接', app_module_error: '网页模块加载失败，请重新连接' });
+Object.assign(phaseLabels, { page_reload: '网页重新加载' });
+Object.assign(hostErrors, { page_database_error: 'WhatsApp 网页报告数据库错误，需重建登录环境', cdp_error: '页面连接失败，请重新连接', sdk_resource_missing: '接待组件资源缺失，请检查安装', page_context_lost: '页面环境已变化，请重新连接', app_module_error: '网页模块加载失败，请重新连接' });
 function hostReason(host: WhatsAppHostInfo): string {
   if (host.error_code === 'http_error' && host.http_status === 429) return '请求过于频繁（HTTP 429），请等待后重连';
   if (host.error_code === 'http_error' && Number.isInteger(host.http_status) && host.http_status! >= 100 && host.http_status! <= 599) return `登录页请求失败（HTTP ${host.http_status}）`;
@@ -42,6 +43,8 @@ export function WhatsAppPage({ model, bridge, obscured = false }: { model: Workb
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [recoveryStage, setRecoveryStage] = useState('');
+  const recoveryStageRef = useRef('');
   const surface = useRef<HTMLDivElement>(null);
   const live = useRef(true);
   const readSequence = useRef(0);
@@ -83,6 +86,10 @@ export function WhatsAppPage({ model, bridge, obscured = false }: { model: Workb
         ++hostSequence.current;
         setHost(data as WhatsAppHostInfo);
         void refreshBusiness().catch(() => {});
+      } else if (event.event === 'whatsapp.recovery.changed') {
+        const stage = (event.data as { stage?: string } | null)?.stage;
+        recoveryStageRef.current = stage ?? '';
+        setRecoveryStage(stage === 'waiting' ? '正在等待在途发送和旧连接收尾…' : stage === 'committing' ? '正在保存新登录环境…' : stage === 'connecting' ? '正在连接新登录环境…' : '');
       } else if (event.event === 'state.changed' || event.event.startsWith('whatsapp.')) {
         void refresh().catch(() => {});
       }
@@ -113,9 +120,10 @@ export function WhatsAppPage({ model, bridge, obscured = false }: { model: Workb
   const act = async (key: string, action: () => Promise<unknown>, success = '') => {
     if (pending || model.closing) return;
     setPending(key); setError(''); setNotice('');
+    if (key === 'rebuild') recoveryStageRef.current = '';
     try { await action(); await refresh(); if (live.current && success) setNotice(success); }
-    catch (reason) { if (live.current) setError('操作未完成，请重试或查看运行记录。'); }
-    finally { if (live.current) setPending(''); }
+    catch (reason) { if (live.current) setError(key === 'rebuild' ? ({ waiting: '旧连接或在途发送收尾未完成，原登录环境保留。', committing: '保存新登录环境未完成，请检查配置并保留原目录。', connecting: '新登录环境连接未完成，请检查连接状态。' } as Record<string, string>)[recoveryStageRef.current] || '重建登录环境未完成，请检查商家身份和配置。' : '操作未完成，请重试或查看运行记录。'); }
+    finally { if (live.current) { setPending(''); if (key === 'rebuild') setRecoveryStage(''); } }
   };
   const loadContacts = async () => {
     if (!bridge?.listWhatsAppChats || !connected) return;
@@ -153,6 +161,8 @@ export function WhatsAppPage({ model, bridge, obscured = false }: { model: Workb
       </div>
     </header>
     {host.status === 'error' && <div className="whatsapp-hint"><Button variant="ghost" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(open => !open)}>{detailsOpen ? '收起失败详情' : '查看失败详情'}</Button>{detailsOpen && <span>{phase && <>阶段：{phase}。 </>}原因：{hostReason(host)}。{diagnosticId && <> 诊断编号：{diagnosticId}</>}</span>}</div>}
+    {host.error_code === 'page_database_error' && <div className="whatsapp-hint">WhatsApp 网页报告数据库错误，需重建登录环境。<Button disabled={disabled || !liveMerchant || !bridge?.rebuildWhatsAppSession} loading={pending === 'rebuild'} onClick={() => void act('rebuild', () => bridge!.rebuildWhatsAppSession!())}>重建 WhatsApp 登录环境</Button></div>}
+    {recoveryStage && <div className="whatsapp-hint" role="status">{recoveryStage}</div>}
     {!liveMerchant && <div className="whatsapp-hint">请从目标商家的 Accio 授权会话启动工作台，再连接 WhatsApp。<Button variant="ghost" onClick={() => void model.navigate('settings')}>查看连接方式</Button></div>}
     {!health.ready && <div className="whatsapp-hint">{health.message}。新任务暂未就绪，原发送回执仍可核查。</div>}
     {liveMerchant && connected && !aiReady && <div className="whatsapp-hint">当前商家的 AI 尚未通过检查。<Button variant="ghost" onClick={() => void model.navigate('settings')}>前往检查 AI</Button></div>}
@@ -166,6 +176,7 @@ export function WhatsAppPage({ model, bridge, obscured = false }: { model: Workb
     </div>
     {(error || notice) && <div className={`whatsapp-feedback ${error ? 'is-error' : ''}`} role={error ? 'alert' : 'status'}>{error || notice}</div>}
     {(state?.reply_batches ?? []).filter(batch => batch.status !== 'accepted').map(batch => <div className="whatsapp-hint" role="status" key={batch.batch_id}>{allContacts.find(chat => chat.chat_id === batch.chat_id)?.name || '单聊'}：已发送 {batch.accepted}/{batch.total} 条{batch.status === 'stopped' ? '，未提交的尾部已停止' : batch.status === 'waiting_receipt' && batch.current_index !== null ? `，第 ${batch.current_index + 1} 条等待回执` : ''}</div>)}
+    {(state?.other_account_pending_count ?? 0) > 0 && <div className="whatsapp-pending" role="status">存在 {state!.other_account_pending_count} 条旧账号未决记录。请登录原 WhatsApp 账号后按原操作核查；新账号不能代替核查。</div>}
     {unresolved.length > 0 && <div className="whatsapp-pending" role="status"><span>有 {unresolved.length} 条自动发送正在处理或等待确切回执。相关单聊会暂停新增自动发送；原始界面仍可人工操作。</span>{unresolved.filter(item => item.status === 'unknown' || item.status === 'submitted').map(item => <Button key={item.operation_id} disabled={disabled} onClick={() => void act('reconcile', () => bridge!.invoke('reconcile_whatsapp_operation', { operation_id: item.operation_id }), '已请求核查原发送回执。')}>核查 {allContacts.find(chat => chat.chat_id === item.chat_id)?.name || '单聊'} 的回执</Button>)}</div>}
     <div className="whatsapp-native-surface" ref={surface} data-testid="whatsapp-native-surface"><Empty title={host.status === 'disconnected' ? '连接 WhatsApp 后在这里使用原始界面' : host.status === 'error' ? '连接未完成，请重新连接' : '正在加载 WhatsApp Web'} icon={<MessageCircle size={40} strokeWidth={1.3} />}>登录二维码、聊天列表和输入框由 WhatsApp Web 原始页面提供。</Empty></div>
     <footer className="whatsapp-footer">{!health.ready ? health.message : !receptionReady && state?.enabled ? '自动接待未就绪' : state?.enabled ? '全部单聊自动接待已开启' : 'WhatsApp 自动接待已暂停'}<span>在原始界面或手机上人工回复，会接管相应客户。</span></footer>

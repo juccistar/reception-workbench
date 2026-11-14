@@ -180,19 +180,22 @@ class NativeGateway(LiveGateway):
         from .media import read_photo_source
         return read_photo_source(self, expected_message)
 
-    def _send_authorized(self, intent):
+    def _send_authorized(self, intent, checkpoint='before_claim'):
+        from ...send_gate import SendGateDecision, evaluate_authorization
+        from .chat import reject_decision
         with self._permission_lock:
-            allowed = self._attempt_epoch == self._permission_epoch and callable(self._authorization)
+            revoked = self._attempt_epoch != self._permission_epoch
             callback = self._authorization
-        try:
-            allowed = allowed and callback() is True
-        except Exception:
-            allowed = False
+        decision = (SendGateDecision(False, 'authorization_revoked') if revoked
+                    else evaluate_authorization(callback, checkpoint))
         # Revocation may run while the service callback checks its own state.
         with self._permission_lock:
-            allowed = allowed and self._attempt_epoch == self._permission_epoch
-        if not allowed:
-            raise AdapterError('发送临时权限已撤回', code='auth', stage='send')
+            revoked = self._attempt_epoch != self._permission_epoch
+        if revoked:
+            decision = SendGateDecision(False, 'authorization_revoked')
+        if not decision.allowed:
+            reject_decision(decision, checkpoint,
+                            token_acquired=True if checkpoint in ('after_token', 'before_submit') else None)
         mode = intent.get('send_mode')
         if mode not in ('manual', 'automatic'):
             raise AdapterError('发送方式未明确', code='auth', stage='send')

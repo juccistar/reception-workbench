@@ -18,7 +18,7 @@ function setup(status: number | null = 200, inject?: (client: any, page: any) =>
   const debuggerApi = Object.assign(new EventEmitter(), { attach: vi.fn(), detach: vi.fn(), isAttached: vi.fn(() => false) });
   const contents = runtime.contents = Object.assign(new EventEmitter(), {
     debugger: debuggerApi, getUserAgent: () => 'Mozilla/5.0 询盘接待助手/0.3.17 Chrome/156.0.8078.80 Electron/45.2.3 Safari/537.36',
-    setUserAgent: vi.fn(), setWindowOpenHandler: vi.fn(), stop: vi.fn(), isDestroyed: () => false, close: vi.fn(), executeJavaScript: vi.fn(async () => true),
+    setUserAgent: vi.fn(), setWindowOpenHandler: vi.fn(), stop: vi.fn(), destroyed: false, isDestroyed: () => runtime.contents.destroyed, close: vi.fn(() => { runtime.contents.destroyed = true; runtime.contents.emit('destroyed'); }), executeJavaScript: vi.fn(async () => ({ available: true, databaseError: false })),
     loadURL: vi.fn(async () => {}), getURL: () => 'https://web.whatsapp.com/',
     session: { setUserAgent: vi.fn(), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
   });
@@ -219,9 +219,25 @@ describe('WhatsApp connection compatibility', () => {
     contents.emit('did-start-navigation', {}, 'https://web.whatsapp.com/', false, true);
     contents.emit('did-navigate', {}, 'https://web.whatsapp.com/', 200);
     page.emit('framenavigated', { parentFrame: () => null, url: () => 'https://web.whatsapp.com/' });
-    expect(host.getStatus()).toMatchObject({ status: 'error', error_code: 'page_context_lost', phase: 'sdk_callbacks' });
+    expect(host.getStatus()).toMatchObject({ status: 'error', error_code: 'page_context_lost', phase: 'page_reload', previous_phase: 'sdk_inject' });
     expect(contents.stop).not.toHaveBeenCalled();
     expect(clients[0].inject).toHaveBeenCalledOnce();
+  });
+  it('prioritizes a database error over an available QR canvas', async () => {
+    const { host, contents } = setup();
+    contents.executeJavaScript.mockResolvedValue({ available: true, databaseError: true });
+    await host.connect();
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ status: 'error', page_state: 'error', error_code: 'page_database_error' }));
+    expect(contents.stop).not.toHaveBeenCalled();
+  });
+  it('retires the old SDK without stopping trusted post logout navigation', async () => {
+    const { host, contents, browser } = setup();
+    await host.connect();
+    await vi.waitFor(() => expect(host.observedDocument).toBe(host.generation));
+    contents.emit('did-start-navigation', {}, 'https://web.whatsapp.com/?post_logout=1', false, true);
+    expect(host.getStatus().status).toBe('disconnected');
+    expect(contents.stop).not.toHaveBeenCalled();
+    expect(browser.disconnect).toHaveBeenCalled();
   });
   it('classifies protocol, missing resource and module failures without exposing SDK strings', () => {
     expect(connectionFailure(new Error('Protocol error private'), 'sdk_timeout', 'cdp_connect').error_code).toBe('cdp_error');

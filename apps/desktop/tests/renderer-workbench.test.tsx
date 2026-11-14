@@ -490,6 +490,26 @@ describe('manual suggestion and supplement', () => {
     expect(screen.getByRole('textbox', { name: '业务补充内容' })).toHaveValue('正在输入的新正文');
     await waitFor(() => expect(calls(bridge, 'save_conversation_supplement').some(call => call.params.body === '正在输入的新正文' && call.params.expected_revision === 1)).toBe(true), { timeout: 3000 });
   });
+  it('preserves later input while recovering an automatic tail', async () => {
+    const bridge = new FakeBridge();
+    bridge.details.emma.chat_draft = null;
+    bridge.details.emma.reply_batches = [{ batch_id: 'old', status: 'stopped', total: 2, accepted: 1, current_index: null, pending_operation_ids: [] }];
+    bridge.details.emma.recoverable_reply_batches = [{ batch_id: 'old', messages_hash: 'a'.repeat(64), total: 2, accepted: 1, remaining: 1 }];
+    const pending = deferred<Draft>();
+    const invoke = bridge.invoke.bind(bridge);
+    bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => {
+      if (method === 'recover_reply_batch_draft') { bridge.calls.push({ method, params }); return await pending.promise as T; }
+      return invoke<T>(method, params);
+    };
+    await openApp(bridge);
+    fireEvent.click(screen.getByRole('button', { name: '取出未发送内容' }));
+    fireEvent.change(textarea(), { target: { value: '迟到的新输入' } });
+    const recovered = makeDraft('emma', '原冻结尾部', 1); recovered.message_parts = ['原冻结尾部'];
+    bridge.details.emma.chat_draft = recovered;
+    await act(async () => pending.resolve(recovered));
+    expect(textarea()).toHaveValue('迟到的新输入');
+    await waitFor(() => expect(calls(bridge, 'save_chat_draft').some(call => call.params.body === '迟到的新输入' && call.params.expected_revision === 1)).toBe(true));
+  });
   it('validates the frozen polish source at the desktop bridge', () => {
     const valid = { conversation_id: 'emma', case_id: null, client_request_id: 'polish-1',
       input_body: '14.5 USD each, shipping excluded', input_revision: 2, input_hash: 'a'.repeat(64) };
@@ -505,6 +525,10 @@ describe('manual suggestion and supplement', () => {
     expect(() => validateChatParameters('save_chat_draft', { ...parts, remaining_batch_id: 'batch' })).not.toThrow();
     expect(() => validateChatParameters('save_chat_draft', { ...parts, remaining_batch_id: '' })).toThrow();
     expect(() => validateChatParameters('save_chat_draft', { ...parts, message_parts: undefined, remaining_batch_id: 'batch' })).toThrow();
+    const recovery = { conversation_id: 'emma', batch_id: 'batch', expected_messages_hash: 'a'.repeat(64), expected_chat_draft_revision: null, client_mutation_id: 'm' };
+    expect(() => validateChatParameters('recover_reply_batch_draft', recovery)).not.toThrow();
+    expect(() => validateChatParameters('recover_reply_batch_draft', { ...recovery, body: 'injected' })).toThrow();
+    expect(() => validateChatParameters('recover_reply_batch_draft', { ...recovery, expected_messages_hash: 'bad' })).toThrow();
   });
   it('polishes the exact saved body and displays the suggestion translation without editing the reply', async () => {
     const originalSubtle = Object.getOwnPropertyDescriptor(globalThis.crypto, 'subtle');

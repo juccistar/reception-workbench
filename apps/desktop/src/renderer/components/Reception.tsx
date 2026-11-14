@@ -11,6 +11,15 @@ import { useTranslations } from '../hooks/useTranslations';
 import { caseLabel } from './caseLabels';
 import { SharedRequirementCard } from './SharedRequirementCard';
 
+const batchReason: Record<string, string> = {
+  source_sync_pending: '正在同步会话', communication_token_missing: '未取得会话通信令牌，请检查连接',
+  authorization_revoked: '发送授权已撤销', authorization_rejected: '发送授权未通过',
+  source_changed: '会话来源已变化', basis_changed: '回复依据已变化',
+  conversation_taken_over: '客户已由人工接管', closing: '工作台正在关闭',
+  send_attempts_exhausted: '原条目已达到最多3次发送尝试',
+  guard_evaluation_failed: '发送条件检查失败', sync_timeout: '等待会话同步超时',
+  sync_failed: '会话同步失败', source_sync_timeout: '等待会话同步超时', source_sync_failed: '会话同步失败',
+};
 const scrollBehavior = (): ScrollBehavior => window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'auto' : 'smooth';
 import { Badge, Button, Empty, Feedback, IconButton, StateBadge, dateTime, fieldLabels, jobLabels, time, messageDateTime } from './ui';
 
@@ -281,7 +290,7 @@ export function Conversation({ model, bridge, openList, openDetails, registerLoc
       <div className="composer-content">
       {editor?.parts ? <div className="reply-parts" aria-label="分条回复编辑">{editor.parts.map((part, index) => <div key={index}><label>第 {index + 1} 条{editor.selectedPart === index && ' · 当前润色'}<textarea aria-label={`第 ${index + 1} 条回复正文`} value={part} onFocus={() => model.selectPart(index)} onChange={event => { const parts = [...editor.parts!]; parts[index] = event.target.value; model.editParts(parts, index); }} spellCheck={false} /></label>{editor.parts!.length > 1 && <Button variant="ghost" disabled={model.partStructureLocked} onClick={() => model.editParts(editor.parts!.filter((_, i) => i !== index), Math.max(0, index - 1))}>删除第 {index + 1} 条</Button>}</div>)}<Button variant="ghost" disabled={model.partStructureLocked} onClick={() => model.editBody(editor.parts!.join('\n\n'))}>合为一条</Button></div> : <textarea ref={replyInput} aria-label="回复正文" placeholder="输入回复…" value={editor?.body ?? ''} onChange={event => model.editBody(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && event.ctrlKey) { event.preventDefault(); if (canSend && !sending) void model.send(); } }} spellCheck={false} />}
       {model.partialBatch && editor?.parts && <div className="chat-send-receipt"><p>此轮已有 {model.partialBatch.accepted} 条受理。继续前请只保留未发送内容；已发送条目如有新编辑，请先将新增内容移到未发送条目，并恢复已发送条目原文。</p><Button disabled={editor.saving || model.partialBatch.pending_operation_ids.length > 0} onClick={() => void model.keepUnsentParts()}>只保留未发送内容</Button></div>}
-      {detail.reply_batches?.map(batch => <div className="chat-send-receipt" role="status" key={batch.batch_id}><strong>已发送 {batch.accepted}/{batch.total} 条</strong>{batch.status === 'stopped' && <p>后续发送已停止</p>}{['stopped', 'waiting_receipt'].includes(batch.status) && batch.pending_operation_ids.length > 0 && <p>第 {(batch.current_index ?? 0) + 1} 条结果待核查</p>}{['stopped', 'waiting_receipt'].includes(batch.status) && batch.pending_operation_ids.map(id => <Button key={id} disabled={!model.connected} onClick={() => void model.reconcileOperation(id)}>核查原操作</Button>)}</div>)}
+      {detail.reply_batches?.map(batch => <div className="chat-send-receipt" role="status" key={batch.batch_id}><strong>已发送 {batch.accepted}/{batch.total} 条</strong>{batch.status === 'waiting_sync' && <p>正在同步会话，第 {(batch.current_index ?? batch.accepted) + 1} 条尚未提交</p>}{batch.status === 'stopped' && <p>后续发送已停止{batchReason[batch.last_gate_reason || batch.wait_reason || ''] ? `：${batchReason[batch.last_gate_reason || batch.wait_reason || '']}` : ''}</p>}{['stopped', 'waiting_receipt'].includes(batch.status) && batch.pending_operation_ids.length > 0 && <p>第 {(batch.current_index ?? 0) + 1} 条结果待核查</p>}{['stopped', 'waiting_receipt'].includes(batch.status) && batch.pending_operation_ids.map(id => <Button key={id} disabled={!model.connected} onClick={() => void model.reconcileOperation(id)}>核查原操作</Button>)}{detail.recoverable_reply_batches?.some(item => item.batch_id === batch.batch_id) && <Button disabled={!model.connected || !editor || !!editor.body.trim() || editor.dirty || editor.saving} onClick={() => void model.recoverReplyBatch(batch.batch_id)}>取出未发送内容</Button>}</div>)}
       {editor?.manualState === 'pending' && <p className="composer-mode" role="status">正在暂停此客户自动接待，确认成功后即可发送。</p>}
       {editor?.manualState === 'error' && <Feedback tone="red">{editor.manualError}<Button onClick={() => void model.beginManualEdit(conversationId)}>重试暂停此客户自动接待</Button></Feedback>}
       {editor?.error && <Feedback tone="red">{editor.error} 当前正文已保留。<Button variant="ghost" onClick={() => void model.saveDraft(conversationId)}>重试保存</Button></Feedback>}

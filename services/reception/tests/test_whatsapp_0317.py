@@ -59,6 +59,22 @@ class WhatsAppTests(unittest.TestCase):
             self.assertEqual(batch['status'], 'accepted')
             self.assertFalse(self.service.get_whatsapp_state()['conversations'][0]['pending'])
 
+    def test_new_account_keeps_old_unknown_visible_without_exposing_contacts(self):
+        self.setUpAccount()
+        self.service.repo.put('wa_operation', 'old-unknown', {'operation_id': 'old-unknown',
+            'seller_id': self.service.seller_id, 'account_id': 'wa-account', 'connection_epoch': 'epoch-1',
+            'chat_id': 'private-old-contact', 'status': 'unknown', 'message_id': 'exact-old-id', 'ack': 0})
+        self.service._wa_set_account('different-account', 'epoch-2', 'connected')
+        state = self.service.get_whatsapp_state()
+        self.assertEqual(state['pending_operations'], [])
+        self.assertEqual(state['other_account_pending_count'], 1)
+        self.assertEqual(state['other_account_pending_operations'], [{'operation_id': 'old-unknown', 'status': 'unknown'}])
+        self.assertNotIn('private-old-contact', str(state))
+        original = self.service.repo.get('wa_operation', 'old-unknown')
+        self.assertEqual(original['connection_epoch'], 'epoch-1')
+        self.assertEqual(original['status'], 'unknown')
+        self.assertFalse(state['enabled'])
+
     def test_new_buyer_message_stops_prepared_tail_and_keeps_new_pending(self):
         self.setUpAccount()
         with patch.object(self.service.integrations, 'generate_whatsapp', side_effect=self.generate_parts):

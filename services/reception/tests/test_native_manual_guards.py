@@ -209,6 +209,7 @@ class NativeManualGuardTests(unittest.TestCase):
         self.assertEqual(self.live.send(first_intent, lambda: True)['status'], 'rejected')
         self.assertEqual(self.process.send_count, 0)
         automatic = intent(operation='automatic-retry', send_mode='automatic', budget_reserved=True,
+                           source_timestamp_ms=NOW,
                            frozen_scope=dict(mode='selected', conversation_ids=[CID]))
         self.assertEqual(self.live.send(automatic, lambda: True)['status'], 'accepted')
         self.assertEqual(self.process.send_count, 1)

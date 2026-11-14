@@ -56,6 +56,27 @@ describe('WhatsApp host/service coordination', () => {
     expect(invoke).toHaveBeenCalledWith('_wa_transport_result', expect.objectContaining({ message_id: 'exact-id', ack: 1 }));
     expect(host.close).toHaveBeenCalledTimes(1);
   });
+  it('waits for the in-flight result and closes the old host before committing a new generation', async () => {
+    const { coordinator, host, invoke } = setup(); await coordinator.connect();
+    let finish!: (result: { message_id: string; ack: number }) => void;
+    host.sendFrozen.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    coordinator.handleServiceEvent(request);
+    await vi.waitFor(() => expect(host.sendFrozen).toHaveBeenCalled());
+    const commit = vi.fn(async () => { expect(host.close).toHaveBeenCalledOnce(); expect(invoke).toHaveBeenCalledWith('_wa_transport_result', expect.objectContaining({ message_id: 'exact-id' })); });
+    const rebuilding = coordinator.rebuild(commit);
+    await expect(coordinator.connect()).rejects.toThrow('正在重建');
+    expect(commit).not.toHaveBeenCalled();
+    finish({ message_id: 'exact-id', ack: 0 });
+    await rebuilding;
+    expect(commit).toHaveBeenCalledOnce();
+  });
+  it('does not commit when old host cleanup fails', async () => {
+    const { coordinator, host } = setup(); await coordinator.connect();
+    host.close.mockRejectedValue(new Error('cleanup failed'));
+    const commit = vi.fn(async () => {});
+    await expect(coordinator.rebuild(commit)).rejects.toThrow('cleanup failed');
+    expect(commit).not.toHaveBeenCalled();
+  });
   it('registers a chosen SDK contact as metadata without generating a new buyer message', async () => {
     const { coordinator, invoke } = setup(); await coordinator.connect(); await coordinator.listChats();
     expect(invoke).toHaveBeenCalledWith('_wa_ingest', expect.objectContaining({ messages: [expect.objectContaining({ metadata_only: true, is_history: true, body: '', chat_id: intent.chat_id })] }));

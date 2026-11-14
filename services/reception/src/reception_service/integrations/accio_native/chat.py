@@ -12,7 +12,9 @@ import json
 import os
 from pathlib import Path
 
+from ...send_gate import SendGateDecision, evaluate_authorization
 from .vendor.adapters.common import AdapterError, digest
+from .vendor.diagnostics import GATE_REASONS
 
 # The installed CLI has no stdin argument. This fixed bridge supplies its documented
 # --json argument in the child process's memory, never in OS argv or a temp file.
@@ -45,13 +47,20 @@ def chat_text(body, *, allow_empty=False):
     return body
 
 
-def authorized(callback):
-    try:
-        valid = callable(callback) and callback() is True
-    except Exception:
-        valid = False
-    if not valid:
-        raise AdapterError('本条人工发送意图已失效', code='auth', stage='send')
+def reject_decision(decision, checkpoint, *, token_acquired=None):
+    reason = decision.reason if decision.reason in GATE_REASONS else 'authorization_rejected'
+    facts = dict(decision.facts)
+    if token_acquired is not None:
+        facts['token_acquired'] = token_acquired
+    decision = SendGateDecision(False, reason, facts)
+    raise AdapterError('本次发送许可未通过', code=reason, stage='send',
+                       diagnostics=decision.diagnostics(checkpoint))
+
+
+def authorized(callback, checkpoint='before_claim', *, token_acquired=None):
+    decision = evaluate_authorization(callback, checkpoint)
+    if not decision.allowed:
+        reject_decision(decision, checkpoint, token_acquired=token_acquired)
 
 
 def call_chat_tool(gateway, name, arguments, *, before_submit=None):
@@ -143,9 +152,9 @@ def _batch_prefix(gateway, intent):
             raise AdapterError('续答分条缺少上一条确切受理来源', code='auth', stage='send')
 
 
-def _continuity_verify(gateway, intent):
+def _continuity_verify(gateway, intent, checkpoint='before_claim'):
     """Check the local phase/receipt binding; source freshness is owned by the service."""
-    gateway._send_authorized(intent)
+    gateway._send_authorized(intent, checkpoint)
     _batch_prefix(gateway, intent)
     phase, latest_role = intent['continuity_phase'], intent['latest_message_role']
     if latest_role == 'buyer':
@@ -171,7 +180,7 @@ def _continuity_verify(gateway, intent):
             and all(matches[0].get(k) == intent[k] for k in
                     ('source_message_id', 'source_timestamp_ms', 'source_text_sha256')))):
         raise AdapterError('最新卖家消息缺少本机受理凭据', code='auth', stage='send')
-    gateway._send_authorized(intent)
+    gateway._send_authorized(intent, checkpoint)
 
 
 def _claim_continuity(gateway, intent):
@@ -270,22 +279,25 @@ def execute_chat(gateway, intent, authorization):
                 if prior:
                     return prior
             claimed = True
-            token_reply = gateway._chat_call('get_communication_chatToken', {'targetAliId': int(buyer)})
-            token = (token_reply.get('data') or {}).get('chatToken') if isinstance(token_reply.get('data'), dict) else None
-            if token_reply.get('success') is not True or not isinstance(token, str) or not token.strip():
-                raise AdapterError('未取得本次会话通信令牌', code='auth', stage='send')
+            try:
+                token_reply = gateway._chat_call('get_communication_chatToken', {'targetAliId': int(buyer)})
+                token = (token_reply.get('data') or {}).get('chatToken') if isinstance(token_reply.get('data'), dict) else None
+                if token_reply.get('success') is not True or not isinstance(token, str) or not token.strip():
+                    raise ValueError('token unavailable')
+            except Exception:
+                reject_decision(SendGateDecision(False, 'communication_token_missing'), 'after_token', token_acquired=False)
             gateway._identity(seller)
-            authorized(authorization)
+            authorized(authorization, 'after_token', token_acquired=True)
             if automatic:
-                gateway._send_authorized(intent)
+                gateway._send_authorized(intent, 'after_token')
             def submit():
                 nonlocal attempted
                 if continuity:
-                    _continuity_verify(gateway, intent)
+                    _continuity_verify(gateway, intent, 'before_submit')
                 if automatic:
-                    gateway._send_authorized(intent)
+                    gateway._send_authorized(intent, 'before_submit')
                 else:
-                    authorized(authorization)
+                    authorized(authorization, 'before_submit', token_acquired=True)
                 gateway.ledger.finish(operation, dict(status='unknown', message_id='', submission_started=True))
                 attempted = True
             native = gateway._chat_call('send_msg', {'sendRequest': {
@@ -311,7 +323,7 @@ def execute_chat(gateway, intent, authorization):
             # returned (and possibly journaled) before the readback.
             result = dict(status='unknown' if attempted else 'rejected',
                           message_id=returned_id if attempted else '', submission_started=attempted)
-            if automatic:
+            if automatic or (isinstance(exc, AdapterError) and exc.code in GATE_REASONS):
                 from .vendor.diagnostics import CODES, process_diagnostics
                 from .vendor.adapters.live import SEND_ERROR_STAGES
                 code = exc.code if isinstance(exc, AdapterError) and exc.code in CODES else 'adapter_error'

@@ -4,7 +4,7 @@ import type { ReceptionBridge } from '../src/shared/api';
 import type { Workbench } from '../src/renderer/hooks/useWorkbench';
 import { WhatsAppPage } from '../src/renderer/components/WhatsAppPage';
 function setup() {
-  const state = { connected: true, account_id: 'self@c.us', connection_epoch: 'epoch', enabled: false, conversations: [{ chat_id: 'synthetic@lid', name: '合成单聊客户', human_owned: false, pending: true }], bindings: [{ chat_id: 'synthetic@lid', conversation_id: null, revision: 0 }], pending_operations: [] as Record<string, unknown>[], reply_batches: [] as { batch_id: string; chat_id: string; status: string; total: number; accepted: number; current_index: number | null; pending_operation_ids: string[] }[] };
+  const state = { connected: true, account_id: 'self@c.us', connection_epoch: 'epoch', enabled: false, conversations: [{ chat_id: 'synthetic@lid', name: '合成单聊客户', human_owned: false, pending: true }], bindings: [{ chat_id: 'synthetic@lid', conversation_id: null, revision: 0 }], pending_operations: [] as Record<string, unknown>[], other_account_pending_count: 0, reply_batches: [] as { batch_id: string; chat_id: string; status: string; total: number; accepted: number; current_index: number | null; pending_operation_ids: string[] }[] };
   const invoke = vi.fn(async (method: string, _params?: unknown): Promise<unknown> => {
     if (method === 'get_whatsapp_state') return structuredClone(state);
     if (method === 'get_whatsapp_context') return { whatsapp_messages: [], wa_summary: '合成独立摘要', knowledge: [], guidance: [], style: [], binding_revision: 0 };
@@ -42,6 +42,13 @@ it('hides the native surface when an outer drawer opens and when leaving the mod
   view.unmount();
   expect(bridge.setWhatsAppView).toHaveBeenLastCalledWith({ visible: false });
   expect(bridge.disconnectWhatsApp).not.toHaveBeenCalled();
+});
+it('warns about old account unresolved records without exposing a reconcile action for them', async () => {
+  const { model, bridge, state } = setup();
+  state.other_account_pending_count = 2;
+  render(<WhatsAppPage model={model} bridge={bridge} />);
+  expect(await screen.findByText(/存在 2 条旧账号未决记录/)).toHaveTextContent('新账号不能代替核查');
+  expect(screen.queryByRole('button', { name: /核查.*回执/ })).not.toBeInTheDocument();
 });
 it('labels unknown sends as awaiting receipts and only reconciles the original operation', async () => {
   const { model, bridge, invoke, state } = setup(); state.pending_operations = [{ operation_id: 'original', chat_id: 'synthetic@lid', status: 'unknown' }];

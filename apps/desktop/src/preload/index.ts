@@ -8,6 +8,7 @@ function checkConversation(value: unknown): asserts value is string {
 const bridge: ReceptionBridge = {
   getWhatsAppHostInfo: () => ipcRenderer.invoke('reception:whatsapp:status'),
   connectWhatsApp: () => ipcRenderer.invoke('reception:whatsapp:connect'),
+  rebuildWhatsAppSession: () => ipcRenderer.invoke('reception:whatsapp:rebuild'),
   disconnectWhatsApp: () => ipcRenderer.invoke('reception:whatsapp:disconnect'),
   setWhatsAppView: request => ipcRenderer.invoke('reception:whatsapp:view', request),
   listWhatsAppChats: () => ipcRenderer.invoke('reception:whatsapp:chats'),

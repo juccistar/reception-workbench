@@ -53,3 +53,7 @@ conversation fences, source/version checks and retry limits remain unchanged.
 ai_minisite_get_company_info for the current seller's company display name. It uses
 the same owned process, runtime identity, request-file and bounded read boundary;
 no arbitrary tool names, credentials or send entry points are exposed.
+2026-11-15 version 0.3.20: diagnostics.py and adapters/live.py add fixed send-gate
+reason/checkpoint codes and safe scalar facts. Per-evaluation decisions and bounded
+source-sync waits live outside this vendor package; legacy auth receipts are not
+reclassified. Tokens, response bodies and raw exception text remain excluded.

@@ -5,7 +5,7 @@ import puppeteer, { type Frame, type HTTPResponse, type Page } from 'puppeteer';
 import type { WhatsAppHostInfo, WhatsAppPageState, WhatsAppPhase } from '../../shared/whatsapp';
 import { SendLedger, type FrozenIntent, type SendResult } from './ledger';
 import { ViewTransport } from './transport';
-import { connectionFailure, retryAfterDelay, whatsappUserAgent, WhatsAppConnectionError, WhatsAppStepFailure } from './connection';
+import { connectionFailure, retryAfterDelay, whatsappUserAgent, whatsappPageProbe, WhatsAppConnectionError, WhatsAppStepFailure } from './connection';
 import { WhatsAppDiagnostics } from './diagnostics';
 
 // whatsapp-web.js 1.34.8, Apache-2.0. The instance-specific initialize adapter
@@ -19,7 +19,7 @@ export type WhatsAppEvent =
   | { type: 'messages'; account_id: string; connection_epoch: string; messages: WhatsAppMessage[] }
   | { type: 'ack'; message_id: string; ack: number; account_id: string; connection_epoch: string };
 export interface WhatsAppMessage { id: string; chat_id: string; body: string; timestamp_ms: number; from_me: boolean; name: string; is_group: boolean; is_history: boolean; metadata_only?: boolean; ack?: number }
-export interface WhatsAppHostOptions { window: BrowserWindow; partition: string; directory: string; diagnosticsDirectory?: string; applicationVersion?: string; onEvent: (event: WhatsAppEvent) => void }
+export interface WhatsAppHostOptions { window: BrowserWindow; partition: string; directory: string; diagnosticsDirectory?: string; applicationVersion?: string; sessionGeneration?: number; onEvent: (event: WhatsAppEvent) => void }
 const direct = (id: string): boolean => /@(c\.us|lid)$/.test(id);
 const serialized = (id: any): string => typeof id === 'string' ? id : (id?._serialized || '');
 const PHASE_TIMEOUT_MS = 60_000;
@@ -40,15 +40,21 @@ export class WhatsAppHost {
   private readonly diagnostics: WhatsAppDiagnostics;
   private diagnosticId?: string;
   private stage: WhatsAppPhase = 'view_setup';
+  private previousStage?: WhatsAppPhase;
   private pageState: WhatsAppPageState = 'closed';
   private documentTrusted = false;
   private documentSerial = 0;
+  private postLogout = false;
+  private databaseError = false;
+  private webVersion: unknown;
   private nativeNavigation = '';
   private nativeProbe?: ReturnType<typeof setInterval>;
-  private probePending = false;
+  private probeTask?: Promise<void>;
+  private lastProbeSerial = -1;
   private page?: Page;
   private bindings = new Set<string>();
   private cleanupTask: Promise<void> = Promise.resolve();
+  private cleanupFailed = false;
   private status: AccountStatus = 'disconnected';
   private account = '';
   private epoch = '';
@@ -75,7 +81,23 @@ export class WhatsAppHost {
     wc.on('destroyed', () => this.pageFailed(new WhatsAppConnectionError('page_closed')));
     wc.on('did-start-navigation', (_event, url, inPlace, mainFrame) => {
       if (!mainFrame || inPlace || this.closing) return;
+      this.postLogout = this.allowed(url) && new URL(url).searchParams.get('post_logout') === '1';
+      this.databaseError = false;
+      this.webVersion = undefined;
       ++this.documentSerial;
+      this.updateDiagnostics();
+      if (this.started && this.observedDocument === this.generation && this.allowed(url)) {
+        const generation = this.generation;
+        this.previousStage = this.stage;
+        this.stage = 'page_reload';
+        this.updateDiagnostics();
+        if (url.includes('post_logout=1')) this.retire(generation, 'disconnected', undefined, true);
+        else {
+          const failure = new WhatsAppConnectionError('page_context_lost');
+          this.diagnosticId = this.diagnostics.failure(generation, this.stage, failure, failure.error_code);
+          this.retire(generation, 'error', failure, true);
+        }
+      }
       this.nativeNavigation = url;
       this.documentTrusted = false;
       this.pageState = 'loading';
@@ -101,6 +123,9 @@ export class WhatsAppHost {
     this.nativeProbe = setInterval(() => { void this.probePage(); }, 1000);
     this.nativeProbe.unref?.();
     this.diagnostics.event(0, 'view_setup', 'completed');
+  }
+  private updateDiagnostics(): void {
+    this.diagnostics.setContext({ webVersion: this.webVersion, documentGeneration: this.documentSerial, postLogout: this.postLogout, databaseError: this.databaseError, sessionGeneration: this.options.sessionGeneration ?? 0, previousPhase: this.previousStage, ...(this.options.sessionGeneration ? { recoveryStage: 'committed' as const } : {}) });
   }
   private allowed(url: string): boolean {
     try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.hostname === 'web.whatsapp.com'; } catch { return false; }
@@ -134,7 +159,7 @@ export class WhatsAppHost {
     const failure = connectionFailure(original, phase === 'page_navigation' ? 'navigation_timeout' : 'sdk_timeout', phase);
     this.stage = phase;
     this.diagnosticId = this.diagnostics?.failure(generation, phase, original, failure.error_code, failure.http_status);
-    this.retire(generation, 'error', failure);
+    this.retire(generation, 'error', failure, failure.error_code === 'page_database_error');
   }
   private pageFailed(error: WhatsAppConnectionError): void {
     if (this.closing) return;
@@ -150,20 +175,40 @@ export class WhatsAppHost {
       this.update('error');
     }
   }
-  private async probePage(): Promise<void> {
-    if (this.closing || this.probePending || !this.documentTrusted || this.view.webContents.isDestroyed()
+  private probePage(): Promise<void> {
+    if (this.probeTask) return this.probeTask;
+    const task = this.doProbePage();
+    this.probeTask = task;
+    void task.finally(() => { if (this.probeTask === task) this.probeTask = undefined; });
+    return task;
+  }
+  private async doProbePage(): Promise<void> {
+    if (this.closing || !this.documentTrusted || this.view.webContents.isDestroyed()
         || !this.allowed(this.view.webContents.getURL()) || typeof this.view.webContents.executeJavaScript !== 'function') return;
     const serial = this.documentSerial;
-    this.probePending = true;
     try {
       // Read only visibility booleans. Never copy a QR value, page text or contact.
-      const available = await this.view.webContents.executeJavaScript('(() => { const node = document.querySelector("canvas[data-ref], [data-testid=qrcode], [data-ref] canvas, #pane-side, [data-testid=chat-list]"); return !!node && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0; })()');
-      if (!this.closing && this.documentSerial === serial && this.documentTrusted && available === true && this.pageState !== 'available') {
+      const result = await this.view.webContents.executeJavaScript(`(${whatsappPageProbe.toString()})()`);
+      if (this.closing || this.documentSerial !== serial || !this.documentTrusted) return;
+      this.lastProbeSerial = serial;
+      this.databaseError = result?.databaseError === true;
+      this.webVersion = result?.webVersion;
+      this.updateDiagnostics();
+      if (this.databaseError) {
+        this.pageState = 'error';
+        if (this.started) this.fail(this.generation, new WhatsAppConnectionError('page_database_error'));
+        else if (this.failure?.error_code !== 'page_database_error') {
+          this.failure = new WhatsAppConnectionError('page_database_error');
+          this.diagnosticId = this.diagnostics.failure(this.generation, this.stage, this.failure, this.failure.error_code);
+          this.update('error');
+        }
+        return;
+      }
+      if (result?.available === true && this.pageState !== 'available' && this.failure?.error_code !== 'page_database_error') {
         this.pageState = 'available';
         this.update(this.status);
       }
     } catch { /* A navigation can replace the document while this passive probe runs. */ }
-    finally { this.probePending = false; }
   }
   private clearPhase(): void {
     if (this.phaseTimer) clearTimeout(this.phaseTimer);
@@ -194,7 +239,7 @@ export class WhatsAppHost {
     // All operations retain the old CDP session/context. Reconnect waits for this
     // bounded cleanup; a retired Page can never issue commands through a new one.
     const release = (async () => {
-      await Promise.all(bindings.map(name => page.removeExposedFunction(name).catch(() => {})));
+      await Promise.all(bindings.map(name => page.removeExposedFunction(name)));
       await page.evaluate(names => {
         const sdk = window as any;
         for (const [owner, event, handler] of sdk._wwjsListeners || []) owner.off(event, handler);
@@ -208,6 +253,7 @@ export class WhatsAppHost {
       const clean = await Promise.race([release, new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 1000); })]);
       if (timer) clearTimeout(timer);
       disconnect();
+      if (!clean) this.cleanupFailed = true;
       if (!clean && !this.closing && this.generation === generation) {
         this.documentTrusted = false;
         this.pageState = 'error';
@@ -215,7 +261,7 @@ export class WhatsAppHost {
       }
     })();
   }
-  private retire(generation: number, status: 'disconnected' | 'error', failure?: WhatsAppConnectionError): void {
+  private retire(generation: number, status: 'disconnected' | 'error', failure?: WhatsAppConnectionError, preserveNavigation = false): void {
     if (this.generation !== generation || this.closing || !this.started) return;
     const keepPage = !!failure && (this.documentTrusted || failure.error_code === 'page_context_lost' && this.allowed(this.nativeNavigation))
       && ['sdk_timeout', 'ready_timeout', 'sdk_error', 'cdp_error', 'sdk_resource_missing', 'page_context_lost', 'app_module_error', 'auth_failed'].includes(failure.error_code);
@@ -224,10 +270,10 @@ export class WhatsAppHost {
     this.failure = failure;
     this.outgoing = this.outgoing.filter(item => item.epoch !== this.epoch);
     this.pendingSends.delete(this.epoch);
-    if (!keepPage) {
+    if (!keepPage && !preserveNavigation) {
       this.documentTrusted = false;
       this.pageState = failure?.error_code === 'page_closed' ? 'closed' : failure ? 'error' : 'closed';
-      if (!this.view?.webContents.isDestroyed()) this.view?.webContents.stop();
+      if (!preserveNavigation && !this.view?.webContents.isDestroyed()) this.view?.webContents.stop();
     }
     this.releaseConnection();
     this.update(status);
@@ -243,7 +289,7 @@ export class WhatsAppHost {
       if (current() && this.status !== 'ready') { this.stage = 'authenticated'; this.phase(generation, 'ready_timeout'); this.update('authenticated'); }
     });
     client.on('auth_failure', () => this.fail(generation, new WhatsAppConnectionError('auth_failed')));
-    client.on('disconnected', () => this.retire(generation, 'disconnected'));
+    client.on('disconnected', () => this.retire(generation, 'disconnected', undefined, this.documentTrusted || this.allowed(this.nativeNavigation)));
     client.on('ready', () => {
       if (!current() || this.status === 'ready') return;
       this.account = serialized(client.info?.wid);
@@ -292,6 +338,7 @@ export class WhatsAppHost {
     this.failure = undefined;
     this.diagnosticId = undefined;
     this.stage = 'view_setup';
+    this.previousStage = undefined;
     this.pageState = 'loading';
     this.documentTrusted = false;
     const generation = ++this.generation;
@@ -299,6 +346,7 @@ export class WhatsAppHost {
     this.update('connecting');
     void (async () => {
       await this.cleanupTask;
+      if (this.cleanupFailed) throw new WhatsAppConnectionError('cdp_error');
       if (!this.current(generation)) return;
       const client = this.client = await this.step(generation, 'auth_setup', async () => new Client({ userAgent: false, authTimeoutMs: PHASE_TIMEOUT_MS, webVersionCache: { type: 'none' } }));
       this.bindEvents(client, generation);
@@ -320,11 +368,15 @@ export class WhatsAppHost {
     const navigated = (frame: Frame) => {
       if (frame.parentFrame() !== null || !this.current(generation) || this.observedDocument !== generation) return;
       if (!this.allowed(frame.url())) { this.fail(generation, new WhatsAppConnectionError('unexpected_navigation'), 'page_navigation'); return; }
-      if (frame.url().includes('post_logout=1') || client.lastLoggedOut) { this.retire(generation, 'disconnected'); return; }
-      // A complete document replacement invalidates its bindings. Retire once
-      // and keep the native navigation, rather than overlapping inject tasks.
-      if (this.documentSerial !== this.observedDocumentSerial)
-        this.fail(generation, new WhatsAppConnectionError('page_context_lost'), 'sdk_callbacks');
+      if (frame.url().includes('post_logout=1') || client.lastLoggedOut) { this.retire(generation, 'disconnected', undefined, true); return; }
+      if (this.documentSerial !== this.observedDocumentSerial) {
+        this.previousStage = this.stage;
+        this.stage = 'page_reload';
+        this.updateDiagnostics();
+        const failure = new WhatsAppConnectionError('page_context_lost');
+        this.diagnosticId = this.diagnostics.failure(generation, this.stage, failure, failure.error_code);
+        this.retire(generation, 'error', failure, true);
+      }
     };
     const notice = (error: unknown) => {
       if (this.current(generation)) this.diagnostics.failure(generation, this.stage, error, connectionFailure(error).error_code, undefined, false);
@@ -382,7 +434,10 @@ export class WhatsAppHost {
     this.observedDocument = generation;
     this.observedDocumentSerial = this.documentSerial;
     this.phase(generation, 'sdk_timeout');
-    void this.probePage();
+    await this.probePage();
+    ensureCurrent();
+    if (this.lastProbeSerial !== this.documentSerial) await this.probePage();
+    ensureCurrent();
     // WhatsApp loads application modules after the document load event. Give
     // that bounded bootstrap its own budget, then bound SDK authentication.
     await this.step(generation, 'app_modules', async () => {
@@ -408,6 +463,7 @@ export class WhatsAppHost {
   getStatus(): WhatsAppHostInfo {
     return { status: this.status, account_id: this.account, connection_epoch: this.epoch,
       page_state: this.pageState, phase: this.stage,
+      ...(this.previousStage ? { previous_phase: this.previousStage } : {}),
       ...(this.diagnosticId ? { diagnostic_id: this.diagnosticId } : {}),
       ...(this.failure ? { error_code: this.failure.error_code, ...(this.failure.http_status ? { http_status: this.failure.http_status } : {}) } : {}) };
   }
@@ -449,7 +505,11 @@ export class WhatsAppHost {
     return message && serialized(message.id) === messageId ? { message_id: messageId, ack: Number(message.ack ?? 0) } : null;
   }
   async close(logout = false): Promise<void> {
-    if (this.closing) return;
+    if (this.closing) {
+      await this.cleanupTask;
+      if (this.cleanupFailed) throw new Error('WhatsApp 旧页面绑定清理未完成。');
+      return;
+    }
     this.closing = true;
     this.started = false;
     ++this.generation;
@@ -464,13 +524,27 @@ export class WhatsAppHost {
         await this.client.authStrategy.logout();
       }
     } finally {
+      await this.cleanupTask;
       this.releaseConnection();
       await this.cleanupTask;
       this.failure = undefined;
       this.documentTrusted = false;
       this.pageState = 'closed';
-      if (!this.view.webContents.isDestroyed()) this.view.webContents.close();
+      const contents = this.view.webContents;
+      if (!contents.isDestroyed()) contents.close();
+      if (!contents.isDestroyed()) {
+        // A replaced document may reject binding cleanup. Destroying its view
+        // removes every document and preload binding before a new one exists.
+        await new Promise<void>((resolve, reject) => {
+          const done = () => { clearTimeout(timer); resolve(); };
+          const timer = setTimeout(() => { contents.removeListener('destroyed', done); reject(new Error('WhatsApp 旧页面绑定清理未完成。')); }, 5000);
+          contents.once('destroyed', done);
+          if (contents.isDestroyed()) { contents.removeListener('destroyed', done); done(); }
+        });
+      }
+      if (contents.isDestroyed()) this.cleanupFailed = false;
       this.update('disconnected');
+      if (this.cleanupFailed) throw new Error('WhatsApp 旧页面绑定清理未完成。');
     }
   }
 }

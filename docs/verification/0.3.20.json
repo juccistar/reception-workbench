@@ -1,0 +1,47 @@
+{
+  "version": "0.3.20",
+  "started_date": "2026-11-14",
+  "last_updated_date": "2026-11-15",
+  "base_commit": "0a2ddc6",
+  "branch": "fix/reply-sync-whatsapp-recovery-0.3.20",
+  "authorization": "用户明确要求按0.3.20方案开发，开发完快速打包发布",
+  "status": "source_built",
+  "changes": [
+    "per_evaluation_send_gate_reasons_and_native_checkpoints",
+    "bounded_waiting_sync_with_original_part_attempt_budget",
+    "exact_accepted_self_echo_revalidation",
+    "stopped_unsent_tail_to_cas_protected_manual_draft",
+    "whatsapp_database_error_and_trusted_reload_handling",
+    "confirmed_merchant_session_generation_with_original_ledgers_preserved",
+    "old_account_pending_visibility"
+  ],
+  "tests": {
+    "backend_unique_final_passed": 172,
+    "backend_scope": ["test_reply_sync_0320", "test_reply_batches_0319", "test_send_retry_policy", "test_continuity_service", "test_supplement_followup", "test_whatsapp_0317", "test_native_automatic_chat", "test_native_manual_guards", "test_native_chat", "test_native_continuation", "test_send_failure_diagnostics_031", "test_manual_chat"],
+    "desktop_unique_final_passed": 165,
+    "desktop_scope": ["whatsapp-connection", "whatsapp-coordinator", "whatsapp-session-host", "whatsapp-page", "whatsapp-page-probe", "whatsapp-transport", "renderer-workbench"],
+    "typecheck": "passed",
+    "full_suite_run": false,
+    "earlier_failures": [
+      "旧pending-sync断言按新waiting_sync行为更新，重新通过",
+      "final/supplement新增夹具补齐原生ACK账本及pending工作状态，重新通过",
+      "Node桥首次因PATH缺失跳过，补齐既有Node路径后单项通过",
+      "ESM rename spy不兼容，改为模块替身后配置写入失败用例通过"
+    ]
+  },
+  "build": { "status": "passed", "command": "npm run build", "typecheck": "passed", "immediate_local_commit": "recorded_in_git_history" },
+  "source_window": { "status": "pending" },
+  "candidate": { "status": "pending" },
+  "release": { "status": "pending" },
+  "boundaries": {
+    "synthetic_only_for_business_verification": true,
+    "production_merchant_rebuilt": false,
+    "real_ai_calls": 0,
+    "real_customer_sends": 0,
+    "real_whatsapp_account_login_send_receive_verified": false,
+    "old_partition_trigger_uniquely_identified": false,
+    "prompts_changed": false,
+    "installed_or_migrated_real_data": false,
+    "private_source_pushed": false
+  }
+}

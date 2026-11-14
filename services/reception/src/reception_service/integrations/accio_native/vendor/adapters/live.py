@@ -32,6 +32,17 @@ SNAPSHOT_ERROR_MESSAGES = {
     'latest_source_changed': '最终消息内容发生变化',
 }
 SEND_ERROR_STAGES = frozenset({'snapshot', 'send', 'cli', 'identity', 'adapter'})
+GATE_ERROR_MESSAGES = {
+    'source_sync_pending': '会话消息尚未同步，当前条目未提交',
+    'communication_token_missing': '未取得本次会话通信令牌，请核查连接',
+    'authorization_revoked': '本次发送授权已撤销',
+    'source_changed': '会话来源已变化，当前条目未提交',
+    'basis_changed': '发送依据已变化，当前条目未提交',
+    'conversation_taken_over': '当前会话已由人工接管',
+    'closing': '工作台正在关闭，当前条目未提交',
+    'authorization_rejected': '本次发送许可未通过',
+    'guard_evaluation_failed': '本次发送许可检查失败',
+}
 
 
 def _snapshot_error(code, diagnostics=None):

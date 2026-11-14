@@ -11,6 +11,8 @@ export interface WhatsAppState {
   conversations: WhatsAppConversation[];
   bindings: WhatsAppBinding[];
   pending_operations: WhatsAppOperation[];
+  other_account_pending_count?: number;
+  other_account_pending_operations?: { operation_id: string; status: string }[];
   reply_batches?: WhatsAppReplyBatch[];
 }
 export interface WhatsAppContextMessage { source_id: string; role: 'buyer' | 'seller'; timestamp_ms: number; text: string }
@@ -29,9 +31,9 @@ export interface WhatsAppContext {
     supplement: { body?: string; attachments?: { id: string; name: string; text?: string }[] };
   };
 }
-export type WhatsAppPhase = 'view_setup' | 'cdp_connect' | 'auth_setup' | 'version_cache' | 'page_navigation' | 'app_modules' | 'sdk_inject' | 'sdk_callbacks' | 'qr_wait' | 'authenticated' | 'ready';
+export type WhatsAppPhase = 'page_reload' | 'view_setup' | 'cdp_connect' | 'auth_setup' | 'version_cache' | 'page_navigation' | 'app_modules' | 'sdk_inject' | 'sdk_callbacks' | 'qr_wait' | 'authenticated' | 'ready';
 export type WhatsAppPageState = 'loading' | 'available' | 'error' | 'closed';
-export type WhatsAppHostErrorCode = 'http_error' | 'network_error' | 'tls_error' | 'navigation_timeout' | 'sdk_timeout' | 'ready_timeout' | 'auth_failed' | 'sdk_error' | 'invalid_response' | 'page_closed' | 'unexpected_navigation' | 'browser_unsupported' | 'cdp_error' | 'sdk_resource_missing' | 'page_context_lost' | 'app_module_error';
+export type WhatsAppHostErrorCode = 'page_database_error' | 'http_error' | 'network_error' | 'tls_error' | 'navigation_timeout' | 'sdk_timeout' | 'ready_timeout' | 'auth_failed' | 'sdk_error' | 'invalid_response' | 'page_closed' | 'unexpected_navigation' | 'browser_unsupported' | 'cdp_error' | 'sdk_resource_missing' | 'page_context_lost' | 'app_module_error';
 export interface WhatsAppHostInfo {
   status: string;
   account_id: string;
@@ -40,12 +42,14 @@ export interface WhatsAppHostInfo {
   http_status?: number;
   page_state?: WhatsAppPageState;
   phase?: WhatsAppPhase;
+  previous_phase?: WhatsAppPhase;
   diagnostic_id?: string;
 }
 export interface WhatsAppViewRequest { visible: boolean; bounds?: { x: number; y: number; width: number; height: number } }
 export interface WhatsAppHostBridge {
   getWhatsAppHostInfo(): Promise<WhatsAppHostInfo>;
   connectWhatsApp(): Promise<WhatsAppHostInfo>;
+  rebuildWhatsAppSession(): Promise<WhatsAppHostInfo | null>;
   disconnectWhatsApp(): Promise<void>;
   setWhatsAppView(request: WhatsAppViewRequest): Promise<void>;
   listWhatsAppChats(): Promise<WhatsAppContact[]>;

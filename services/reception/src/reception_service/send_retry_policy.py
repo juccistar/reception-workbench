@@ -6,6 +6,8 @@ BACKOFF_MS = (5000, 15000)
 
 
 def retry_message(state, attempts, retry_at, now):
+    if state == 'waiting_sync':
+        return '本条尚未提交，正在同步会话；同步完成后重新核对原条目'
     if state == 'waiting':
         seconds = max(0, (retry_at - now + 999) // 1000)
         return f'第{attempts}次发送未提交，将在约{seconds}秒后进行第{attempts + 1}次尝试（最多3次）'
@@ -61,6 +63,11 @@ def decision(repo, seller_id, conversation_id, source_id, phase='reply', result_
         return 'blocked', count, None
     if count >= 3:
         return 'exhausted', count, None
+    facts = last.get('diagnostics') or {}
+    if (part_id is not None and last.get('error_code') == 'source_sync_pending'
+            and facts.get('gate_reason') == 'source_sync_pending'
+            and facts.get('gate_checkpoint') in ('before_claim', 'after_token', 'before_submit', 'gateway')):
+        return 'waiting_sync', count, None
     if last.get('error_code') not in TRANSIENT_CODES:
         return 'blocked', count, None
     return 'waiting', count, last.get('updated_at', 0) + BACKOFF_MS[count - 1]

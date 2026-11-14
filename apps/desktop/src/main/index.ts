@@ -4,6 +4,8 @@ import { productUrl, readOriginal, validateReference } from './media-host';
 import { copyProductText } from './clipboard-host';
 import { WhatsAppCoordinator, validateWhatsAppView } from './whatsapp-coordinator';
 import { WhatsAppHost } from './whatsapp/host';
+import { WhatsAppSessionHost } from './whatsapp-session-host';
+import { randomUUID } from 'node:crypto';
 import { TranslationHost } from './translation-host';
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -128,6 +130,8 @@ let updateHostPromise: Promise<UpdateHost> | null = null;
 const methods = new Set<string>(API_METHODS);
 let translationCoordinator: TranslationHost | null = null;
 let whatsappCoordinator: WhatsAppCoordinator | null = null;
+const whatsappSessions = new WhatsAppSessionHost(profileRoot);
+let whatsappRebuild: Promise<unknown> | null = null;
 function whatsApp(): WhatsAppCoordinator {
   return whatsappCoordinator ??= new WhatsAppCoordinator({
     // Receipts must still reach the service while the window is closing.
@@ -142,9 +146,10 @@ function whatsApp(): WhatsAppCoordinator {
       if (mode !== 'live' || !snapshot.app.account_verified || !/^[1-9]\d*$/.test(snapshot.app.seller_id)) throw new Error('请从目标商家的 Accio 授权会话启动工作台后连接 WhatsApp。');
       if (!window || closing || storageBusy || updateTask) throw new Error('当前工作区正在关闭。');
       const merchant = createHash('sha256').update(snapshot.app.seller_id).digest('hex');
-      const partition = 'persist:whatsapp-' + createHash('sha256').update(profileRoot + ':' + snapshot.app.seller_id).digest('hex');
+      const generation = await whatsappSessions.generation(snapshot.app.seller_id);
+      const partition = whatsappSessions.partition(snapshot.app.seller_id, generation);
       return new WhatsAppHost({ window, partition, directory: path.join(dataRoot, mode, 'whatsapp-ledgers', merchant),
-        diagnosticsDirectory: path.join(dataRoot, mode, 'diagnostics', merchant), applicationVersion: programVersion, onEvent });
+        diagnosticsDirectory: path.join(dataRoot, mode, 'diagnostics', merchant), applicationVersion: programVersion, sessionGeneration: generation, onEvent });
     },
   });
 }
@@ -393,10 +398,39 @@ function installIPC() {
   ipcMain.handle('reception:whatsapp:status', event => { validSender(event); return whatsApp().getStatus(); });
   ipcMain.handle('reception:whatsapp:connect', async event => {
     validSender(event);
-    if (closing || storageBusy || updateTask || backendStartPromise) throw new Error('工作台正在启动或关闭，请稍后连接。');
+    if (closing || storageBusy || updateTask || backendStartPromise || whatsappRebuild) throw new Error('工作台正在启动、关闭或重建登录环境，请稍后连接。');
     return whatsApp().connect();
   });
-  ipcMain.handle('reception:whatsapp:disconnect', async event => { validSender(event); await whatsApp().stop(); });
+  ipcMain.handle('reception:whatsapp:rebuild', event => {
+    validSender(event);
+    if (whatsappRebuild) return whatsappRebuild;
+    const task = (async () => {
+      if (closing || storageBusy || updateTask || backendStartPromise || !window) throw new Error('工作台正在启动或关闭。');
+      const target = window;
+      const snapshot = await call<Snapshot>('get_snapshot');
+      const seller = snapshot.app.seller_id;
+      if (mode !== 'live' || !snapshot.app.account_verified || !/^[1-9]\d*$/.test(seller) || (expectedSeller && expectedSeller !== seller)) throw new Error('当前商家身份未核验。');
+      const generation = await whatsappSessions.generation(seller);
+      const coordinator = whatsApp();
+      const identity = coordinator.getStatus();
+      if (!await confirm('重建 WhatsApp 登录环境', '将为当前商家新建 WhatsApp 登录环境，需要重新扫码。', '原登录目录及业务消息、需求和发送回执保留。自动接待需要重新开启。', '重建登录环境')) return null;
+      validSender(event);
+      const verify = async () => {
+        if (window !== target || closing || storageBusy || updateTask || backendStartPromise) throw new Error('工作区已变化，请重新确认。');
+        const current = await call<Snapshot>('get_snapshot');
+        if (!current.app.account_verified || current.app.seller_id !== seller || await whatsappSessions.generation(seller) !== generation) throw new Error('商家或登录环境已变化，请重新确认。');
+      };
+      await verify();
+      const now = coordinator.getStatus();
+      if (identity.account_id !== now.account_id || identity.connection_epoch !== now.connection_epoch) throw new Error('WhatsApp 连接已变化，请重新确认。');
+      const recoveryId = 'wa_recovery_' + randomUUID();
+      return coordinator.rebuild(async () => { await verify(); await whatsappSessions.commit(seller, generation, recoveryId); });
+    })();
+    whatsappRebuild = task;
+    void task.finally(() => { if (whatsappRebuild === task) whatsappRebuild = null; }).catch(() => {});
+    return task;
+  });
+  ipcMain.handle('reception:whatsapp:disconnect', async event => { validSender(event); if (whatsappRebuild) throw new Error('WhatsApp 登录环境正在重建。'); await whatsApp().stop(); });
   ipcMain.handle('reception:whatsapp:chats', async event => { validSender(event); return whatsApp().listChats(); });
   ipcMain.handle('reception:whatsapp:view', (event, request: unknown) => {
     validSender(event);

@@ -6,8 +6,10 @@ import hashlib
 
 from .errors import ServiceError
 from .repository import encoded, new_id, now_ms
+from .send_gate import SendGateDecision
 
-ACTIVE_REPLY_BATCH_STATES = frozenset({'prepared', 'sending', 'waiting_retry', 'waiting_receipt'})
+ACTIVE_REPLY_BATCH_STATES = frozenset({'prepared', 'sending', 'waiting_retry', 'waiting_receipt', 'waiting_sync'})
+SYNC_WAIT_MS = 60_000
 
 
 def freeze_reply_batch(messages, **owner):
@@ -41,7 +43,9 @@ def reply_batch_progress(batch):
                if row.get('status') in ('sending', 'unknown') and row.get('operation_ids')]
     return {'batch_id': batch['batch_id'], 'status': batch.get('status', 'stopped'),
             'total': len(rows), 'accepted': sum(row.get('status') == 'accepted' for row in rows),
-            'current_index': current, 'pending_operation_ids': pending}
+            'current_index': current, 'pending_operation_ids': pending,
+            **{key: batch[key] for key in ('wait_reason', 'sync_wait_started_at', 'sync_wait_deadline_at', 'last_gate_reason')
+               if key in batch}}
 
 
 class ReplyBatchMixin:
@@ -95,38 +99,54 @@ class ReplyBatchMixin:
         self._changed(batch['conversation_id'], batch['case_id'])
         return {'batch_id': batch['batch_id'], 'message': '分条回复已冻结，等待逐条受理'}
 
-    def _reply_batch_basis_current(self, batch, *, excluding=None):
+    def _reply_batch_gate(self, batch, *, excluding=None, check_sync=True):
+        # Every hard condition is evaluated before the sole recoverable condition.
+        if self._closing:
+            return SendGateDecision(False, 'closing')
         if (batch.get('origin') != 'automatic' or batch.get('stopped')
                 or batch.get('epoch') != self._epoch or not self._running or not self._auto_send
-                or self._closing or self._manual_only or not self.account_verified
+                or self._manual_only or not self.account_verified
                 or batch.get('frozen_scope') != self._frozen_scope):
-            return False
+            return SendGateDecision(False, 'authorization_revoked')
         case = self.repo.get('case', batch['case_id'])
         conversation = self.repo.get('conversation', batch['conversation_id'])
         parent = self.repo.get('draft', batch['parent_draft_id'])
-        if (not case or not conversation or not parent or conversation.get('human_owned')
-                or case['state'] in ('closed', 'human_owned') or case['seller_id'] != self.seller_id
+        if conversation and (conversation.get('human_owned') or case and case['state'] == 'human_owned'):
+            return SendGateDecision(False, 'conversation_taken_over')
+        if (not case or not conversation or not parent or case['state'] == 'closed'
+                or case['seller_id'] != self.seller_id or batch.get('seller_id') != self.seller_id
                 or conversation.get('case_id') != case['case_id']
                 or parent['revision'] != batch['parent_revision']
                 or case['revision'] != batch['expected_case_revision']
                 or conversation['revision'] != batch['expected_conversation_revision']
                 or self._conversation_unresolved(batch['conversation_id'], excluding=excluding or batch['batch_id'])):
-            return False
+            return SendGateDecision(False, 'basis_changed')
         excluded = excluding or batch['batch_id']
-        source = (self._supplement_source(case, excluding=excluded) if batch.get('phase') == 'supplement'
-                  else self._automatic_source(batch['conversation_id'], excluding=excluded))
+        source = (self._supplement_source(case, excluding=excluded, allow_pending_sync=True)
+                  if batch.get('phase') == 'supplement' else
+                  self._automatic_source(batch['conversation_id'], excluding=excluded, allow_pending_sync=True))
         if (not source or source['message_id'] != batch['source_message_id']
                 or source.get('seller_id') != self.seller_id or source.get('buyer_id') != case['buyer_id']
                 or source.get('conversation_id') != batch['conversation_id']
                 or conversation.get('seller_id') != self.seller_id or conversation.get('buyer_id') != case['buyer_id']
                 or case.get('conversation_id') != batch['conversation_id']
-                or not self._in_scope(batch['conversation_id'], excluding=excluded)
+                or not self._in_scope(batch['conversation_id'], excluding=excluded, allow_pending_sync=True)
                 or self._stop_requested(source['text'])):
-            return False
+            return SendGateDecision(False, 'source_changed')
         try:
-            return self.get_context(case['case_id'])['fingerprint'] == batch['expected_fingerprint']
+            if self.get_context(case['case_id'])['fingerprint'] != batch['expected_fingerprint']:
+                return SendGateDecision(False, 'basis_changed')
         except ServiceError:
-            return False
+            return SendGateDecision(False, 'guard_evaluation_failed')
+        if check_sync and self._message_sync_pending(batch['conversation_id']):
+            activity = self.repo.get('message_activity', batch['conversation_id'], {})
+            return SendGateDecision(False, 'source_sync_pending', {
+                'sync_target_version': activity.get('version', 0),
+                'sync_target_timestamp': activity.get('latest_timestamp', 0)})
+        return SendGateDecision(True)
+
+    def _reply_batch_basis_current(self, batch, *, excluding=None, check_sync=True):
+        return self._reply_batch_gate(batch, excluding=excluding, check_sync=check_sync).allowed
 
     def _reply_batch_send_snapshot(self, batch):
         cid = batch['conversation_id']
@@ -134,12 +154,142 @@ class ReplyBatchMixin:
                 'coverage': self.repo.get('coverage', cid),
                 'messages': self.repo.list('message', conversation_id=cid)}
 
-    def _reply_batch_echo_basis_current(self, batch, operation, result, snapshot):
+    def _reply_batch_refresh_basis(self, batch, *, accepted_self_sync=False):
+        """Called only after proving the old frozen basis, never to adopt new input."""
+        case = self._require('case', batch['case_id'])
+        conversation = self._require('conversation', batch['conversation_id'])
+        if batch.get('phase') == 'supplement' and batch['next_index']:
+            work = self.repo.get('supplement_followup', batch['conversation_id']) or {}
+            previous_part = batch['parts'][batch['next_index'] - 1]
+            if (work.get('draft_id') == batch['parent_draft_id'] and work.get('source_message_id') == batch['source_message_id']
+                    and previous_part.get('status') == 'accepted' and previous_part.get('message_id')):
+                work.update(latest_message_id=previous_part['message_id'], updated_at=now_ms())
+                self.repo.put('supplement_followup', batch['conversation_id'], work)
+        context = self.get_context(case['case_id'])
+        batch.update(expected_case_revision=case['revision'], expected_conversation_revision=conversation['revision'],
+                     expected_fingerprint=context['fingerprint'])
+        if accepted_self_sync:
+            batch['accepted_self_sync'] = {'message_ids': [p['message_id'] for p in batch['parts']
+                if p['status'] == 'accepted'], 'observed_at': now_ms()}
+        for remaining in batch['parts'][batch['next_index']:]:
+            child = self._require('draft', remaining['draft_id'])
+            from .context import validate_reply
+            validation = validate_reply(child['body'], remaining['reply_sources'], context)
+            child.update(source_case_revision=case['revision'], source_conversation_revision=conversation['revision'],
+                         context_fingerprint=context['fingerprint'], validation=validation,
+                         related_case_versions=self._related_case_versions(child.get('reply_case_ids', [case['case_id']])))
+            # Ingest invalidates pending drafts. Only the proven self echo may restore them.
+            if child['status'] == 'stale' and validation['ready']:
+                child['status'] = 'planned'
+            self.repo.put('draft', child['draft_id'], child, history=True)
+        batch['basis_snapshot'] = self._reply_batch_send_snapshot(batch)
+
+    def _reply_batch_rebase_self_sync(self, batch):
+        """Project away only transport changes to exact accepted messages."""
+        snapshot = batch.get('basis_snapshot')
+        if not snapshot or not any(p['status'] == 'accepted' for p in batch['parts']):
+            return False
+        cid = batch['conversation_id']
+        original_rows = {row['message_id']: row for row in snapshot['messages']}
+        current_rows = {row['message_id']: row for row in self.repo.list('message', conversation_id=cid)}
+        if set(current_rows) != set(original_rows):
+            return False
+        accepted = {p['message_id']: p for p in batch['parts'] if p['status'] == 'accepted' and p.get('message_id')}
+        changed = []
+        for mid, original in original_rows.items():
+            current = current_rows[mid]
+            if current == original:
+                continue
+            part = accepted.get(mid)
+            if (not part or any(current.get(k) != v for k, v in {
+                    'message_id': mid, 'seller_id': self.seller_id, 'buyer_id': batch['buyer_id'],
+                    'conversation_id': cid, 'role': 'seller', 'text': part['body']}.items())
+                    or {k: v for k, v in current.items() if k != 'timestamp_ms'}
+                    != {k: v for k, v in original.items() if k != 'timestamp_ms'}):
+                return False
+            changed.append(mid)
+        if not changed:
+            return False
+        def order(rows):
+            return [r['message_id'] for r in sorted(rows.values(), key=lambda r: (
+                r['timestamp_ms'] if r['timestamp_ms'] is not None else -1, r['message_id']))]
+        if order(original_rows) != order(current_rows):
+            return False
+        original = snapshot['conversation']
+        conversation = self.repo.get('conversation', cid)
+        last = current_rows[order(current_rows)[-1]]
+        if (not conversation or conversation['revision'] <= original['revision']
+                or conversation != {**original, 'revision': conversation['revision'],
+                                    'last_message': last['text'], 'last_timestamp': last['timestamp_ms']}):
+            return False
+        old_coverage, current_coverage = snapshot['coverage'], self.repo.get('coverage', cid)
+        ignored = {'earliest_ms', 'latest_ms', 'updated_at', 'message'}
+        if (not old_coverage or not current_coverage or
+                {k: v for k, v in old_coverage.items() if k not in ignored}
+                != {k: v for k, v in current_coverage.items() if k not in ignored}):
+            return False
+        stamps = [r['timestamp_ms'] for r in current_rows.values() if r['timestamp_ms'] is not None]
+        if (current_coverage.get('earliest_ms') != (min(stamps) if stamps else None)
+                or current_coverage.get('latest_ms') != (max(stamps) if stamps else None)):
+            return False
+        # The service lock + savepoint make this a read-only projection. All
+        # cases, policies, supplements, media and source checks remain current.
+        self.repo.db.execute('SAVEPOINT reply_self_sync')
+        try:
+            for mid in changed:
+                self.repo.put('message', encoded([cid, mid]), original_rows[mid])
+            self.repo.put('conversation', cid, original)
+            self.repo.put('coverage', cid, old_coverage)
+            valid = self._reply_batch_basis_current(batch, check_sync=False)
+        finally:
+            self.repo.db.execute('ROLLBACK TO reply_self_sync')
+            self.repo.db.execute('RELEASE reply_self_sync')
+        if valid:
+            self._reply_batch_refresh_basis(batch, accepted_self_sync=True)
+            self.repo.put('reply_batch', batch['batch_id'], batch, history=True)
+        return valid
+
+    def _wait_reply_batch_sync(self, batch):
+        part = batch['parts'][batch['next_index']]
+        stamp = now_ms()
+        started = part.setdefault('sync_wait_started_at', stamp)
+        deadline = part.setdefault('sync_wait_deadline_at', started + SYNC_WAIT_MS)
+        if stamp >= deadline:
+            batch['last_gate_reason'] = 'source_sync_timeout'
+            self._stop_reply_batch(batch, '会话同步等待已超过60秒，尚未提交的回复已停止')
+            return False
+        activity = self.repo.get('message_activity', batch['conversation_id'], {})
+        changed = batch.get('status') != 'waiting_sync'
+        part['status'] = 'waiting_sync'
+        batch.update(status='waiting_sync', wait_reason='source_sync_pending', last_gate_reason='source_sync_pending',
+                     sync_wait_started_at=started, sync_wait_deadline_at=deadline,
+                     sync_target_version=activity.get('version', 0), sync_target_timestamp=activity.get('latest_timestamp'),
+                     message=f"已发送{batch['next_index']}/{len(batch['parts'])}条，正在同步会话，第{batch['next_index'] + 1}条尚未提交")
+        if changed:
+            batch['updated_at'] = stamp
+            self.repo.put('reply_batch', batch['batch_id'], batch, history=True)
+            self._changed(batch['conversation_id'], batch['case_id'])
+        if self._monitor_ready():
+            self._dispatch_message_syncs(audit=False)
+        return True
+
+    def _reply_batch_preflight_wait(self, draft):
+        if not draft.get('batch_id'):
+            return None
+        batch = self._require('reply_batch', draft['batch_id'])
+        decision = self._reply_batch_gate(batch)
+        if decision.reason == 'source_sync_pending':
+            self._wait_reply_batch_sync(batch)
+            return {'_job_status': 'deferred', 'batch_id': batch['batch_id'],
+                    'message': batch.get('message', '等待会话同步，尚未创建发送操作')}
+        return None
+
+    def _reply_batch_echo_basis_current(self, batch, operation, result, snapshot, *, check_sync=True):
         """Compare the original basis after excluding only the exact accepted echo."""
         cid = batch['conversation_id']
         mid = result.get('message_id')
         if (result.get('status') != 'accepted' or result.get('submission_started') is not True
-                or not isinstance(mid, str) or not mid.strip() or self._message_sync_pending(cid)):
+                or not isinstance(mid, str) or not mid.strip() or check_sync and self._message_sync_pending(cid)):
             return False
         key = encoded([cid, mid])
         echo = self.repo.get('message', key)
@@ -180,7 +330,7 @@ class ReplyBatchMixin:
             self.repo.db.execute("DELETE FROM entities WHERE kind='message' AND id=?", (key,))
             self.repo.put('conversation', cid, original)
             self.repo.put('coverage', cid, old_coverage)
-            return self._reply_batch_basis_current(batch, excluding=operation['operation_id'])
+            return self._reply_batch_basis_current(batch, excluding=operation['operation_id'], check_sync=check_sync)
         finally:
             self.repo.db.execute('ROLLBACK TO reply_echo_projection')
             self.repo.db.execute('RELEASE reply_echo_projection')
@@ -237,9 +387,9 @@ class ReplyBatchMixin:
                 'result_version': batch.get('supplement_issue_ids') if batch['phase'] == 'supplement' else None}
 
     def _stop_reply_batch(self, batch, reason):
-        batch['stopped'] = True
+        batch.update(stopped=True, wait_reason=None)
         for part in batch['parts']:
-            if part['status'] in ('planned', 'rejected'):
+            if part['status'] in ('planned', 'rejected', 'waiting_sync'):
                 part['status'] = 'cancelled'
                 child = self.repo.get('draft', part.get('draft_id'))
                 if child and child['status'] not in ('accepted', 'unknown'):
@@ -292,17 +442,10 @@ class ReplyBatchMixin:
                         work.update(status='complete', updated_at=now_ms())
                         self.repo.put('supplement_followup', batch['conversation_id'], work)
             elif basis_current and not batch.get('stopped'):
-                case = self._require('case', batch['case_id'])
-                conversation = self._require('conversation', batch['conversation_id'])
-                context = self.get_context(case['case_id'])
-                batch.update(status='prepared', expected_case_revision=case['revision'],
-                             expected_conversation_revision=conversation['revision'], expected_fingerprint=context['fingerprint'])
-                for remaining in batch['parts'][batch['next_index']:]:
-                    child = self._require('draft', remaining['draft_id'])
-                    child.update(source_case_revision=case['revision'], source_conversation_revision=conversation['revision'],
-                                 context_fingerprint=context['fingerprint'],
-                                 related_case_versions=self._related_case_versions(child.get('reply_case_ids', [case['case_id']])))
-                    self.repo.put('draft', child['draft_id'], child, history=True)
+                batch.update(status='prepared', wait_reason=None)
+                self._reply_batch_refresh_basis(batch)
+                if self._message_sync_pending(batch['conversation_id']):
+                    self._wait_reply_batch_sync(batch)
             else:
                 self._stop_reply_batch(batch, '原来源或授权已变化，剩余条目已停止')
                 return
@@ -312,11 +455,24 @@ class ReplyBatchMixin:
                 parent.update(status='unknown', updated_at=now_ms())
                 self.repo.put('draft', parent['draft_id'], parent, history=True)
         elif status == 'rejected':
+            batch['last_gate_reason'] = operation.get('error_code')
             child = self.repo.get('draft', part['draft_id'])
             if child and child['status'] == 'pending' and basis_current and not batch.get('stopped'):
-                batch['status'] = 'waiting_retry'
+                from .send_retry_policy import decision
+                state, _, _ = decision(self.repo, self.seller_id, batch['conversation_id'], batch['source_message_id'],
+                                       **self._reply_batch_retry_options(child))
+                batch['last_gate_reason'] = operation.get('error_code')
+                if state == 'waiting_sync':
+                    self._wait_reply_batch_sync(batch)
+                else:
+                    batch['status'] = 'waiting_retry'
             else:
-                self._stop_reply_batch(batch, '本条未提交，剩余自动回复已停止')
+                from .integrations.live import SNAPSHOT_ERROR_MESSAGES
+                if child and child.get('status') == 'exhausted':
+                    batch['last_gate_reason'] = 'send_attempts_exhausted'
+                reason = ('原条目已达到最多3次发送尝试' if batch.get('last_gate_reason') == 'send_attempts_exhausted'
+                          else SNAPSHOT_ERROR_MESSAGES.get(operation.get('error_code'), '本条未提交'))
+                self._stop_reply_batch(batch, reason + '；剩余自动回复已停止')
                 return
         batch['updated_at'] = now_ms()
         self.repo.put('reply_batch', batch['batch_id'], batch, history=True)
@@ -334,15 +490,39 @@ class ReplyBatchMixin:
                 if not self._reply_batch_basis_current(batch, excluding=unknown['operation_ids'][-1] if unknown['operation_ids'] else None):
                     self._stop_reply_batch(batch, '授权或对话已变化，未提交尾部已停止')
                 continue
-            if not self._reply_batch_basis_current(batch):
-                self._stop_reply_batch(batch, '授权或对话已变化，剩余条目已停止')
-                continue
+            gate = self._reply_batch_gate(batch)
+            if gate.reason == 'basis_changed' and self._reply_batch_rebase_self_sync(batch):
+                gate = self._reply_batch_gate(batch)
             index = batch['next_index']
             if not 0 <= index < len(batch['parts']):
                 continue
             part = batch['parts'][index]
+            if batch['status'] == 'waiting_sync':
+                failed_sync = any(j.get('kind') == 'sync_messages' and j.get('status') == 'failed'
+                    and (j.get('completed_at') or 0) >= part.get('sync_wait_started_at', 0)
+                    for j in self.repo.list('job', conversation_id=batch['conversation_id']))
+                if failed_sync or now_ms() >= part['sync_wait_deadline_at']:
+                    batch['last_gate_reason'] = 'source_sync_failed' if failed_sync else 'source_sync_timeout'
+                    self._stop_reply_batch(batch, '会话同步失败，未提交尾部已停止' if failed_sync else
+                                           '会话同步等待已超过60秒，尚未提交的回复已停止')
+                    continue
+            if gate.reason == 'source_sync_pending':
+                self._wait_reply_batch_sync(batch)
+                continue
+            if not gate.allowed:
+                batch['last_gate_reason'] = gate.reason
+                self._stop_reply_batch(batch, {'authorization_revoked': '发送授权已撤销，未提交尾部已停止',
+                    'conversation_taken_over': '当前会话已由人工接管，未提交尾部已停止',
+                    'source_changed': '买家来源已变化，未提交尾部已停止'}.get(gate.reason,
+                        '业务依据或对话已变化，剩余条目已停止'))
+                continue
+            if batch['status'] == 'waiting_sync':
+                part['status'] = 'rejected' if part.get('operation_ids') else 'planned'
+                batch.update(status='prepared', wait_reason=None, updated_at=now_ms())
+                self.repo.put('reply_batch', batch['batch_id'], batch, history=True)
+                self._changed(batch['conversation_id'], batch['case_id'])
             child = self._require('draft', part['draft_id'])
-            if part['status'] not in ('planned', 'rejected') or child.get('retry_after', 0) > now_ms():
+            if part['status'] not in ('planned', 'rejected') or (child.get('retry_after') or 0) > now_ms():
                 continue
             if any(job.get('draft_id') == child['draft_id'] and job['status'] in ('queued', 'running')
                    for job in self.repo.list('job', conversation_id=batch['conversation_id'])):

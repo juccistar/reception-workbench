@@ -24,6 +24,7 @@ from .manual_chat import ManualChatMixin
 from .conversation_assistance import ConversationAssistanceMixin
 from .requirement_changes import RequirementChangesMixin, requirement_revision
 from .reply_batches import ReplyBatchMixin, reply_batch_progress
+from .send_gate import SendAuthorization, SendGateDecision
 from .reply_messages import normalize_reply_output
 from .cached_media import CachedMediaMixin
 from .whatsapp import WhatsAppMixin
@@ -53,7 +54,7 @@ SLOW = frozenset({'sync_messages', 'fill_history', 'generate_draft', 'check_conn
 FAST = frozenset({'get_snapshot', 'get_executor_health', 'get_conversation', 'get_messages', 'get_message_image', 'get_requirement_media',
                   'set_requirement_media_cover', 'set_product_image_source', 'load_requirement_media', 'get_context', 'list_jobs',
                   'list_outbox', 'save_draft', 'save_policy', 'list_builtin_policies', 'adopt_builtin_policy', 'save_settings', 'set_scope',
-                  'set_reception', 'takeover', 'begin_manual_edit', 'save_chat_draft', 'prepare_send', 'inject_demo', 'mark_messages_read',
+                  'set_reception', 'takeover', 'begin_manual_edit', 'save_chat_draft', 'recover_reply_batch_draft', 'prepare_send', 'inject_demo', 'mark_messages_read',
                   'save_conversation_supplement', 'upload_supplement_attachment', 'remove_supplement_attachment',
                   'generate_manual_suggestion', 'get_translations', 'request_translations',
                   'get_translation_info', 'get_translation_config', 'save_translation_settings',
@@ -505,7 +506,8 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                     'conversation_summary': summary,
                     'requirement_media': self.get_requirement_media(case['case_id']) if case else None,
                     'manual_suggestion': self._manual_suggestion(conversation_id),
-                    'reply_batches': [reply_batch_progress(row) for row in self.repo.list('reply_batch', conversation_id=conversation_id)]}
+                    'reply_batches': [reply_batch_progress(row) for row in self.repo.list('reply_batch', conversation_id=conversation_id)],
+                    'recoverable_reply_batches': self._recoverable_reply_batches(conversation_id)}
 
     def get_messages(self, conversation_id, before_id=None, limit=50):
         if type(limit) is not int or not 1 <= limit <= 200:
@@ -1060,6 +1062,8 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                                 revision=case['revision'] + 1, updated_at=now_ms())
                     self.repo.put('case', case['case_id'], case, history=True)
                 self._invalidate(conversation_id)
+            if enabled:
+                self._begin_manual_edit_locked(conversation)
         self._changed(conversation_id)
         return self.get_snapshot()
 
@@ -1834,10 +1838,10 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                 # The customer/version can change between scheduling and enqueue.
                 continue
 
-    def _automatic_source(self, conversation_id, *, excluding=None, operations=None):
+    def _automatic_source(self, conversation_id, *, excluding=None, operations=None, allow_pending_sync=False):
         conversation = self.repo.get('conversation', conversation_id)
         case = self.repo.get('case', conversation['case_id']) if conversation else None
-        if (self._message_sync_pending(conversation_id)
+        if (not allow_pending_sync and self._message_sync_pending(conversation_id)
                 or (self._conversation_unresolved(conversation_id, excluding=excluding) if operations is None else
                     any(o.get('operation_id') != excluding and o.get('status') in ('prepared', 'sending', 'unknown')
                         for o in operations)) or not self.account_verified or not case or case['seller_id'] != self.seller_id
@@ -1888,12 +1892,12 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
             return True
         return False
 
-    def _in_scope(self, conversation_id, *, excluding=None):
+    def _in_scope(self, conversation_id, *, excluding=None, allow_pending_sync=False):
         scope = self._frozen_scope
         if not scope or scope['seller_id'] != self.seller_id:
             return False
         if scope['mode'] == 'incoming':
-            return self._automatic_source(conversation_id, excluding=excluding) is not None
+            return self._automatic_source(conversation_id, excluding=excluding, allow_pending_sync=allow_pending_sync) is not None
         return conversation_id in scope['conversation_ids']
 
     def _set_check(self, name, job_id, status, message, simulated=False):
@@ -2437,16 +2441,19 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
             raise ServiceError('source_mismatch', '发送来源缺少当前卖家及买家原文依据', stage='send')
         return source
 
-    def _automatic_send_source(self, draft, case, *, excluding=None):
+    def _automatic_send_source(self, draft, case, *, excluding=None, allow_pending_sync=False):
         if draft.get('batch_id'):
-            return self._reply_batch_basis_current(self._require('reply_batch', draft['batch_id']), excluding=excluding)
-        source = (self._supplement_source(case, excluding=excluding)
+            return self._reply_batch_basis_current(self._require('reply_batch', draft['batch_id']), excluding=excluding,
+                                                  check_sync=not allow_pending_sync)
+        source = (self._supplement_source(case, excluding=excluding, allow_pending_sync=allow_pending_sync)
                   if draft.get('continuation', {}).get('phase') == 'supplement'
-                  else self._automatic_source(draft['conversation_id'], excluding=excluding or draft.get('batch_id')))
+                  else self._automatic_source(draft['conversation_id'], excluding=excluding or draft.get('batch_id'),
+                                              allow_pending_sync=allow_pending_sync))
         conversation = self._require('conversation', draft['conversation_id'])
         return (source is not None and source['message_id'] == draft['source_message_id']
                 and case['case_id'] == conversation['case_id']
-                and self._in_scope(draft['conversation_id'], excluding=excluding or draft.get('batch_id')))
+                and self._in_scope(draft['conversation_id'], excluding=excluding or draft.get('batch_id'),
+                                   allow_pending_sync=allow_pending_sync))
 
     def _intent(self, draft, case, operation_id, epoch, automatic=False):
         source = self._intent_source(draft, case)
@@ -2499,6 +2506,10 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
         return self._perform_send(draft, case, epoch, facade, confirmation=confirmation, job_id=job_id)
 
     def _task_automatic_send(self, params, job_id, epoch, facade):
+        with self._lock, self.repo.transaction():
+            waiting = self._reply_batch_preflight_wait(self._require('draft', params['draft_id']))
+            if waiting:
+                return waiting
         self._ensure_identity(facade)
         with self._lock:
             draft, case, _ = self._validate_send(params['draft_id'], params['expected_revision'])
@@ -2522,6 +2533,10 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
         with self._lock, self.repo.transaction():
             if epoch != self._epoch or not self._running or self._closing:
                 raise ServiceError('cancelled', '接待权限已撤销', stage='send')
+            if automatic:
+                waiting = self._reply_batch_preflight_wait(draft)
+                if waiting:
+                    return waiting
             self._validate_send(draft['draft_id'], draft['revision'], manual=not automatic)
             self._intent_source(draft, case)
             if automatic:
@@ -2551,39 +2566,43 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
             self.repo.put('draft', draft['draft_id'], draft, history=True)
             batch_snapshot = (self._reply_batch_send_snapshot(self._require('reply_batch', draft['batch_id']))
                               if draft.get('batch_id') else None)
-        def authorized():
+        def evaluate_gate():
             with self._lock:
-                if self._closing or not self._running or epoch != self._epoch or not self.account_verified:
-                    return False
+                if self._closing:
+                    return SendGateDecision(False, 'closing')
+                if not self._running or epoch != self._epoch or not self.account_verified:
+                    return SendGateDecision(False, 'authorization_revoked')
                 current = self.repo.get('draft', draft['draft_id'])
                 current_case = self.repo.get('case', case['case_id'])
                 conversation = self.repo.get('conversation', draft['conversation_id'])
+                if automatic and conversation and (conversation.get('human_owned') or
+                        current_case and current_case['state'] == 'human_owned'):
+                    return SendGateDecision(False, 'conversation_taken_over')
                 if (not current or current['status'] != 'sending' or current['revision'] != draft['revision']
                         or current['body'] != draft['body'] or current['source_message_id'] != draft['source_message_id']
                         or not current_case or current_case['revision'] != case['revision']
                         or current_case['state'] == 'closed' or not conversation
                         or conversation['revision'] != draft['source_conversation_revision']):
-                    return False
+                    return SendGateDecision(False, 'basis_changed')
                 if confirmation:
                     saved = self.repo.get('confirmation', confirmation['confirmation_id'])
                     if not saved or now_ms() > saved['expires_at'] or saved['invalidated']:
-                        return False
+                        return SendGateDecision(False, 'authorization_revoked')
                 try:
                     source = self._intent_source(current, current_case)
                     context = with_direct_photo_reads(self.get_context(case['case_id']), draft.get('photo_read_images', []))
                 except ServiceError:
-                    return False
+                    return SendGateDecision(False, 'source_changed')
                 if source['timestamp_ms'] != intent['source_timestamp_ms'] or self._stop_requested(source['text']):
-                    return False
-                if automatic and (self._manual_only or conversation['human_owned'] or current_case['state'] == 'human_owned'
-                                  or not self._auto_send or self._frozen_scope != intent['frozen_scope']
-                                  or not self._automatic_send_source(current, current_case, excluding=operation_id)
-                                  or not 0 < intent['budget_sequence'] <= self._budget_used):
-                    return False
+                    return SendGateDecision(False, 'source_changed')
+                if automatic:
+                    if (self._manual_only or not self._auto_send or self._frozen_scope != intent['frozen_scope']
+                            or not 0 < intent['budget_sequence'] <= self._budget_used):
+                        return SendGateDecision(False, 'authorization_revoked')
+                    if not self._automatic_send_source(current, current_case, excluding=operation_id, allow_pending_sync=True):
+                        return SendGateDecision(False, 'source_changed')
                 if self._conversation_unresolved(draft['conversation_id'], excluding=operation_id):
-                    return False
-                if draft.get('batch_id') and not self._reply_batch_basis_current(self._require('reply_batch', draft['batch_id']), excluding=operation_id):
-                    return False
+                    return SendGateDecision(False, 'basis_changed')
                 if any(o.get('purpose') != 'chat' and o['operation_id'] != operation_id and o['case_id'] == case['case_id']
                        and o['source_message_id'] == current['source_message_id']
                        and o['status'] in ('sending', 'accepted', 'unknown')
@@ -2592,18 +2611,27 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                        and not (draft.get('batch_id') and o.get('purpose') == 'continuity'
                                 and o.get('intent', {}).get('continuity_phase') == 'ack' and o['status'] == 'accepted')
                        for o in self.repo.list('operation')):
-                    return False
+                    return SendGateDecision(False, 'basis_changed')
                 policies = {**{p['policy_id']: p['revision'] for p in context['knowledge']}, **context.get('policy_versions', {})}
                 expected_photo = draft.get('photo_fingerprint')
                 photo_current = (expected_photo == photo_fingerprint(context) if expected_photo is not None
                                  else not context['photo_context']['events'])
-                return (photo_current and current.get('photo_fingerprint') == expected_photo
+                valid = (photo_current and current.get('photo_fingerprint') == expected_photo
                         and self._related_cases_current(current)
                         and current.get('supplement_fingerprint') == draft.get('supplement_fingerprint')
                         and (draft.get('supplement_fingerprint') == supplement_fingerprint(context)
                              or draft.get('supplement_fingerprint') is None and not context['supplement'].get('body'))
                         and policies == draft.get('policy_versions', {})
                         and validate_reply(current['body'], current['validation']['sources'], context)['ready'])
+                if not valid:
+                    return SendGateDecision(False, 'basis_changed')
+                if automatic and self._message_sync_pending(draft['conversation_id']):
+                    activity = self.repo.get('message_activity', draft['conversation_id'], {})
+                    return SendGateDecision(False, 'source_sync_pending', {
+                        'sync_target_version': activity.get('version', 0),
+                        'sync_target_timestamp': activity.get('latest_timestamp', 0), 'authorization_epoch': epoch})
+                return SendGateDecision(True)
+        authorized = SendAuthorization(evaluate_gate)
         try:
             sender = facade.send_chat if draft.get('batch_id') and intent.get('purpose') == 'continuity' else facade.send
             result = sender(intent, authorization=authorized)
@@ -2623,14 +2651,14 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                        'diagnostics': {'code': 'adapter_error', 'stage': 'adapter'}}
         with self._lock, self.repo.transaction():
             batch_basis_current = bool(draft.get('batch_id') and self._reply_batch_basis_current(
-                self._require('reply_batch', draft['batch_id']), excluding=operation_id))
+                self._require('reply_batch', draft['batch_id']), excluding=operation_id, check_sync=False))
             if draft.get('batch_id') and status == 'accepted':
                 returned_id = result.get('message_id')
                 existing_echo = (self.repo.get('message', encoded([draft['conversation_id'], returned_id]))
                                  if isinstance(returned_id, str) else None)
                 if existing_echo or not batch_basis_current:
                     batch_basis_current = self._reply_batch_echo_basis_current(
-                        self._require('reply_batch', draft['batch_id']), operation, result, batch_snapshot)
+                        self._require('reply_batch', draft['batch_id']), operation, result, batch_snapshot, check_sync=False)
             message = {'accepted': '平台已受理发送', 'rejected': '发送已明确拒绝',
                        'unknown': '发送结果未知，禁止自动重试'}[status]
             if status == 'rejected':
@@ -2644,7 +2672,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                     retry_state, attempts, retry_at = send_retry_decision(
                         self.repo, self.seller_id, draft['conversation_id'], draft['source_message_id'],
                         **self._reply_batch_retry_options(draft))
-                    draft.update(status='pending' if retry_state == 'waiting' else retry_state, retry_after=retry_at)
+                    draft.update(status='pending' if retry_state in ('waiting', 'waiting_sync') else retry_state, retry_after=retry_at)
                     if job_id:
                         self._job_update(job_id, retry_at=retry_at, retry_attempt=attempts, retry_status=retry_state)
                     settle_waiting_jobs(self.repo, self._job_update, self.seller_id,

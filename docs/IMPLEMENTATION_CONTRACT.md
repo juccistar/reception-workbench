@@ -1,6 +1,6 @@
 # 工作台实施契约
 
-本文维护0.3.19源码的进程、接口和业务约束；需求补录、自然分条及WhatsApp诊断见[发布说明](0.3.19发布说明.md)，当前构建及公开状态见[记录](verification/0.3.19.json)。需求增量、多事项及原图交互继续沿用0.3.16基础。0.3.13的需求、摘要、产品及采购契约继续沿用，见[基础开发说明](0.3.13开发说明.md)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
+本文维护0.3.20源码的进程、接口和业务约束；分条同步等待、旧尾部提取及WhatsApp登录环境恢复见[发布说明](0.3.20发布说明.md)，当前构建及公开状态见[记录](verification/0.3.20.json)。需求补录和自然分条继续沿用0.3.19。需求增量、多事项及原图交互继续沿用0.3.16基础。0.3.13的需求、摘要、产品及采购契约继续沿用，见[基础开发说明](0.3.13开发说明.md)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
 
 ## 1. 进程与协议
 
@@ -18,6 +18,16 @@ stdout仅输出协议。原生输出、完整prompt、凭据及环境不进入�
 每商家有一个可取消Accio AI执行槽，业务协调和消息监测独立；队列优先人工发送、回执核查及已就绪自动发送，兼顾公平。采购AI共用该槽，本轮已生成回复不等待采购结果，后续生成仍受队列与外部耗时影响，不承诺固定响应时限。保存、暂停及本地查询不排在长AI等待后。取消本地任务不保证远端物理调用或计费同时停止。
 
 Demo/Live数据与适配器隔离，Live身份核实后才打开对应卖家库；单个服务生命周期不跨卖家切换，同商家跨目录排他。真实读取、AI、发送和外部写入分别服从当前明确授权。
+
+## 0.3.20新增契约
+
+SendAuthorization保持严格bool callable，内部SendGateDecision按本次检查固定原因；before_claim、after_token与before_submit拒绝由原生异常和operation立即保存gate_reason/gate_checkpoint/token_acquired等白名单事实，不事后猜测通用auth。communication_token_missing与source_sync_pending分别处理。
+
+reply_batch与当前part增加waiting_sync及sync_wait_started_at/sync_wait_deadline_at/sync_target_version/sync_target_timestamp/wait_reason。等待不睡眠、不占执行线程、不重复生成或全量预读；同会话互斥，首次60秒截止不刷新。仅明确未提交且不足三次的原条目可等待后重校验；prepared/sending/unknown及原账本保护保留。自身回显投影使用锁内必回滚savepoint，不修改真实消息；只允许确切accepted ID的传输时间修正且顺序不变，不忽略其他正文、身份、附件或业务依据变化。
+
+recover_reply_batch_draft为FAST业务接口，参数仅conversation_id、batch_id、expected_messages_hash、expected_chat_draft_revision、client_mutation_id；从原冻结尾部派生正文，同事务核对所有操作和草稿CAS，幂等保存到人工chat_draft。ConversationDetail.recoverable_reply_batches只投影受限批次标识及条数。ReplyBatchProgress新增等待及具体门控原因字段。
+
+rebuildWhatsAppSession为专用宿主IPC，不加入API_METHODS、不开放路径/partition/商家参数。确认前后核对商家、连接及当前登录代次；WhatsAppCoordinator先撤权、等待在途结果和观察、销毁旧视图后原子保存whatsapp-session-generation.json，再建立新宿主。generation=0原样复用0.3.19分区算法；新代次不改变业务库和JSONL发送账本位置。配置损坏拒绝连接，提交前失败保留原配置，提交后重新启动沿新代次，均不恢复接待权限。旧账号未决通过other_account_pending_count及仅operation_id/status的受限列表提示，不暴露旧联系人；核查仍使用原账号、原操作epoch和确切平台ID。
 
 ## 2. AI需求、程序商品展示与会话摘要
 

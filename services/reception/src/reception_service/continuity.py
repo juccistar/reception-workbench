@@ -187,17 +187,17 @@ class ContinuityMixin:
             return None
         return {k: copy.deepcopy(work[k]) for k in ('source_message_id', 'latest_message_id', 'business_note_source_id', 'issue_ids')} | {'phase': 'supplement'}
 
-    def _supplement_source(self, case, *, excluding=None):
+    def _supplement_source(self, case, *, excluding=None, allow_pending_sync=False):
         """A selected customer may have an owed issue predating this grant."""
         cid = case['conversation_id']
         scope = self._frozen_scope or {}
         if scope.get('mode') == 'incoming':
-            return self._automatic_source(cid, excluding=excluding)
+            return self._automatic_source(cid, excluding=excluding, allow_pending_sync=allow_pending_sync)
         conversation = self.repo.get('conversation', cid)
         source = self._latest_buyer(cid)
         if (not self._supplement_continuation(case) or not self.account_verified or not conversation
                 or scope.get('seller_id') != self.seller_id or cid not in scope.get('conversation_ids', [])
-                or self._message_sync_pending(cid) or self._conversation_unresolved(cid, excluding=excluding)
+                or not allow_pending_sync and self._message_sync_pending(cid) or self._conversation_unresolved(cid, excluding=excluding)
                 or not source or type(source.get('timestamp_ms')) is not int
                 or any(m.get('role') == 'buyer' and m.get('timestamp_ms') is None for m in self._messages(cid))):
             return None
