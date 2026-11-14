@@ -5,7 +5,7 @@
   "base_commit": "3feee61",
   "branch": "feat/natural-auto-replies-0.3.21",
   "authorization": "用户确认新版方案并明确要求开发、打包发布；人工建议不兼容旧多项结果",
-  "status": "ready_for_source_build",
+  "status": "source_window_verified_ready_for_candidate",
   "changes": [
     "human_like_natural_automatic_reply_pacing",
     "strict_single_manual_suggestion_and_plain_text_editor",
@@ -29,8 +29,14 @@
     "synthetic_window_seed": "validated_two_and_three_parts",
     "full_suite_run": false
   },
-  "builds": [],
-  "windows": { "source": "pending", "final_executable": "pending", "screenshots_visually_reviewed": false },
+  "builds": [{ "kind": "desktop_source", "commit": "4770407", "status": "passed", "committed_immediately_after_build": true }],
+  "windows": {
+    "source": { "status": "passed", "report": "artifacts/verification/auto-0321-source-e/report.json", "actual_window": true, "screenshots": 8, "screenshots_visually_reviewed": true, "automatic_two_and_three_independent_demo_receipts": true, "single_manual_suggestion_polish_ctrl_enter": true, "new_input_preserved": true, "normal_close": true },
+    "final_executable": "pending",
+    "scope": { "synthetic_data_only": true, "ai_reply_seeded": true, "native_demo_authorization_stubbed": true, "intermediate_wait_receipt_stop_screenshots_use_projection_fixture": true, "automatic_and_manual_sends_use_actual_demo_business_ipc": true },
+    "fixture_failures_retained": { "source-a": "native Demo authorization dialog was not handled; cancelled owned dialog", "source-b/source-c": "synthetic preseed omitted normal generated-draft related case versions; fixture corrected without altering automatic execution", "source-d": "driver read suggestion before queued result completed; explicit result wait added" }
+  },
+  "prompt_boundary_check": { "product_image_and_id_block_unchanged_from_0320": true, "requirement_change_block_unchanged_from_0320": true, "product_block_sha256": "64e9a8bd6bf5afb306966879658c5365d48b4ee7e1c12bb573ebb5c45e61d65f" },
   "whatsapp_public_page": "pending_final_package_check",
   "release": { "repository": "juccistar/reception-workbench-releases", "status": "not_created" },
   "boundaries": {

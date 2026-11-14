@@ -35,6 +35,7 @@ try:
   messages=[{'body':body,'reply_sources':[row['message_id']]} for body in bodies]
   draft=s._draft(case,'\n\n'.join(bodies),[row['message_id']],context,'demo',messages=messages)
   assert draft['validation']['ready'],draft['validation']
+  draft.update(question_keys=[],reply_case_ids=[case['case_id']],related_case_versions=s._related_case_versions([case['case_id']]),social_reply=False)
   s.repo.put('draft',draft['draft_id'],draft,history=True)
   result.append({'conversation_id':cid,'customer_name':owner['customer_name'],'count':count,'bodies':bodies,'draft_id':draft['draft_id']})
  print(json.dumps(result))
@@ -43,7 +44,7 @@ finally:s.close()
 const prepared=spawnSync(python,['-X','utf8','-I','-c',seed,path.join(root,'services/reception/src'),data],{cwd:root,env,encoding:'utf8',timeout:30000});
 assert.equal(prepared.status,0,'Synthetic seed failed: '+prepared.stderr);
 const fixtures=JSON.parse(prepared.stdout.trim());
-const report={status:'failed',version:JSON.parse(await readFile(path.join(root,'package.json'),'utf8')).version,actual_window:true,packaged_executable:executable||null,synthetic_only:true,production_data_accessed:false,real_ai_calls:0,real_customer_sends:0,ai_reply_seeded:true,automatic_sends_use_real_demo_backend:true,intermediate_status_screenshots_use_projection_fixture:true,manual_operations_use_real_demo_backend:true,screenshots:[],completed:[],errors:[],normal_close:false};
+const report={status:'failed',version:JSON.parse(await readFile(path.join(root,'package.json'),'utf8')).version,actual_window:true,packaged_executable:executable||null,synthetic_only:true,production_data_accessed:false,real_ai_calls:0,real_customer_sends:0,ai_reply_seeded:true,native_auto_authorization_stubbed:true,automatic_sends_use_real_demo_backend:true,intermediate_status_screenshots_use_projection_fixture:true,manual_operations_use_real_demo_backend:true,screenshots:[],completed:[],errors:[],normal_close:false};
 let application,page,current=fixtures[0].conversation_id;
 const until=async(check,message,timeout=30000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(await check())return;await new Promise(resolve=>setTimeout(resolve,75));}throw new Error('Timed out: '+message);};
 const invoke=(method,params={})=>page.evaluate(({method,params})=>window.reception.invoke(method,params),{method,params});
@@ -60,7 +61,8 @@ try{
  application=await electron.launch({executablePath:executable?assertReleasePath(root,executable):path.join(root,'node_modules/electron/dist/electron.exe'),args:[...(executable?[]:[path.join(root,'artifacts/app/main/index.js')]),'--data-dir',data,'--log-file='+env.CHROME_LOG_FILE],cwd:root,env,timeout:60000});
  page=await application.firstWindow();page.on('pageerror',error=>report.errors.push(error.name));
  await page.getByRole('textbox',{name:'回复正文',exact:true}).waitFor({timeout:45000});await resize(1440,960);
- assert.equal((await invoke('get_snapshot')).app.version,report.version);
+ const initial=await invoke('get_snapshot');assert.equal(initial.app.version,report.version);assert.equal(initial.app.mode,'demo');
+ await application.evaluate(({app,dialog})=>{if(!app.getPath('userData').includes('arw-0321-window-'))throw new Error('SYNTHETIC_PROFILE_REQUIRED');const original=dialog.showMessageBox.bind(dialog);dialog.showMessageBox=(...args)=>{const options=args[1]||args[0];if(options.title==='自动发送授权')return Promise.resolve({response:1,checkboxChecked:false});return original(...args);};});
  await invoke('check_ai');await until(async()=>(await invoke('get_snapshot')).checks.ai.status==='demo','Demo AI check');
  for(const fixture of fixtures){
   current=fixture.conversation_id;
@@ -84,7 +86,7 @@ try{
  await resize(1100,820);await projection('waiting_receipt');await until(async()=>(await page.getByRole('region',{name:'自动回复进度',exact:true}).innerText()).includes('确认'),'unknown projection');await shot('automatic-receipt-narrow');
  await projection('stopped');await until(async()=>(await page.getByRole('region',{name:'自动回复进度',exact:true}).innerText()).includes('停止'),'stopped projection');await shot('automatic-stopped-narrow');
  await projection(null);await resize(1440,960);
- await page.getByRole('button',{name:'生成回复建议',exact:true}).click();await page.getByRole('region',{name:'待处理回复建议',exact:true}).waitFor();
+ await page.getByRole('button',{name:'生成回复建议',exact:true}).click();await until(async()=>(await detail()).manual_suggestion?.status==='ready','single suggestion result ready');await page.getByRole('region',{name:'待处理回复建议',exact:true}).waitFor();
  assert.equal((await detail()).manual_suggestion.reply_messages.length,1);await shot('single-manual-suggestion-wide');
  await page.getByRole('button',{name:'替换到输入框',exact:true}).click();
  const editor=page.getByRole('textbox',{name:'回复正文',exact:true});await until(async()=>!!(await editor.inputValue()),'single suggestion adopted');
@@ -96,12 +98,12 @@ try{
  await resize(1100,820);await shot('whole-body-polish-narrow');
  await page.getByRole('button',{name:'替换到输入框',exact:true}).click();await until(async()=>!(await page.getByRole('region',{name:'待处理回复建议',exact:true}).count()),'polish applied');
  await until(async()=>{const value=await detail();return value.chat_draft?.body===await editor.inputValue();},'polish saved');
- await editor.press('Control+Enter');await until(async()=>(await detail()).chat_draft?.status==='accepted','single manual Ctrl+Enter receipt');
+ await until(()=>page.getByRole('button',{name:'发送',exact:true}).isEnabled(),'single send ready');await editor.press('Control+Enter');await until(async()=>(await detail()).chat_draft?.status==='accepted','single manual Ctrl+Enter receipt');
  await editor.fill('A new unsent manual message.');await until(async()=>(await detail()).chat_draft?.body==='A new unsent manual message.','new input preserved');
  await resize(1440,960);await shot('plain-manual-new-input-wide');
  report.completed.push('separate-current-progress-and-history','explicit-projection-wait-receipt-stop-layouts','strict-single-suggestion','whole-body-polish','single-manual-ctrl-enter','new-input-preserved','no-human-multipart-controls');
  assert.deepEqual(report.errors,[]);
  const child=application.process();await application.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());await until(()=>child.exitCode!==null,'normal close');application=null;report.normal_close=true;report.status='passed';
-}catch(error){report.error=error instanceof Error?error.message:'AUTO_WINDOW_FAILED';process.exitCode=1;try{if(page)await shot('failure');}catch{}}
+}catch(error){report.error=error instanceof Error?error.message:'AUTO_WINDOW_FAILED';process.exitCode=1;try{if(page){const snapshot=await invoke('get_snapshot');if(snapshot.app.mode==='demo'){const value=await detail();report.failure_state={reception:snapshot.reception,jobs:snapshot.jobs.slice(0,20).map(job=>({kind:job.kind,status:job.status,message:job.message,error:job.error,diagnostics:job.diagnostics})),case_id:value.case?.case_id||null,draft_status:value.draft?.status||null,batches:value.reply_batches||[]};}await shot('failure');}}catch{}}
 finally{await application?.close();await writeFile(path.join(output,'report.json'),JSON.stringify(report,null,2)+'\n');await rm(temporary,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
 console.log(JSON.stringify(report,null,2));

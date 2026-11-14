@@ -34,7 +34,7 @@ node --test scripts/tests/release-paths.test.mjs
 
 共享翻译配置的窗口回归先构建，再运行 `node scripts/smoke-shared-translation.mjs --label <未使用标签> --legacy-migration`；可加 `--executable` 指向候选EXE。它用两个临时Demo数据根及独立共享目录检查旧格式密钥迁移、跨窗口同步、开关隔离、冲突和重开。`smoke-demo.mjs` 继续检查缓存和原有回复建议。两者显式设置 `RECEPTION_SHARED_SETTINGS_DIR`，不得让自动测试写真实Windows共享配置；截图须实际查看，Demo不替代真实平台验收。
 
-0.3.21窗口检查使用`node scripts/smoke-auto-replies-0321.mjs --label <未使用标签>`，可加`--executable`指定最终候选EXE。脚本用临时Demo数据和预置合成AI回复，实际经业务IPC完成自动两条、三条独立受理、单条建议采用、整段润色、Ctrl+Enter及新输入保留；同步、核查和停止的中间状态截图明确采用投影夹具，不冒充真实平台发送。当前自动进度与折叠历史分别检查，截图须逐张查看。`smoke-whatsapp-native.mjs`使用当前编译的WhatsAppSessionHost提交新的合成登录代次，验证93字符宿主根与27字符分区，公共扫码稳定超过60秒并刷新；原生产资料不访问，意外认证立即停止且禁用历史读取。窗口脚本串行执行。
+0.3.21窗口检查使用`node scripts/smoke-auto-replies-0321.mjs --label <未使用标签>`，可加`--executable`指定最终候选EXE。脚本用临时Demo数据和预置合成AI回复，自动发送的原生确认仅在隔离夹具中返回允许，实际经业务IPC完成自动两条、三条独立受理、单条建议采用、整段润色、Ctrl+Enter及新输入保留；同步、核查和停止的中间状态截图明确采用投影夹具，不冒充真实平台发送。当前自动进度与折叠历史分别检查，截图须逐张查看。`smoke-whatsapp-native.mjs`使用当前编译的WhatsAppSessionHost提交新的合成登录代次，验证93字符宿主根与27字符分区，公共扫码稳定超过60秒并刷新；原生产资料不访问，意外认证立即停止且禁用历史读取。窗口脚本串行执行。
 
 以下0.3.20与0.3.19旧分条/尾部恢复脚本只对应其原版本，0.3.21不执行已退役的人工分条或尾部提取入口。
 
