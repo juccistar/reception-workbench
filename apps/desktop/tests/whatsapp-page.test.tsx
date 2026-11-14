@@ -75,6 +75,85 @@ it('shows restricted HTTP errors and never displays arbitrary exception text', a
   expect(screen.queryByText(/secret raw diagnostic/)).not.toBeInTheDocument();
 });
 
+it('shows an available page separately from SDK failure and remeasures the native view for details', async () => {
+  let y = 240;
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ x: 184, y, width: 1000, height: 600, top: y, left: 184, right: 1184, bottom: y + 600, toJSON() {} }));
+  const { model, bridge, state, invoke } = setup();
+  state.pending_operations = [{ operation_id: 'original', chat_id: 'synthetic@lid', status: 'unknown' }];
+  vi.mocked(bridge.getWhatsAppHostInfo!).mockResolvedValue({ status: 'error', account_id: state.account_id, connection_epoch: 'epoch', page_state: 'available', phase: 'sdk_inject', error_code: 'sdk_resource_missing', diagnostic_id: 'wa_diag_12345678-1234-1234-1234-123456789abc' });
+  render(<WhatsAppPage model={model} bridge={bridge} />);
+  expect(await screen.findByText('原始页面可用，自动接待未就绪')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '开启全部单聊接待' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '断开连接' })).toBeEnabled();
+  await waitFor(() => expect(bridge.setWhatsAppView).toHaveBeenCalledWith({ visible: true, bounds: { x: 184, y: 240, width: 1000, height: 600 } }));
+  y = 300;
+  fireEvent.click(screen.getByRole('button', { name: '查看失败详情' }));
+  expect(screen.getByText(/阶段：注入接待组件/)).toHaveTextContent('接待组件资源缺失');
+  expect(screen.getByText(/诊断编号：wa_diag_12345678-1234-1234-1234-123456789abc/)).toBeInTheDocument();
+  await waitFor(() => expect(bridge.setWhatsAppView).toHaveBeenLastCalledWith({ visible: true, bounds: { x: 184, y: 300, width: 1000, height: 600 } }));
+  fireEvent.click(screen.getByRole('button', { name: '核查 合成单聊客户 的回执' }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('reconcile_whatsapp_operation', { operation_id: 'original' }));
+});
+
+it('shows loading degradation and filters untrusted failure details while allowing pause', async () => {
+  const { model, bridge, state } = setup(); state.enabled = true;
+  vi.mocked(bridge.getWhatsAppHostInfo!).mockResolvedValue({ status: 'error', account_id: state.account_id, connection_epoch: 'epoch', page_state: 'loading', phase: 'C:\\private\\secret' as never, error_code: 'secret error' as never, diagnostic_id: 'C:\\private\\secret' });
+  render(<WhatsAppPage model={model} bridge={bridge} />);
+  expect(await screen.findByText('网页仍在加载，自动接待初始化失败')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '暂停 WhatsApp 接待' })).toBeEnabled();
+  expect(screen.queryByText('全部单聊自动接待已开启')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '查看失败详情' }));
+  expect(screen.getByText(/原因：连接失败，可重新连接/)).toBeInTheDocument();
+  expect(screen.queryByText(/private|secret|阶段：|诊断编号：/)).not.toBeInTheDocument();
+});
+
+it('blocks authorization when the SDK is ready but the business connection is not', async () => {
+  const { model, bridge, state } = setup(); state.connected = false;
+  render(<WhatsAppPage model={model} bridge={bridge} />);
+  await screen.findByText('已连接');
+  expect(screen.getByRole('button', { name: '开启全部单聊接待' })).toBeDisabled();
+});
+
+it('applies host failure events immediately during a blocked business read and ignores older host queries', async () => {
+  const { model, bridge, invoke, state } = setup();
+  let listener!: Parameters<ReceptionBridge['onEvent']>[0];
+  bridge.onEvent = vi.fn(callback => { listener = callback; return () => {}; });
+  let resolveOldHost!: (value: { status: string; account_id: string; connection_epoch: string }) => void;
+  const oldHost = new Promise<{ status: string; account_id: string; connection_epoch: string }>(resolve => { resolveOldHost = resolve; });
+  vi.mocked(bridge.getWhatsAppHostInfo!).mockResolvedValueOnce({ status: 'ready', account_id: state.account_id, connection_epoch: 'epoch' }).mockReturnValueOnce(oldHost);
+  const original = invoke.getMockImplementation()!;
+  let blockBusiness = false;
+  invoke.mockImplementation((method, params) => method === 'get_whatsapp_state' && blockBusiness ? new Promise(() => {}) : original(method, params));
+  render(<WhatsAppPage model={model} bridge={bridge} />);
+  await waitFor(() => expect(screen.getByRole('button', { name: '开启全部单聊接待' })).toBeEnabled());
+  blockBusiness = true;
+  act(() => listener({ event: 'state.changed', data: {} }));
+  act(() => listener({ event: 'whatsapp.host.changed', data: { status: 'error', account_id: state.account_id, connection_epoch: 'epoch', page_state: 'available', error_code: 'cdp_error' } }));
+  expect(screen.getByText('原始页面可用，自动接待未就绪')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '开启全部单聊接待' })).toBeDisabled();
+  await act(async () => resolveOldHost({ status: 'ready', account_id: state.account_id, connection_epoch: 'epoch' }));
+  expect(screen.getByText('原始页面可用，自动接待未就绪')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '开启全部单聊接待' })).toBeDisabled();
+});
+
+it('shows the initial host query without waiting for business state', async () => {
+  const { model, bridge, invoke } = setup();
+  invoke.mockImplementation(() => new Promise(() => {}));
+  vi.mocked(bridge.getWhatsAppHostInfo!).mockResolvedValue({ status: 'error', account_id: '', connection_epoch: '', page_state: 'loading', error_code: 'sdk_timeout' });
+  render(<WhatsAppPage model={model} bridge={bridge} />);
+  expect(await screen.findByText('网页仍在加载，自动接待初始化失败')).toBeInTheDocument();
+});
+
+it('shows the page HTTP error even when diagnostic fields are present', async () => {
+  const { model, bridge } = setup();
+  vi.mocked(bridge.getWhatsAppHostInfo!).mockResolvedValue({ status: 'error', account_id: '', connection_epoch: '', page_state: 'error', phase: 'page_navigation', error_code: 'http_error', http_status: 503, diagnostic_id: 'not-a-wa-id' });
+  render(<WhatsAppPage model={model} bridge={bridge} />);
+  expect(await screen.findByText('登录页请求失败（HTTP 503）')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '查看失败详情' }));
+  expect(screen.getByText(/阶段：加载登录页/)).toBeInTheDocument();
+  expect(screen.queryByText(/诊断编号：/)).not.toBeInTheDocument();
+});
+
 it('shows QR waiting and blocks new authorization during recovery while preserving receipt checks', async () => {
   const { model, bridge, state, invoke } = setup();
   model.snapshot!.executor_health = { state: 'recovering', worker_alive: true, stage: 'dispatch', job_id: null, last_progress_at_ms: 1, observed_at_ms: 2, queue_depth: 0, error_code: null };

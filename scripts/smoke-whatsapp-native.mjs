@@ -9,6 +9,7 @@ const option = name => { const index = process.argv.indexOf(name); return index 
 const label = option('--label');
 assert(/^[a-z0-9][a-z0-9-]{0,60}$/.test(label || ''), 'Pass a new label');
 const runtime = path.resolve(root, option('--runtime-entry') || 'artifacts/app/main/index.js');
+const hostEntry = path.resolve(root, option('--host-entry') || 'artifacts/app/main/index.js');
 const directory = path.join(root, 'artifacts/verification', 'whatsapp-native-' + label);
 await mkdir(directory);
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'arw-wa-native-'));
@@ -18,7 +19,10 @@ await build({ entryPoints: [path.join(root, 'scripts/fixtures/whatsapp-native.ts
 const env = { ...process.env };
 for (const key of Object.keys(env)) if (/^(ACCIO|PHOENIX|RECEPTION)_/i.test(key) || /^(ELECTRON_RUN_AS_NODE|PYTHONPATH|PYTHONHOME|GH_TOKEN|GITHUB_TOKEN)$/i.test(key) || /credential|secret|token|password|api.?key/i.test(key)) delete env[key];
 env.RECEPTION_WA_RUNTIME_ENTRY = runtime;
+env.RECEPTION_WA_HOST_ENTRY = hostEntry;
 env.RECEPTION_WA_FIXTURE_TEMP = temporary;
+env.RECEPTION_WA_SCREENSHOT_OUTPUT = path.join(directory, 'public-page-redacted.png');
+if (process.argv.includes('--fault-after-qr')) env.RECEPTION_WA_SYNTHETIC_FAILURE = '1';
 if (process.argv.includes('--reference-no-cdp')) {
   env.RECEPTION_WA_REFERENCE_NO_CDP = '1';
   env.RECEPTION_WA_SCREENSHOT_OUTPUT = path.join(directory, 'public-page-redacted.png');
@@ -34,13 +38,16 @@ try {
     while ((end = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, end); buffer = buffer.slice(end + 1); if (line.startsWith('WA_FIXTURE_REPORT ')) report = JSON.parse(line.slice('WA_FIXTURE_REPORT '.length)); }
     if (buffer.length > 65536) buffer = '';
   });
-  const timeout = setTimeout(() => { report = { status: 'failed', error_code: 'PROCESS_TIMEOUT' }; child.kill(); }, 180000);
+  const timeout = setTimeout(() => { report = { status: 'failed', error_code: 'PROCESS_TIMEOUT' }; child.kill(); }, 300000);
   const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
   clearTimeout(timeout);
   report.exit_code = code;
   report.version = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version;
   report.runtime_entry = path.relative(root, runtime).replaceAll('\\', '/');
+  report.host_entry = path.relative(root, hostEntry).replaceAll('\\', '/');
+  report.packaged_host_resources = hostEntry.includes('.asar' + path.sep) || hostEntry.includes('.asar/');
   report.packaged_sdk_resources = runtime.includes('.asar' + path.sep) || runtime.includes('.asar/');
+  try { await writeFile(path.join(directory, 'host-diagnostics.jsonl'), await readFile(path.join(temporary, 'diagnostics/whatsapp-host.jsonl'))); report.diagnostics_saved = true; } catch { report.diagnostics_saved = false; }
 } finally {
   await rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   await writeFile(path.join(directory, 'report.json'), JSON.stringify(report, null, 2) + '\n');

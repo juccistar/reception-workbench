@@ -60,6 +60,26 @@ describe('WhatsApp host/service coordination', () => {
     const { coordinator, invoke } = setup(); await coordinator.connect(); await coordinator.listChats();
     expect(invoke).toHaveBeenCalledWith('_wa_ingest', expect.objectContaining({ messages: [expect.objectContaining({ metadata_only: true, is_history: true, body: '', chat_id: intent.chat_id })] }));
   });
+  it('publishes a native SDK failure immediately while business observations are blocked', async () => {
+    const { coordinator, invoke, notify } = setup(); await coordinator.connect();
+    let release!: () => void;
+    invoke.mockImplementation(async method => { if (method === '_wa_ingest') await new Promise<void>(done => { release = done; }); return {}; });
+    coordinator.receive({ type: 'messages', account_id: intent.account_id, connection_epoch: intent.connection_epoch, messages: [] });
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    coordinator.receive({ type: 'account', status: 'error', account_id: intent.account_id, connection_epoch: intent.connection_epoch, error_code: 'sdk_error', phase: 'sdk_callbacks', page_state: 'available', diagnostic_id: 'wa_diag_00000000-0000-4000-8000-000000000001' });
+    expect(notify).toHaveBeenCalledWith({ event: 'whatsapp.host.changed', data: expect.objectContaining({ status: 'error', phase: 'sdk_callbacks', page_state: 'available' }) });
+    expect(invoke).not.toHaveBeenCalledWith('_wa_set_account', expect.anything());
+    release();
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('_wa_set_account', { account_id: intent.account_id, connection_epoch: intent.connection_epoch, status: 'disconnected' }));
+  });
+  it('does not repeat business account synchronization for native page-only progress', async () => {
+    const { coordinator, invoke, notify } = setup();
+    coordinator.receive({ type: 'account', status: 'connecting', account_id: '', connection_epoch: '', phase: 'page_navigation', page_state: 'loading' });
+    coordinator.receive({ type: 'account', status: 'qr', account_id: '', connection_epoch: '', phase: 'qr_wait', page_state: 'available' });
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('_wa_set_account', { account_id: '', connection_epoch: '', status: 'connecting' }));
+    expect(invoke.mock.calls.filter(([method]) => method === '_wa_set_account')).toHaveLength(1);
+    expect(notify.mock.calls.filter(([event]) => event.event === 'whatsapp.host.changed')).toHaveLength(2);
+  });
   it('clamps native bounds and rejects any attempt to cover trusted controls', () => {
     expect(validateWhatsAppView({ visible: true, bounds: { x: 184, y: 240, width: 1300, height: 1000 } }, { width: 1440, height: 960 })).toEqual({ visible: true, bounds: { x: 184, y: 240, width: 1256, height: 696 } });
     expect(() => validateWhatsAppView({ visible: true, bounds: { x: 0, y: 0, width: 1440, height: 960 } }, { width: 1440, height: 960 })).toThrow('控制区');

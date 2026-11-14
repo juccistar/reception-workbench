@@ -1,4 +1,4 @@
-import type { WhatsAppHostErrorCode } from '../../shared/whatsapp';
+import type { WhatsAppHostErrorCode, WhatsAppPhase } from '../../shared/whatsapp';
 
 /** Only these codes cross the host boundary; SDK messages can contain private data. */
 export class WhatsAppConnectionError extends Error {
@@ -27,7 +27,12 @@ export function retryAfterDelay(value: string | undefined, now = Date.now()): nu
   return Number.isFinite(date) ? Math.max(0, date - now) : 60_000;
 }
 
-export function connectionFailure(error: unknown, timeout: 'navigation_timeout' | 'sdk_timeout' = 'sdk_timeout'): WhatsAppConnectionError {
+export class WhatsAppStepFailure extends Error {
+  constructor(readonly phase: WhatsAppPhase, readonly original: unknown) { super('WhatsApp connection step failed'); }
+}
+
+export function connectionFailure(error: unknown, timeout: 'navigation_timeout' | 'sdk_timeout' = 'sdk_timeout', phase?: WhatsAppPhase): WhatsAppConnectionError {
+  if (error instanceof WhatsAppStepFailure) return connectionFailure(error.original, timeout, error.phase);
   if (error instanceof WhatsAppConnectionError) return error;
   // Inspect only to select a fixed code; never expose or persist the source text.
   const text = typeof error === 'string' ? error : error instanceof Error ? error.message : '';
@@ -37,5 +42,9 @@ export function connectionFailure(error: unknown, timeout: 'navigation_timeout' 
   if (/ERR_[A-Z_]+/.test(text)) return new WhatsAppConnectionError('network_error');
   if (/ready timeout/i.test(text)) return new WhatsAppConnectionError('ready_timeout');
   if (/auth timeout/i.test(text)) return new WhatsAppConnectionError('sdk_timeout');
+  if (/ENOENT|Cannot find module|no such file/i.test(text)) return new WhatsAppConnectionError('sdk_resource_missing');
+  if (/Execution context (?:was destroyed|is not available)|Cannot find context|Cannot find execution context|Inspected target navigated/i.test(text)) return new WhatsAppConnectionError('page_context_lost');
+  if (phase === 'cdp_connect' || /Protocol error|Page command failed|Session closed|Target closed/i.test(text)) return new WhatsAppConnectionError('cdp_error');
+  if (phase === 'app_modules') return new WhatsAppConnectionError('app_module_error');
   return new WhatsAppConnectionError('sdk_error');
 }

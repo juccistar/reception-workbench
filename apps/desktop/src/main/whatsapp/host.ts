@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { app, WebContentsView, type BrowserWindow, type Rectangle } from 'electron';
 import puppeteer, { type Frame, type HTTPResponse, type Page } from 'puppeteer';
-import type { WhatsAppHostInfo } from '../../shared/whatsapp';
+import type { WhatsAppHostInfo, WhatsAppPageState, WhatsAppPhase } from '../../shared/whatsapp';
 import { SendLedger, type FrozenIntent, type SendResult } from './ledger';
 import { ViewTransport } from './transport';
-import { connectionFailure, retryAfterDelay, whatsappUserAgent, WhatsAppConnectionError } from './connection';
+import { connectionFailure, retryAfterDelay, whatsappUserAgent, WhatsAppConnectionError, WhatsAppStepFailure } from './connection';
+import { WhatsAppDiagnostics } from './diagnostics';
 
 // whatsapp-web.js 1.34.8, Apache-2.0. The instance-specific initialize adapter
 // follows Client.initialize, replacing browser creation and guarding frame reinjection.
@@ -18,7 +19,7 @@ export type WhatsAppEvent =
   | { type: 'messages'; account_id: string; connection_epoch: string; messages: WhatsAppMessage[] }
   | { type: 'ack'; message_id: string; ack: number; account_id: string; connection_epoch: string };
 export interface WhatsAppMessage { id: string; chat_id: string; body: string; timestamp_ms: number; from_me: boolean; name: string; is_group: boolean; is_history: boolean; metadata_only?: boolean; ack?: number }
-export interface WhatsAppHostOptions { window: BrowserWindow; partition: string; directory: string; onEvent: (event: WhatsAppEvent) => void }
+export interface WhatsAppHostOptions { window: BrowserWindow; partition: string; directory: string; diagnosticsDirectory?: string; applicationVersion?: string; onEvent: (event: WhatsAppEvent) => void }
 const direct = (id: string): boolean => /@(c\.us|lid)$/.test(id);
 const serialized = (id: any): string => typeof id === 'string' ? id : (id?._serialized || '');
 const PHASE_TIMEOUT_MS = 60_000;
@@ -29,12 +30,25 @@ export class WhatsAppHost {
   private client: any;
   private generation = 0;
   private observedDocument = 0;
+  private observedDocumentSerial = 0;
   private retryNotBefore = 0;
   private transport?: ViewTransport;
   private browser?: Awaited<ReturnType<typeof puppeteer.connect>>;
   private phaseTimer?: ReturnType<typeof setTimeout>;
   private pageCleanup?: () => void;
   private failure?: WhatsAppConnectionError;
+  private readonly diagnostics: WhatsAppDiagnostics;
+  private diagnosticId?: string;
+  private stage: WhatsAppPhase = 'view_setup';
+  private pageState: WhatsAppPageState = 'closed';
+  private documentTrusted = false;
+  private documentSerial = 0;
+  private nativeNavigation = '';
+  private nativeProbe?: ReturnType<typeof setInterval>;
+  private probePending = false;
+  private page?: Page;
+  private bindings = new Set<string>();
+  private cleanupTask: Promise<void> = Promise.resolve();
   private status: AccountStatus = 'disconnected';
   private account = '';
   private epoch = '';
@@ -45,6 +59,8 @@ export class WhatsAppHost {
   private outgoing: Array<{ account: string; epoch: string; message: WhatsAppMessage }> = [];
   constructor(private readonly options: WhatsAppHostOptions) {
     if (!options.partition.startsWith('persist:')) throw new Error('WhatsApp requires a persistent partition');
+    this.diagnostics = new WhatsAppDiagnostics(options.diagnosticsDirectory, options.applicationVersion ?? app.getVersion());
+    this.diagnostics.event(0, 'view_setup', 'started');
     this.ledger = new SendLedger(join(options.directory, 'send-ledger'));
     this.view = new WebContentsView({ webPreferences: { partition: options.partition, nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false } });
     const wc = this.view.webContents;
@@ -55,13 +71,36 @@ export class WhatsAppHost {
     wc.setUserAgent(agent);
     wc.setWindowOpenHandler(() => ({ action: 'deny' }));
     wc.on('will-navigate', (event, url) => { if (!this.allowed(url)) event.preventDefault(); });
-    wc.on('render-process-gone', () => this.retire(this.generation, 'error', new WhatsAppConnectionError('page_closed')));
-    wc.on('destroyed', () => this.retire(this.generation, 'error', new WhatsAppConnectionError('page_closed')));
-    wc.on('did-fail-load', (_event, code, description, _url, mainFrame) => {
-      if (mainFrame && code !== -3 && code !== -379 && this.started) this.retire(this.generation, 'error', connectionFailure(new Error(description)));
+    wc.on('render-process-gone', () => this.pageFailed(new WhatsAppConnectionError('page_closed')));
+    wc.on('destroyed', () => this.pageFailed(new WhatsAppConnectionError('page_closed')));
+    wc.on('did-start-navigation', (_event, url, inPlace, mainFrame) => {
+      if (!mainFrame || inPlace || this.closing) return;
+      ++this.documentSerial;
+      this.nativeNavigation = url;
+      this.documentTrusted = false;
+      this.pageState = 'loading';
+      this.update(this.status);
+    });
+    wc.on('did-navigate', (_event, url, code) => {
+      if (this.closing || url === 'about:blank') return;
+      if (!this.allowed(url)) { this.pageFailed(new WhatsAppConnectionError('unexpected_navigation')); return; }
+      if (code >= 400) {
+        if (!this.started) this.pageFailed(new WhatsAppConnectionError('http_error', code));
+        return; // Active SDK responses preserve the exact Retry-After header.
+      }
+      this.documentTrusted = code >= 200 && code < 400;
+      void this.probePage();
+    });
+    wc.on('did-finish-load', () => { void this.probePage(); });
+    wc.on('did-fail-load', (_event, code, description, url, mainFrame) => {
+      if (mainFrame && code !== -3 && code !== -379 && (!this.nativeNavigation || url === this.nativeNavigation))
+        this.pageFailed(connectionFailure(new Error(description), 'navigation_timeout'));
     });
     wc.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     wc.session.setPermissionCheckHandler(() => false);
+    this.nativeProbe = setInterval(() => { void this.probePage(); }, 1000);
+    this.nativeProbe.unref?.();
+    this.diagnostics.event(0, 'view_setup', 'completed');
   }
   private allowed(url: string): boolean {
     try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.hostname === 'web.whatsapp.com'; } catch { return false; }
@@ -74,54 +113,144 @@ export class WhatsAppHost {
   private active(generation: number, account: string, epoch: string): boolean {
     return !this.closing && this.generation === generation && this.status === 'ready' && this.account === account && this.epoch === epoch;
   }
+  private current(generation: number): boolean { return !this.closing && this.started && this.generation === generation; }
+  private async step<T>(generation: number, stage: WhatsAppPhase, action: () => Promise<T>): Promise<T> {
+    if (!this.current(generation)) throw new WhatsAppConnectionError('page_closed');
+    this.stage = stage;
+    this.diagnostics.event(generation, stage, 'started');
+    this.update(this.status);
+    const started = performance.now();
+    try {
+      const result = await action();
+      if (!this.current(generation)) throw new WhatsAppConnectionError('page_closed');
+      this.diagnostics.event(generation, stage, 'completed', performance.now() - started);
+      return result;
+    } catch (error) { throw error instanceof WhatsAppStepFailure ? error : new WhatsAppStepFailure(stage, error); }
+  }
+  private fail(generation: number, error: unknown, stage = this.stage): void {
+    if (!this.current(generation)) return;
+    const phase = error instanceof WhatsAppStepFailure ? error.phase : stage;
+    const original = error instanceof WhatsAppStepFailure ? error.original : error;
+    const failure = connectionFailure(original, phase === 'page_navigation' ? 'navigation_timeout' : 'sdk_timeout', phase);
+    this.stage = phase;
+    this.diagnosticId = this.diagnostics?.failure(generation, phase, original, failure.error_code, failure.http_status);
+    this.retire(generation, 'error', failure);
+  }
+  private pageFailed(error: WhatsAppConnectionError): void {
+    if (this.closing) return;
+    if (error.error_code === 'http_error' && error.http_status === 429)
+      this.retryNotBefore = Math.max(this.retryNotBefore, Date.now() + retryAfterDelay(undefined));
+    this.documentTrusted = false;
+    this.pageState = error.error_code === 'page_closed' ? 'closed' : 'error';
+    if (this.started) this.fail(this.generation, error, 'page_navigation');
+    else {
+      this.stage = 'page_navigation';
+      this.failure = error;
+      this.diagnosticId = this.diagnostics.failure(this.generation, this.stage, error, error.error_code, error.http_status);
+      this.update('error');
+    }
+  }
+  private async probePage(): Promise<void> {
+    if (this.closing || this.probePending || !this.documentTrusted || this.view.webContents.isDestroyed()
+        || !this.allowed(this.view.webContents.getURL()) || typeof this.view.webContents.executeJavaScript !== 'function') return;
+    const serial = this.documentSerial;
+    this.probePending = true;
+    try {
+      // Read only visibility booleans. Never copy a QR value, page text or contact.
+      const available = await this.view.webContents.executeJavaScript('(() => { const node = document.querySelector("canvas[data-ref], [data-testid=qrcode], [data-ref] canvas, #pane-side, [data-testid=chat-list]"); return !!node && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0; })()');
+      if (!this.closing && this.documentSerial === serial && this.documentTrusted && available === true && this.pageState !== 'available') {
+        this.pageState = 'available';
+        this.update(this.status);
+      }
+    } catch { /* A navigation can replace the document while this passive probe runs. */ }
+    finally { this.probePending = false; }
+  }
   private clearPhase(): void {
     if (this.phaseTimer) clearTimeout(this.phaseTimer);
     this.phaseTimer = undefined;
   }
   private phase(generation: number, code: 'navigation_timeout' | 'sdk_timeout' | 'ready_timeout'): void {
     this.clearPhase();
-    this.phaseTimer = setTimeout(() => this.retire(generation, 'error', new WhatsAppConnectionError(code)), PHASE_TIMEOUT_MS);
+    this.phaseTimer = setTimeout(() => this.fail(generation, new WhatsAppConnectionError(code)), PHASE_TIMEOUT_MS);
   }
   private releaseConnection(): void {
     this.clearPhase();
     const cleanup = this.pageCleanup;
-    const browser = this.browser, transport = this.transport;
+    const browser = this.browser, transport = this.transport, page = this.page;
+    const bindings = [...(this.bindings ?? [])], generation = this.generation;
+    this.bindings?.clear();
     this.pageCleanup = undefined;
     this.browser = undefined;
     this.transport = undefined;
-    // Cleanup failure must not leave another callback/transport controlling this view.
+    this.page = undefined;
     try { this.client?._injectAbort?.abort(); } catch { /* best effort */ }
     try { this.client?.removeAllListeners(); } catch { /* best effort */ }
     try { cleanup?.(); } catch { /* best effort */ }
-    try { browser?.disconnect(); } catch { /* best effort */ }
-    try { transport?.close(); } catch { /* best effort */ }
+    const disconnect = () => {
+      try { browser?.disconnect(); } catch { /* best effort */ }
+      try { transport?.close(); } catch { /* best effort */ }
+    };
+    if (!page || !bindings.length) { disconnect(); this.cleanupTask = Promise.resolve(); return; }
+    // All operations retain the old CDP session/context. Reconnect waits for this
+    // bounded cleanup; a retired Page can never issue commands through a new one.
+    const release = (async () => {
+      await Promise.all(bindings.map(name => page.removeExposedFunction(name).catch(() => {})));
+      await page.evaluate(names => {
+        const sdk = window as any;
+        for (const [owner, event, handler] of sdk._wwjsListeners || []) owner.off(event, handler);
+        delete sdk._wwjsListeners;
+        for (const name of names) sdk[name] = async () => undefined;
+      }, bindings);
+      return true;
+    })().catch(() => false);
+    this.cleanupTask = (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const clean = await Promise.race([release, new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 1000); })]);
+      if (timer) clearTimeout(timer);
+      disconnect();
+      if (!clean && !this.closing && this.generation === generation) {
+        this.documentTrusted = false;
+        this.pageState = 'error';
+        this.update(this.status);
+      }
+    })();
   }
   private retire(generation: number, status: 'disconnected' | 'error', failure?: WhatsAppConnectionError): void {
     if (this.generation !== generation || this.closing || !this.started) return;
+    const keepPage = !!failure && (this.documentTrusted || failure.error_code === 'page_context_lost' && this.allowed(this.nativeNavigation))
+      && ['sdk_timeout', 'ready_timeout', 'sdk_error', 'cdp_error', 'sdk_resource_missing', 'page_context_lost', 'app_module_error', 'auth_failed'].includes(failure.error_code);
     ++this.generation;
     this.started = false;
     this.failure = failure;
     this.outgoing = this.outgoing.filter(item => item.epoch !== this.epoch);
     this.pendingSends.delete(this.epoch);
+    if (!keepPage) {
+      this.documentTrusted = false;
+      this.pageState = failure?.error_code === 'page_closed' ? 'closed' : failure ? 'error' : 'closed';
+      if (!this.view?.webContents.isDestroyed()) this.view?.webContents.stop();
+    }
     this.releaseConnection();
-    if (!this.view?.webContents.isDestroyed()) this.view?.webContents.stop();
     this.update(status);
   }
   private bindEvents(client: any, generation: number): void {
     const current = () => !this.closing && this.generation === generation;
     client.on('qr', () => {
-      if (current() && this.status !== 'authenticated' && this.status !== 'ready') { this.clearPhase(); this.update('qr'); }
+      if (current() && this.status !== 'authenticated' && this.status !== 'ready') {
+        this.clearPhase(); this.stage = 'qr_wait'; this.update('qr'); void this.probePage();
+      }
     });
     client.on('authenticated', () => {
-      if (current() && this.status !== 'ready') { this.phase(generation, 'ready_timeout'); this.update('authenticated'); }
+      if (current() && this.status !== 'ready') { this.stage = 'authenticated'; this.phase(generation, 'ready_timeout'); this.update('authenticated'); }
     });
-    client.on('auth_failure', () => this.retire(generation, 'error', new WhatsAppConnectionError('auth_failed')));
+    client.on('auth_failure', () => this.fail(generation, new WhatsAppConnectionError('auth_failed')));
     client.on('disconnected', () => this.retire(generation, 'disconnected'));
     client.on('ready', () => {
       if (!current() || this.status === 'ready') return;
       this.account = serialized(client.info?.wid);
-      if (!this.account) { this.retire(generation, 'error', new WhatsAppConnectionError('auth_failed')); return; }
+      if (!this.account) { this.fail(generation, new WhatsAppConnectionError('auth_failed')); return; }
       this.clearPhase();
+      this.stage = 'ready'; this.pageState = 'available';
+      this.diagnostics?.event(generation, 'ready', 'completed');
       this.epoch = randomUUID(); this.update('ready');
       void this.readHistory(client, generation, this.account, this.epoch).catch(() => { /* no content or account in logs */ });
     });
@@ -161,76 +290,113 @@ export class WhatsAppHost {
     if (Date.now() < this.retryNotBefore) return;
     this.started = true;
     this.failure = undefined;
+    this.diagnosticId = undefined;
+    this.stage = 'view_setup';
+    this.pageState = 'loading';
+    this.documentTrusted = false;
     const generation = ++this.generation;
-    const client = this.client = new Client({ userAgent: false, authTimeoutMs: PHASE_TIMEOUT_MS, webVersionCache: { type: 'none' } });
-    this.bindEvents(client, generation);
     this.phase(generation, 'sdk_timeout');
     this.update('connecting');
-    void this.initialize(client, generation).catch(error => this.retire(generation, 'error', connectionFailure(error)));
+    void (async () => {
+      await this.cleanupTask;
+      if (!this.current(generation)) return;
+      const client = this.client = await this.step(generation, 'auth_setup', async () => new Client({ userAgent: false, authTimeoutMs: PHASE_TIMEOUT_MS, webVersionCache: { type: 'none' } }));
+      this.bindEvents(client, generation);
+      await this.initialize(client, generation);
+    })().catch(error => this.fail(generation, error));
   }
   private httpFailure(response: HTTPResponse): WhatsAppConnectionError {
     if (response.status() === 429) this.retryNotBefore = Date.now() + retryAfterDelay(response.headers?.()['retry-after']);
     return new WhatsAppConnectionError('http_error', response.status());
   }
   private observePage(page: Page, client: any, generation: number): void {
-    const fail = (error: unknown) => this.retire(generation, 'error', connectionFailure(error));
     const response = (result: HTTPResponse) => {
-      if (result.request().isNavigationRequest() && result.frame() === page.mainFrame() && result.status() >= 400)
-        fail(this.httpFailure(result));
+      if (!this.current(generation)) return;
+      if (result.request().isNavigationRequest() && result.frame() === page.mainFrame() && result.status() >= 400) {
+        this.documentTrusted = false;
+        this.fail(generation, this.httpFailure(result), 'page_navigation');
+      }
     };
     const navigated = (frame: Frame) => {
-      if (frame.parentFrame() !== null || this.closing || this.generation !== generation || this.observedDocument !== generation) return;
-      void (async () => {
-        if (!this.allowed(frame.url())) throw new WhatsAppConnectionError('unexpected_navigation');
-        if (frame.url().includes('post_logout=1') || client.lastLoggedOut) { this.retire(generation, 'disconnected'); return; }
-        const injected = await page.evaluate(() => typeof (window as any).WWebJS !== 'undefined');
-        if (injected || this.closing || this.generation !== generation) return;
-        this.phase(generation, 'sdk_timeout');
-        this.update('connecting');
-        await client.inject();
-      })().catch(fail);
+      if (frame.parentFrame() !== null || !this.current(generation) || this.observedDocument !== generation) return;
+      if (!this.allowed(frame.url())) { this.fail(generation, new WhatsAppConnectionError('unexpected_navigation'), 'page_navigation'); return; }
+      if (frame.url().includes('post_logout=1') || client.lastLoggedOut) { this.retire(generation, 'disconnected'); return; }
+      // A complete document replacement invalidates its bindings. Retire once
+      // and keep the native navigation, rather than overlapping inject tasks.
+      if (this.documentSerial !== this.observedDocumentSerial)
+        this.fail(generation, new WhatsAppConnectionError('page_context_lost'), 'sdk_callbacks');
     };
+    const notice = (error: unknown) => {
+      if (this.current(generation)) this.diagnostics.failure(generation, this.stage, error, connectionFailure(error).error_code, undefined, false);
+    };
+    let restoreBindings = () => {};
+    if (typeof page.exposeFunction === 'function') {
+      const originalExpose = page.exposeFunction;
+      const expose = originalExpose.bind(page);
+      restoreBindings = () => { page.exposeFunction = originalExpose; };
+      page.exposeFunction = (async (name: string, callback: (...args: any[]) => any) => {
+        if (!this.current(generation)) throw new WhatsAppConnectionError('page_closed');
+        this.bindings.add(name);
+        await expose(name, async (...args: any[]) => {
+          if (!this.current(generation)) return;
+          try { return await callback(...args); }
+          catch (error) { this.fail(generation, error, 'sdk_callbacks'); }
+        });
+      }) as Page['exposeFunction'];
+    }
     page.on('response', response);
     page.on('framenavigated', navigated);
-    this.pageCleanup = () => { page.off('response', response); page.off('framenavigated', navigated); };
+    page.on('pageerror', notice);
+    this.pageCleanup = () => { page.off('response', response); page.off('framenavigated', navigated); page.off('pageerror', notice); restoreBindings(); };
   }
   private async initialize(client: any, generation: number): Promise<void> {
     const ensureCurrent = () => { if (this.closing || this.generation !== generation) throw new WhatsAppConnectionError('page_closed'); };
     // Start a fresh document for each connection; the persistent partition is retained.
     // This also discards exposed bindings/scripts belonging to a retired SDK instance.
-    await this.view.webContents.loadURL('about:blank'); ensureCurrent();
-    const transport = this.transport = new ViewTransport(this.view.webContents);
-    const browser = await puppeteer.connect({ transport, defaultViewport: null });
-    if (this.closing || this.generation !== generation) { browser.disconnect(); return; }
-    this.browser = browser;
-    browser.once('disconnected', () => this.retire(generation, 'disconnected'));
-    const page = await browser.newPage(); ensureCurrent();
-    await client.authStrategy.beforeBrowserInitialized(); ensureCurrent();
-    client.pupBrowser = browser; client.pupPage = page;
-    await client.authStrategy.afterBrowserInitialized(); ensureCurrent();
-    await client.initWebVersionCache(); ensureCurrent();
+    await this.step(generation, 'view_setup', () => this.view.webContents.loadURL('about:blank')); ensureCurrent();
+    const browser = await this.step(generation, 'cdp_connect', async () => {
+      const transport = this.transport = new ViewTransport(this.view.webContents);
+      const connected = await puppeteer.connect({ transport, defaultViewport: null });
+      if (!this.current(generation)) { connected.disconnect(); throw new WhatsAppConnectionError('page_closed'); }
+      this.browser = connected;
+      connected.once('disconnected', () => this.fail(generation, new WhatsAppConnectionError('cdp_error')));
+      return connected;
+    });
+    const page = this.page = await this.step(generation, 'cdp_connect', () => browser.newPage()); ensureCurrent();
+    await this.step(generation, 'auth_setup', async () => {
+      await client.authStrategy.beforeBrowserInitialized(); ensureCurrent();
+      client.pupBrowser = browser; client.pupPage = page;
+      await client.authStrategy.afterBrowserInitialized();
+    });
+    await this.step(generation, 'version_cache', () => client.initWebVersionCache());
     this.observePage(page, client, generation);
     this.phase(generation, 'navigation_timeout');
-    const response = await page.goto('https://web.whatsapp.com/', { waitUntil: 'load', timeout: PHASE_TIMEOUT_MS, referer: 'https://whatsapp.com/' })
-      .catch(error => { throw connectionFailure(error, 'navigation_timeout'); }); ensureCurrent();
-    if (!response || response.status() < 200) throw new WhatsAppConnectionError('invalid_response');
-    if (response.status() >= 400) throw this.httpFailure(response);
-    if (!this.allowed(page.url())) throw new WhatsAppConnectionError('unexpected_navigation');
+    await this.step(generation, 'page_navigation', async () => {
+      const response = await page.goto('https://web.whatsapp.com/', { waitUntil: 'load', timeout: PHASE_TIMEOUT_MS, referer: 'https://whatsapp.com/' });
+      ensureCurrent();
+      if (!response || response.status() < 200) throw new WhatsAppConnectionError('invalid_response');
+      if (response.status() >= 400) throw this.httpFailure(response);
+      if (!this.allowed(page.url())) throw new WhatsAppConnectionError('unexpected_navigation');
+      this.documentTrusted = true;
+    });
     this.observedDocument = generation;
+    this.observedDocumentSerial = this.documentSerial;
     this.phase(generation, 'sdk_timeout');
+    void this.probePage();
     // WhatsApp loads application modules after the document load event. Give
     // that bounded bootstrap its own budget, then bound SDK authentication.
-    const readiness = await page.waitForFunction(() => {
-      const text = (document.body?.innerText || '').replace(/\s+/g, ' ');
-      if (/WhatsApp\s*(?:支持|supports|works with)\s*(?:Google\s*)?Chrome\s*\d+/i.test(text)) return 'browser_unsupported';
-      return (window as any).Debug?.VERSION !== undefined ? 'ready' : false;
-    }, { timeout: PHASE_TIMEOUT_MS, polling: 250 }); ensureCurrent();
-    const ready = await readiness.jsonValue();
-    await readiness.dispose(); ensureCurrent();
-    if (ready === 'browser_unsupported') throw new WhatsAppConnectionError('browser_unsupported');
+    await this.step(generation, 'app_modules', async () => {
+      const readiness = await page.waitForFunction(() => {
+        const text = (document.body?.innerText || '').replace(/\s+/g, ' ');
+        if (/WhatsApp\s*(?:支持|supports|works with)\s*(?:Google\s*)?Chrome\s*\d+/i.test(text)) return 'browser_unsupported';
+        return (window as any).Debug?.VERSION !== undefined ? 'ready' : false;
+      }, { timeout: PHASE_TIMEOUT_MS, polling: 250 });
+      try { if (await readiness.jsonValue() === 'browser_unsupported') throw new WhatsAppConnectionError('browser_unsupported'); }
+      finally { await readiness.dispose(); }
+    });
     if (this.status !== 'connecting') return;
     this.phase(generation, 'sdk_timeout');
-    await client.inject(); ensureCurrent();
+    await this.step(generation, 'sdk_inject', () => client.inject()); ensureCurrent();
   }
   setVisible(visible: boolean, bounds?: Rectangle): void {
     if (visible && !bounds) throw new Error('Visible WhatsApp view requires bounds');
@@ -241,6 +407,8 @@ export class WhatsAppHost {
   }
   getStatus(): WhatsAppHostInfo {
     return { status: this.status, account_id: this.account, connection_epoch: this.epoch,
+      page_state: this.pageState, phase: this.stage,
+      ...(this.diagnosticId ? { diagnostic_id: this.diagnosticId } : {}),
       ...(this.failure ? { error_code: this.failure.error_code, ...(this.failure.http_status ? { http_status: this.failure.http_status } : {}) } : {}) };
   }
   async listChats(): Promise<Array<{ chat_id: string; name: string }>> {
@@ -286,6 +454,8 @@ export class WhatsAppHost {
     this.started = false;
     ++this.generation;
     this.clearPhase();
+    if (this.nativeProbe) clearInterval(this.nativeProbe);
+    this.nativeProbe = undefined;
     this.client?._injectAbort?.abort();
     if (this.visible) this.setVisible(false);
     try {
@@ -295,7 +465,10 @@ export class WhatsAppHost {
       }
     } finally {
       this.releaseConnection();
+      await this.cleanupTask;
       this.failure = undefined;
+      this.documentTrusted = false;
+      this.pageState = 'closed';
       if (!this.view.webContents.isDestroyed()) this.view.webContents.close();
       this.update('disconnected');
     }

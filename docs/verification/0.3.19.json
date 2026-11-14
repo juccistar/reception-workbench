@@ -1,0 +1,79 @@
+{
+  "version": "0.3.19",
+  "date": "2026-11-14",
+  "status": "source-built-awaiting-window-verification",
+  "public_latest": "0.3.18",
+  "architecture": "single-electron-webcontentsview-shared-with-sdk",
+  "targeted_tests": {
+    "desktop": {
+      "status": "passed",
+      "whatsapp_connection": 25,
+      "whatsapp_host_lifecycle": 2,
+      "whatsapp_coordinator": 8,
+      "whatsapp_diagnostics": 5,
+      "whatsapp_transport": 3,
+      "whatsapp_ledger": 1,
+      "whatsapp_page": 13,
+      "distinct_cases": 57
+    },
+    "backend": {
+      "status": "passed",
+      "test_requirement_changes_0316.py": 18,
+      "test_whatsapp_0317.py": 14,
+      "distinct_cases": 32
+    },
+    "tools": {
+      "status": "passed",
+      "whatsapp_runtime_closure": 1
+    },
+    "typescript": "passed",
+    "driver_javascript_syntax": "passed",
+    "full_suite_run": false
+  },
+  "desktop_build": {
+    "status": "passed",
+    "output": "artifacts/app"
+  },
+  "actual_window": {
+    "status": "pending",
+    "synthetic_only": true,
+    "actual_renderer_preload_and_demo_backend": true,
+    "host_event_injected": true,
+    "actual_sdk_fault_in_window": false,
+    "screenshots_visually_reviewed": false
+  },
+  "whatsapp_public_page": {
+    "normal_cold_start": { "status": "pending" },
+    "controlled_post_qr_sdk_failure": { "status": "pending" },
+    "compiled_host_used": true,
+    "fixture_startup_replaced": true,
+    "real_merchant_bootstrap_used": false,
+    "prewarm_before_connect": false,
+    "required_observation_ms": 60000,
+    "qr_refresh_required": true,
+    "real_account_login": false,
+    "real_account_reconnection": false,
+    "real_customer_sends": 0,
+    "real_ai_calls": 0,
+    "qr_or_credentials_recorded": false,
+    "screenshots_visually_reviewed": false,
+    "sdk_dependency_versions_changed": false
+  },
+  "actual_merchant_failure": {
+    "status": "not-reproduced-not-accepted",
+    "root_cause_confirmed": false,
+    "diagnostics_and_page_preservation_only": true
+  },
+  "requirements": {
+    "incremental_logic_changed": false,
+    "forced_create_or_rewrite_added": false,
+    "runtime_legacy_cleanup_added": false,
+    "one_time_local_maintenance": "previously-completed-separately-not-repeated"
+  },
+  "packaging": { "status": "not-run" },
+  "public_release": { "status": "not-run" },
+  "installation": { "status": "not-run" },
+  "default_entry_promotion": false,
+  "production_data_accessed_during_development": false,
+  "private_source_push": false
+}

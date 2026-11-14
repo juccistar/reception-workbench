@@ -42,6 +42,7 @@ export class WhatsAppCoordinator {
   private readonly sends = new Map<string, Promise<void>>();
   private stopping = false;
   private generation = 0;
+  private accountProjection = '';
   constructor(private readonly options: Options) {}
   getStatus(): WhatsAppHostInfo { return this.host?.getStatus() ?? { ...disconnected }; }
   private error(): void { this.options.notify({ event: 'whatsapp.host.error', data: { message: 'WhatsApp 连接或回执处理未完成，请保留原操作并检查连接。' } }); }
@@ -65,11 +66,21 @@ export class WhatsAppCoordinator {
   }
   setView(request: WhatsAppViewRequest): void { if (this.host && !this.stopping) this.host.setVisible(request.visible, request.bounds); }
   receive(event: WhatsAppEvent): void {
+    let accountIdentity = '';
+    if (event.type === 'account') {
+      // Native failures must reach the UI even while the business queue waits.
+      const { type: _type, ...info } = event;
+      this.options.notify({ event: 'whatsapp.host.changed', data: info });
+      const status = event.status === 'ready' ? 'connected' : ['disconnected', 'error'].includes(event.status) ? 'disconnected' : 'connecting';
+      accountIdentity = JSON.stringify([status, event.account_id, event.connection_epoch]);
+      if (accountIdentity === this.accountProjection) return;
+      this.accountProjection = accountIdentity;
+    }
     void this.enqueue(async () => {
       if (event.type === 'account') {
         const status = event.status === 'ready' ? 'connected' : ['disconnected', 'error'].includes(event.status) ? 'disconnected' : 'connecting';
-        await this.options.invoke('_wa_set_account', { account_id: event.account_id, connection_epoch: event.connection_epoch, status });
-        this.options.notify({ event: 'whatsapp.host.changed', data: { status: event.status, ...(event.error_code ? { error_code: event.error_code } : {}), ...(event.http_status ? { http_status: event.http_status } : {}) } });
+        try { await this.options.invoke('_wa_set_account', { account_id: event.account_id, connection_epoch: event.connection_epoch, status }); }
+        catch (error) { if (this.accountProjection === accountIdentity) this.accountProjection = ''; throw error; }
         if (status === 'connected') {
           const state = await this.options.invoke<{ pending_operations: { operation_id: string }[] }>('get_whatsapp_state');
           for (const operation of state.pending_operations) void this.reconcile(operation.operation_id).catch(() => this.error());

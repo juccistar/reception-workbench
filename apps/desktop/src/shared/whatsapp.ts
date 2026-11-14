@@ -27,8 +27,19 @@ export interface WhatsAppContext {
     supplement: { body?: string; attachments?: { id: string; name: string; text?: string }[] };
   };
 }
-export type WhatsAppHostErrorCode = 'http_error' | 'network_error' | 'tls_error' | 'navigation_timeout' | 'sdk_timeout' | 'ready_timeout' | 'auth_failed' | 'sdk_error' | 'invalid_response' | 'page_closed' | 'unexpected_navigation' | 'browser_unsupported';
-export interface WhatsAppHostInfo { status: string; account_id: string; connection_epoch: string; error_code?: WhatsAppHostErrorCode; http_status?: number }
+export type WhatsAppPhase = 'view_setup' | 'cdp_connect' | 'auth_setup' | 'version_cache' | 'page_navigation' | 'app_modules' | 'sdk_inject' | 'sdk_callbacks' | 'qr_wait' | 'authenticated' | 'ready';
+export type WhatsAppPageState = 'loading' | 'available' | 'error' | 'closed';
+export type WhatsAppHostErrorCode = 'http_error' | 'network_error' | 'tls_error' | 'navigation_timeout' | 'sdk_timeout' | 'ready_timeout' | 'auth_failed' | 'sdk_error' | 'invalid_response' | 'page_closed' | 'unexpected_navigation' | 'browser_unsupported' | 'cdp_error' | 'sdk_resource_missing' | 'page_context_lost' | 'app_module_error';
+export interface WhatsAppHostInfo {
+  status: string;
+  account_id: string;
+  connection_epoch: string;
+  error_code?: WhatsAppHostErrorCode;
+  http_status?: number;
+  page_state?: WhatsAppPageState;
+  phase?: WhatsAppPhase;
+  diagnostic_id?: string;
+}
 export interface WhatsAppViewRequest { visible: boolean; bounds?: { x: number; y: number; width: number; height: number } }
 export interface WhatsAppHostBridge {
   getWhatsAppHostInfo(): Promise<WhatsAppHostInfo>;

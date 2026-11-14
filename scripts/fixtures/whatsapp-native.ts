@@ -1,60 +1,117 @@
 import { app, BrowserWindow } from 'electron';
-import puppeteer from 'puppeteer';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { WhatsAppHost } from '../../apps/desktop/src/main/whatsapp/host';
-import { ViewTransport } from '../../apps/desktop/src/main/whatsapp/transport';
+import { writeFile } from 'node:fs/promises';
+import puppeteer from 'puppeteer';
+import { compiledWhatsAppHost } from './compiled-whatsapp-host';
+import type { WhatsAppHost as Host } from '../../apps/desktop/src/main/whatsapp/host';
 
 app.setPath('userData', process.env.RECEPTION_WA_FIXTURE_TEMP!);
 app.setName('询盘接待助手');
-const report = { status: 'failed', reference_no_cdp: process.env.RECEPTION_WA_REFERENCE_NO_CDP === '1', formal_chinese_application_name: true, app_version: app.getVersion(), actual_ascii_request: false, application_tokens_omitted: false, request_chrome_matches_engine: false, cdp_version_matches_engine: false, public_http_status: 0, failed_subresource_count: 0, resource_error_codes: [] as string[], resource_status_counts: {} as Record<string, number>, page_error_types: [] as string[], session_ascii_user_agent: false, non_ascii_subresource_requests: false, public_page: {} as Record<string, boolean>, public_module_names: [] as string[], failed_public_modules: [] as Array<{ module: string; type: string; category: string }>, redacted_screenshot: false, environment: {} as Record<string, boolean>, same_visible_dom: false, expose_function: false, preload_script: false, remote_page_has_business_bridge: false, sdk_injected_to_qr: false, logged_in: false, real_ai_calls: 0, real_customer_sends: 0, qr_recorded: false, normal_close: false, error_code: '' };
-let host: WhatsAppHost | undefined;
-let fixtureWindow: BrowserWindow | undefined;
-let finished = false;
-let timer: ReturnType<typeof setTimeout>;
-let referenceTimer: ReturnType<typeof setInterval> | undefined;
+const reference = process.env.RECEPTION_WA_REFERENCE_NO_CDP === '1';
+const controlledFailure = process.env.RECEPTION_WA_SYNTHETIC_FAILURE === '1';
+const report: any = { status: 'failed', version: app.getVersion(), cold_start: true, prewarm_before_connect: false,
+  compiled_host_used: true, fixture_startup_replaced: true, real_merchant_bootstrap_used: false,
+  reference_no_cdp: reference, controlled_sdk_failure: controlledFailure, formal_chinese_application_name: true,
+  actual_ascii_request: false, application_tokens_omitted: false, request_chrome_matches_engine: false,
+  session_ascii_user_agent: false, public_http_status: 0, sdk_injected_to_qr: false, sdk_inject_completed: false,
+  qr_events: 0, native_qr_visible: false, qr_refresh_observed: false, qr_refresh_requested: false,
+  stable_observation_ms: 0, sdk_state_stable: false, normal_close: false, qr_recorded: false,
+  logged_in: false, real_ai_calls: 0, real_customer_sends: 0, production_data_accessed: false, error_code: '' };
+let fixtureWindow: BrowserWindow;
+let host: Host;
+let classes: ReturnType<typeof compiledWhatsAppHost>;
+let deadline: ReturnType<typeof setTimeout>;
+let watcher: ReturnType<typeof setInterval>;
+let visibleSince = 0, missingSamples = 0, probing = false, finished = false;
+let expectedFault = false;
+const qrProbe = `(() => {
+  const node = document.querySelector('canvas[data-ref], [data-testid=qrcode], [data-ref] canvas');
+  const visible = !!node && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0;
+  const reference = node?.getAttribute('data-ref') || node?.closest('[data-ref]')?.getAttribute('data-ref');
+  const previous = window.__fixtureQrReference;
+  const changed = !!reference && !!previous && reference !== previous;
+  if (reference) window.__fixtureQrReference = reference;
+  return { visible, changed, bridge_absent: typeof window.reception === 'undefined' && typeof process === 'undefined' && typeof require === 'undefined' };
+})()`;
+
+async function protocolAfterColdRun() {
+  const probe: any = new classes.WhatsAppHost({ window: fixtureWindow, partition: 'persist:protocol-' + randomUUID(), directory: join(process.env.RECEPTION_WA_FIXTURE_TEMP!, 'protocol-ledger'), onEvent: () => {} });
+  probe.setVisible(true, { x: 0, y: 0, width: 980, height: 740 });
+  const contents = probe.view.webContents;
+  await contents.loadURL('about:blank');
+  const transport = new classes.ViewTransport(contents);
+  const browser = await puppeteer.connect({ transport, defaultViewport: null });
+  try {
+    const page = await browser.newPage();
+    report.cdp_version_matches_engine = await browser.version() === `Chrome/${process.versions.chrome}`;
+    await page.evaluate(() => { document.body.innerHTML = '<p id="same-view">synthetic</p>'; });
+    report.same_visible_dom = await contents.executeJavaScript('document.getElementById("same-view")?.textContent === "synthetic"');
+    await page.exposeFunction('fixtureAdd', (a: number, b: number) => a + b);
+    await page.evaluateOnNewDocument('window.__synthetic_before_load = true');
+    await page.goto('about:blank');
+    report.expose_function = await page.evaluate(async () => await (window as any).fixtureAdd(2, 3) === 5);
+    report.preload_script = await page.evaluate(() => (window as any).__synthetic_before_load === true);
+  } finally { browser.disconnect(); transport.close(); await probe.close(); }
+}
+
 async function finish(code = '') {
   if (finished) return;
-  finished = true; clearTimeout(timer); clearInterval(referenceTimer); report.error_code = code;
+  finished = true; clearTimeout(deadline); clearInterval(watcher);
+  report.error_code = code;
   try {
     const contents = (host as any)?.view.webContents;
-    if (contents && !contents.isDestroyed()) report.public_page = await contents.executeJavaScript('(() => { const loaded = name => { try { return !!window.require?.(name); } catch { return false; } }; const text = document.body?.innerText || ""; return { document_complete: document.readyState === "complete", debug_version_available: !!window.Debug?.VERSION, debug_module_available: loaded("Debug"), socket_module_available: loaded("WAWebSocketModel"), module_loader_available: typeof window.require === "function", sdk_utilities_available: typeof window.WWebJS !== "undefined", four_xx_page: /4xx Client Error/i.test(text), browser_unsupported: /browser.{0,40}(not supported|unsupported)|update.{0,20}(your )?browser|WhatsApp\\s*(?:支持|supports|works with)\\s*(?:Google\\s*)?Chrome\\s*\\d+/i.test(text.replace(/\\s+/g, " ")), qr_canvas_available: !!document.querySelector("canvas[data-ref], [data-testid=qrcode], [data-ref] canvas"), login_copy_visible: /Scan.{0,40}QR|Link with phone number|使用手机|扫描二维码/i.test(text), loading_copy_visible: /loading|正在加载/i.test(text), scripts_present: document.scripts.length > 0, business_bridge_absent: typeof window.reception === "undefined" && typeof process === "undefined" }; })()');
     if (contents && !contents.isDestroyed()) {
-      report.public_module_names = await contents.executeJavaScript('(() => { try { return Object.keys(window.require("__debug").modulesMap).filter(name => /^WA(?:Web)?[A-Za-z]*(?:Socket|Conn)[A-Za-z]*$/.test(name)).slice(0,30); } catch { return []; } })()');
-      report.failed_public_modules = await contents.executeJavaScript('(() => { try { return Object.entries(window.require("__debug").modulesMap).filter(([name, entry]) => /^WA[A-Za-z0-9_$]{1,120}$/.test(name) && entry.hasError).slice(0,20).map(([name, entry]) => { const error = entry.error; const text = String(error?.message || ""); return { module: name, type: /^[A-Za-z]{1,40}$/.test(error?.name || "") ? error.name : "Error", category: /indexeddb|storage|quota/i.test(text) ? "storage" : /worker/i.test(text) ? "worker" : /crypto/i.test(text) ? "crypto" : /dependency|unknown module|not been defined/i.test(text) ? "dependency" : /denied|security|policy/i.test(text) ? "permission" : "module" }; }); } catch { return []; } })()');
-      if (process.env.RECEPTION_WA_SCREENSHOT_OUTPUT) {
-        await contents.insertCSS('canvas,img,svg,video,iframe,[data-ref],[data-testid="qrcode"] { visibility: hidden !important; }');
+      report.final_host_status = host.getStatus().status;
+      report.final_page_state = host.getStatus().page_state;
+      if (process.env.RECEPTION_WA_SCREENSHOT_OUTPUT && !report.logged_in) {
+        await contents.insertCSS('canvas,img,svg,video,iframe,[data-ref],[data-testid="qrcode"] { visibility:hidden !important; }');
         await contents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-        const { writeFile } = await import('node:fs/promises');
         await writeFile(process.env.RECEPTION_WA_SCREENSHOT_OUTPUT, (await contents.capturePage()).toPNG());
         report.redacted_screenshot = true;
       }
     }
-  } catch { /* Capture only public symbols/booleans, never credentials or DOM text. */ }
-  try { await host?.close(); report.normal_close = true; } catch { report.error_code ||= 'CLOSE_FAILED'; }
-  report.status = report.actual_ascii_request && report.session_ascii_user_agent && !report.non_ascii_subresource_requests && report.application_tokens_omitted && report.request_chrome_matches_engine && report.cdp_version_matches_engine && report.public_http_status === 200 && Object.values(report.environment).every(Boolean) && report.same_visible_dom && report.expose_function && report.preload_script && report.sdk_injected_to_qr && report.normal_close && !report.remote_page_has_business_bridge && !report.error_code ? 'passed' : 'failed';
-  if (report.reference_no_cdp) report.status = report.public_page.qr_canvas_available && report.public_http_status === 200 && report.normal_close && !report.error_code ? 'reference-ready' : 'reference-not-ready';
+    await host?.close();
+    if (!reference && !code) await protocolAfterColdRun();
+    report.normal_close = true;
+  } catch { report.error_code ||= 'CLOSE_OR_PROTOCOL_CHECK_FAILED'; }
+  report.sdk_state_stable = reference || (controlledFailure
+    ? expectedFault && report.final_host_status === 'error'
+    : report.sdk_inject_completed && report.final_host_status === 'qr');
+  const common = report.actual_ascii_request && report.session_ascii_user_agent && report.application_tokens_omitted
+    && report.request_chrome_matches_engine && report.public_http_status === 200 && report.native_qr_visible
+    && report.stable_observation_ms >= 60_000 && report.qr_refresh_observed && report.remote_business_bridge_absent
+    && report.final_page_state === 'available'
+    && report.normal_close && !report.error_code && !report.logged_in;
+  report.status = reference ? common ? 'reference-ready' : 'failed'
+    : common && report.sdk_injected_to_qr && report.sdk_inject_completed && report.sdk_state_stable
+      && (!controlledFailure || expectedFault) && report.cdp_version_matches_engine && report.same_visible_dom
+      && report.expose_function && report.preload_script ? 'passed' : 'failed';
   await new Promise<void>(resolve => process.stdout.write('WA_FIXTURE_REPORT ' + JSON.stringify(report) + '\n', () => resolve()));
   fixtureWindow?.destroy(); app.quit();
 }
+
 app.whenReady().then(async () => {
+  classes = compiledWhatsAppHost(process.env.RECEPTION_WA_HOST_ENTRY!);
+  report.host_sha256 = classes.host_sha256;
   fixtureWindow = new BrowserWindow({ width: 980, height: 740, show: true, webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
-  host = new WhatsAppHost({ window: fixtureWindow, partition: 'persist:wa-fixture-' + randomUUID(), directory: join(process.env.RECEPTION_WA_FIXTURE_TEMP!, 'ledger'), onEvent: event => {
-    if (event.type !== 'account') return;
-    if (event.status === 'qr') { report.sdk_injected_to_qr = true; void finish(); }
-    else if (event.status === 'error') void finish(event.error_code || 'PUBLIC_PAGE_INJECTION_FAILED');
-  } });
+  host = new classes.WhatsAppHost({ window: fixtureWindow, partition: 'persist:wa-fixture-' + randomUUID(),
+    directory: join(process.env.RECEPTION_WA_FIXTURE_TEMP!, 'ledger'), diagnosticsDirectory: join(process.env.RECEPTION_WA_FIXTURE_TEMP!, 'diagnostics'),
+    onEvent: event => {
+      if (event.type !== 'account' || finished) return;
+      if (event.status === 'qr') { report.sdk_injected_to_qr = true; ++report.qr_events; }
+      if (event.status === 'authenticated' || event.status === 'ready') { report.logged_in = true; void finish('UNEXPECTED_AUTHENTICATION'); }
+      if (event.status === 'error') {
+        report.failure_phase = event.phase;
+        report.failure_code = event.error_code;
+        if (controlledFailure && event.phase === 'sdk_inject' && event.error_code === 'sdk_error') expectedFault = true;
+        else void finish(event.error_code || 'PUBLIC_PAGE_INJECTION_FAILED');
+      }
+    } });
   host.setVisible(true, { x: 0, y: 0, width: 980, height: 740 });
-  const contents = (host as any).view.webContents;
+  const internal = host as any;
+  const contents = internal.view.webContents;
   report.session_ascii_user_agent = !/[^\x20-\x7e]/.test(contents.session.getUserAgent());
-  contents.debugger.on('message', (_event: unknown, method: string, params: any) => {
-    const kind = params?.exceptionDetails?.exception?.className;
-    if (method === 'Runtime.exceptionThrown' && typeof kind === 'string' && /^[A-Za-z]{1,40}$/.test(kind) && !report.page_error_types.includes(kind)) report.page_error_types.push(kind);
-  });
-  contents.session.webRequest.onCompleted((details: Electron.OnCompletedListenerDetails) => {
-    const key = `${details.resourceType}:${details.statusCode}`;
-    report.resource_status_counts[key] = (report.resource_status_counts[key] || 0) + 1;
-  });
   contents.session.webRequest.onBeforeSendHeaders((details: Electron.OnBeforeSendHeadersListenerDetails, callback: (response: Electron.BeforeSendResponse) => void) => {
     if (details.resourceType === 'mainFrame' && details.url.startsWith('https://web.whatsapp.com/')) {
       const agent = Object.entries(details.requestHeaders).find(([key]) => key.toLowerCase() === 'user-agent')?.[1] || '';
@@ -62,54 +119,43 @@ app.whenReady().then(async () => {
       report.application_tokens_omitted = !/ReceptionWorkbench\/|询盘接待助手\/|Electron\//.test(agent);
       report.request_chrome_matches_engine = agent.includes(`Chrome/${process.versions.chrome}`);
     }
-    if (details.resourceType !== 'mainFrame') {
-      const agent = Object.entries(details.requestHeaders).find(([key]) => key.toLowerCase() === 'user-agent')?.[1] || '';
-      if (/[^\x20-\x7e]/.test(agent)) report.non_ascii_subresource_requests = true;
-    }
     callback({ requestHeaders: details.requestHeaders });
   });
-  contents.session.webRequest.onErrorOccurred((details: Electron.OnErrorOccurredListenerDetails) => {
-    report.failed_subresource_count++;
-    const code = /^net::(ERR_[A-Z_]+)$/.exec(details.error)?.[1];
-    if (code && !report.resource_error_codes.includes(code)) report.resource_error_codes.push(code);
-  });
-  contents.session.webRequest.onHeadersReceived((details: Electron.OnHeadersReceivedListenerDetails, callback: (response: Electron.HeadersReceivedResponse) => void) => {
+  contents.session.webRequest.onHeadersReceived((details: Electron.HeadersReceivedResponse & { resourceType: string; url: string; statusCode: number }, callback: (response: Electron.HeadersReceivedResponse) => void) => {
     if (details.resourceType === 'mainFrame' && details.url.startsWith('https://web.whatsapp.com/')) report.public_http_status = details.statusCode;
     callback({});
   });
-  if (report.reference_no_cdp) {
-    timer = setTimeout(() => void finish('REFERENCE_TIMEOUT'), 65000);
-    await contents.loadURL('https://web.whatsapp.com/');
-    let checking = false;
-    referenceTimer = setInterval(() => {
-      if (checking || finished) return;
-      checking = true;
-      void contents.executeJavaScript('!!document.querySelector("canvas[data-ref], [data-testid=qrcode], [data-ref] canvas")').then((ready: boolean) => { if (ready) void finish(); }).catch(() => {}).finally(() => { checking = false; });
-    }, 1000);
-    return;
-  }
-  await contents.loadURL('about:blank');
-  const transport = new ViewTransport(contents);
-  const browser = await puppeteer.connect({ transport, defaultViewport: null });
-  const page = await browser.newPage();
-  page.on('pageerror', error => {
-    const kind = error instanceof Error && /^[A-Za-z]{1,40}$/.test(error.name) ? error.name : 'Error';
-    if (!report.page_error_types.includes(kind)) report.page_error_types.push(kind);
-  });
-  report.cdp_version_matches_engine = (await browser.version()) === `Chrome/${process.versions.chrome}`;
-  report.environment = await page.evaluate((chrome: string) => {
-    const hints = (navigator as any).userAgentData;
-    return { page_ua_matches_engine: navigator.userAgent.includes(`Chrome/${chrome}`), language_list_contains_primary: navigator.languages.includes(navigator.language), timezone_available: !!Intl.DateTimeFormat().resolvedOptions().timeZone, windows_platform: navigator.platform === 'Win32', valid_dpr: Number.isFinite(devicePixelRatio) && devicePixelRatio > 0, client_hints_consistent: !hints || hints.brands.some((brand: any) => brand.brand === 'Chromium' && brand.version === chrome.split('.')[0]), webdriver_type_valid: navigator.webdriver === undefined || typeof navigator.webdriver === 'boolean', chrome_api_type_valid: (window as any).chrome === undefined || typeof (window as any).chrome === 'object', permissions_api_available: typeof navigator.permissions?.query === 'function', plugin_api_available: typeof navigator.plugins?.length === 'number' && typeof navigator.mimeTypes?.length === 'number' };
-  }, process.versions.chrome!);
-  await page.evaluate(() => { document.body.innerHTML = '<p id="same-view">synthetic</p>'; });
-  report.same_visible_dom = await contents.executeJavaScript('document.getElementById("same-view")?.textContent === "synthetic"');
-  report.remote_page_has_business_bridge = await contents.executeJavaScript('typeof window.reception !== "undefined" || typeof require !== "undefined" || typeof process !== "undefined"');
-  await page.exposeFunction('fixtureAdd', (a: number, b: number) => a + b);
-  await page.evaluateOnNewDocument('window.__synthetic_before_load = true');
-  await page.goto('about:blank');
-  report.expose_function = await page.evaluate(async () => await (window as any).fixtureAdd(2, 3) === 5);
-  report.preload_script = await page.evaluate(() => (window as any).__synthetic_before_load === true);
-  browser.disconnect(); transport.close();
-  timer = setTimeout(() => void finish('PUBLIC_PAGE_TIMEOUT'), 150000);
-  await host.connect();
+  const initialize = internal.initialize.bind(host);
+  internal.initialize = async (client: any, generation: number) => {
+    const inject = client.inject.bind(client);
+    client.inject = async () => {
+      await inject(); report.sdk_inject_completed = true;
+      if (controlledFailure) throw new Error('SYNTHETIC_PRIVATE_SDK_POST_QR_FAILURE');
+    };
+    await initialize(client, generation);
+  };
+  deadline = setTimeout(() => void finish('PUBLIC_PAGE_TIMEOUT'), 270000);
+  watcher = setInterval(() => {
+    if (probing || finished) return;
+    probing = true;
+    void (async () => {
+      const result = await contents.executeJavaScript(qrProbe);
+      if (finished) return;
+      report.remote_business_bridge_absent = result.bridge_absent === true;
+      if (result.changed) report.qr_refresh_observed = true;
+      if (!result.visible) { if (visibleSince && ++missingSamples > 5) await finish('NATIVE_QR_DISAPPEARED'); return; }
+      missingSamples = 0;
+      report.native_qr_visible = true;
+      const state = host.getStatus().status;
+      if (!reference && (controlledFailure ? !expectedFault || state !== 'error' : state !== 'qr' || !report.sdk_inject_completed)) return;
+      visibleSince ||= Date.now();
+      report.stable_observation_ms = Date.now() - visibleSince;
+      if (report.stable_observation_ms >= 30_000 && !report.qr_refresh_observed && !report.qr_refresh_requested) {
+        report.qr_refresh_requested = await contents.executeJavaScript('(async () => { try { const cmd = window.require("WAWebCmd").Cmd; if (typeof cmd.refreshQR !== "function") return false; await cmd.refreshQR(); return true; } catch { return false; } })()');
+      }
+      if (report.stable_observation_ms >= 60_000 && report.qr_refresh_observed) await finish();
+    })().catch(() => { if (!finished && visibleSince) void finish('NATIVE_PAGE_PROBE_FAILED'); }).finally(() => { probing = false; });
+  }, 1000);
+  if (reference) await contents.loadURL('https://web.whatsapp.com/');
+  else await host.connect();
 }).catch(() => { void finish('FIXTURE_START_FAILED'); });

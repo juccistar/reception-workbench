@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -8,35 +8,36 @@ import { WhatsAppHost } from '../src/main/whatsapp/host';
 import { connectionFailure, retryAfterDelay, whatsappUserAgent, WhatsAppConnectionError } from '../src/main/whatsapp/connection';
 
 const runtime = vi.hoisted(() => ({ contents: null as any, connect: vi.fn() }));
-vi.mock('electron', () => ({ app: { getName: () => '询盘接待助手', getVersion: () => '0.3.18' }, WebContentsView: class { webContents = runtime.contents; setBounds = vi.fn(); } }));
+vi.mock('electron', () => ({ app: { getName: () => '询盘接待助手', getVersion: () => '0.3.19' }, WebContentsView: class { webContents = runtime.contents; setBounds = vi.fn(); } }));
 vi.mock('puppeteer', () => ({ default: { connect: runtime.connect } }));
 const directories: string[] = [];
 const hosts: any[] = [];
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
-function setup(status: number | null = 200) {
+function setup(status: number | null = 200, inject?: (client: any, page: any) => Promise<void>) {
   const directory = mkdtempSync(join(tmpdir(), 'arw-wa-0318-')); directories.push(directory);
   const debuggerApi = Object.assign(new EventEmitter(), { attach: vi.fn(), detach: vi.fn(), isAttached: vi.fn(() => false) });
   const contents = runtime.contents = Object.assign(new EventEmitter(), {
     debugger: debuggerApi, getUserAgent: () => 'Mozilla/5.0 询盘接待助手/0.3.17 Chrome/156.0.8078.80 Electron/45.2.3 Safari/537.36',
-    setUserAgent: vi.fn(), setWindowOpenHandler: vi.fn(), stop: vi.fn(), isDestroyed: () => false, close: vi.fn(),
+    setUserAgent: vi.fn(), setWindowOpenHandler: vi.fn(), stop: vi.fn(), isDestroyed: () => false, close: vi.fn(), executeJavaScript: vi.fn(async () => true),
     loadURL: vi.fn(async () => {}), getURL: () => 'https://web.whatsapp.com/',
     session: { setUserAgent: vi.fn(), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
   });
-  const page = Object.assign(new EventEmitter(), { goto: vi.fn(async (): Promise<any> => status === null ? null : { status: () => status }), url: () => 'https://web.whatsapp.com/', evaluate: vi.fn(async () => false), waitForFunction: vi.fn(async () => ({ jsonValue: async () => 'ready', dispose: async () => {} })), mainFrame: vi.fn() });
+  const exposed = new Map<string, (...args: any[]) => Promise<unknown>>();
+  const page = Object.assign(new EventEmitter(), { goto: vi.fn(async (): Promise<any> => status === null ? null : { status: () => status }), url: () => 'https://web.whatsapp.com/', evaluate: vi.fn(async () => false), waitForFunction: vi.fn(async () => ({ jsonValue: async () => 'ready', dispose: async () => {} })), mainFrame: vi.fn(), exposeFunction: vi.fn(async (name: string, callback: any) => { exposed.set(name, callback); }), removeExposedFunction: vi.fn(async (name: string) => { exposed.delete(name); }) });
   const browser = Object.assign(new EventEmitter(), { newPage: vi.fn(async () => page), disconnect: vi.fn() });
   runtime.connect.mockResolvedValue(browser);
   const events: any[] = [];
-  const host: any = new WhatsAppHost({ partition: 'persist:synthetic-0318', directory, window: { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never, onEvent: event => events.push(event) }); hosts.push(host);
+  const host: any = new WhatsAppHost({ partition: 'persist:synthetic-0318', directory, diagnosticsDirectory: join(directory, 'diagnostics'), window: { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never, onEvent: event => events.push(event) }); hosts.push(host);
   const clients: any[] = [];
   const initialize = host.initialize.bind(host);
   vi.spyOn(host, 'initialize').mockImplementation(async (client: any, generation: number) => {
-    client.inject = vi.fn(async () => {});
+    client.inject = vi.fn(async () => { await inject?.(client, page); });
     client.initWebVersionCache = vi.fn(async () => {});
     client.getChats = vi.fn(async () => []);
     clients.push(client);
     await initialize(client, generation);
   });
-  return { host, events, clients, contents, page, browser, debuggerApi };
+  return { host, events, clients, contents, page, browser, debuggerApi, exposed, directory };
 }
 afterEach(async () => {
   for (const host of hosts.splice(0)) await host.close();
@@ -165,6 +166,68 @@ describe('WhatsApp connection compatibility', () => {
     await host.close();
     expect(clients[0].authStrategy.logout).not.toHaveBeenCalled();
     expect(contents.close).toHaveBeenCalledOnce();
+  });
+  it('keeps a trusted native page after an SDK resource failure and logs its exact phase safely', async () => {
+    const { host, contents, directory, browser } = setup(200, async () => { throw new Error('ENOENT private-customer-body private-token'); });
+    await host.connect();
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ status: 'error', error_code: 'sdk_resource_missing', phase: 'sdk_inject', page_state: 'available' }));
+    expect(host.getStatus().diagnostic_id).toMatch(/^wa_diag_[0-9a-f-]{36}$/);
+    expect(contents.stop).not.toHaveBeenCalled(); expect(browser.disconnect).toHaveBeenCalled();
+    const preventDefault = vi.fn(); contents.emit('will-navigate', { preventDefault }, 'https://untrusted.invalid/');
+    expect(preventDefault).toHaveBeenCalled();
+    const log = readFileSync(join(directory, 'diagnostics/whatsapp-host.jsonl'), 'utf8');
+    expect(log).not.toMatch(/private-customer|private-token|ENOENT/);
+    expect(log.split('\n').filter(Boolean).map(row => JSON.parse(row))).toContainEqual(expect.objectContaining({ phase: 'sdk_inject', event: 'failed', error_code: 'sdk_resource_missing', exception_type: 'Error' }));
+  });
+  it('records an SDK exception occurring after the first QR event instead of treating QR as completion', async () => {
+    const pending = deferred<void>();
+    const { host, contents, events } = setup(200, async client => { client.emit('qr'); await pending.promise; throw new TypeError('private after-qr exception'); });
+    await host.connect(); await vi.waitFor(() => expect(host.getStatus().status).toBe('qr'));
+    pending.resolve();
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ status: 'error', phase: 'sdk_inject', error_code: 'sdk_error', page_state: 'available' }));
+    expect(events.some(event => event.status === 'qr')).toBe(true);
+    expect(contents.stop).not.toHaveBeenCalled();
+  });
+  it('retires a failing SDK callback, removes its binding, and ignores that callback after reconnect', async () => {
+    const { host, contents, exposed, page } = setup(200, async (client, target) => {
+      await target.exposeFunction('onSyntheticSdkEvent', async () => { throw new Error('private binding failure'); });
+      client.emit('qr');
+    });
+    await host.connect(); await vi.waitFor(() => expect(host.getStatus().status).toBe('qr'));
+    const oldCallback = exposed.get('onSyntheticSdkEvent')!;
+    await oldCallback();
+    expect(host.getStatus()).toMatchObject({ status: 'error', phase: 'sdk_callbacks', page_state: 'available' });
+    await host.cleanupTask;
+    expect(page.removeExposedFunction).toHaveBeenCalledWith('onSyntheticSdkEvent');
+    expect(exposed.has('onSyntheticSdkEvent')).toBe(false);
+    expect(contents.stop).not.toHaveBeenCalled();
+    await host.connect(); await vi.waitFor(() => expect(host.getStatus().status).toBe('qr'));
+    await oldCallback();
+    expect(host.getStatus().status).toBe('qr');
+  });
+  it('allows a retained native page to fail independently after the SDK has retired', async () => {
+    const { host, contents } = setup(200, async () => { throw new Error('private sdk failure'); });
+    await host.connect(); await vi.waitFor(() => expect(host.getStatus().page_state).toBe('available'));
+    contents.emit('did-fail-load', {}, -202, 'net::ERR_CERT_AUTHORITY_INVALID', 'https://web.whatsapp.com/', true);
+    expect(host.getStatus()).toMatchObject({ status: 'error', error_code: 'tls_error', page_state: 'error', phase: 'page_navigation' });
+    await host.probePage();
+    expect(host.getStatus().page_state).toBe('error');
+  });
+  it('retires bindings on a complete document replacement without stopping the native reload or reinjecting', async () => {
+    const { host, clients, page, contents } = setup(); await host.connect();
+    await vi.waitFor(() => expect(clients[0]?.inject).toHaveBeenCalled());
+    contents.emit('did-start-navigation', {}, 'https://web.whatsapp.com/', false, true);
+    contents.emit('did-navigate', {}, 'https://web.whatsapp.com/', 200);
+    page.emit('framenavigated', { parentFrame: () => null, url: () => 'https://web.whatsapp.com/' });
+    expect(host.getStatus()).toMatchObject({ status: 'error', error_code: 'page_context_lost', phase: 'sdk_callbacks' });
+    expect(contents.stop).not.toHaveBeenCalled();
+    expect(clients[0].inject).toHaveBeenCalledOnce();
+  });
+  it('classifies protocol, missing resource and module failures without exposing SDK strings', () => {
+    expect(connectionFailure(new Error('Protocol error private'), 'sdk_timeout', 'cdp_connect').error_code).toBe('cdp_error');
+    expect(connectionFailure(new Error('Execution context was destroyed private')).error_code).toBe('page_context_lost');
+    expect(connectionFailure(new Error('Cannot find module private')).error_code).toBe('sdk_resource_missing');
+    expect(connectionFailure(new Error('module private'), 'sdk_timeout', 'app_modules').error_code).toBe('app_module_error');
   });
   it('rejects a failed main-document reload without SDK reinjection', async () => {
     const { host, clients, page } = setup(); await host.connect();
