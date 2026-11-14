@@ -214,7 +214,14 @@ export class WhatsAppHost {
     this.phase(generation, 'sdk_timeout');
     // WhatsApp loads application modules after the document load event. Give
     // that bounded bootstrap its own budget, then bound SDK authentication.
-    await page.waitForFunction('window.Debug?.VERSION != undefined', { timeout: PHASE_TIMEOUT_MS }); ensureCurrent();
+    const readiness = await page.waitForFunction(() => {
+      const text = (document.body?.innerText || '').replace(/\s+/g, ' ');
+      if (/WhatsApp\s*(?:支持|supports|works with)\s*(?:Google\s*)?Chrome\s*\d+/i.test(text)) return 'browser_unsupported';
+      return (window as any).Debug?.VERSION !== undefined ? 'ready' : false;
+    }, { timeout: PHASE_TIMEOUT_MS, polling: 250 }); ensureCurrent();
+    const ready = await readiness.jsonValue();
+    await readiness.dispose(); ensureCurrent();
+    if (ready === 'browser_unsupported') throw new WhatsAppConnectionError('browser_unsupported');
     if (this.status !== 'connecting') return;
     this.phase(generation, 'sdk_timeout');
     await client.inject(); ensureCurrent();

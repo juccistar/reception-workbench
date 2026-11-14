@@ -19,7 +19,10 @@ const env = { ...process.env };
 for (const key of Object.keys(env)) if (/^(ACCIO|PHOENIX|RECEPTION)_/i.test(key) || /^(ELECTRON_RUN_AS_NODE|PYTHONPATH|PYTHONHOME|GH_TOKEN|GITHUB_TOKEN)$/i.test(key) || /credential|secret|token|password|api.?key/i.test(key)) delete env[key];
 env.RECEPTION_WA_RUNTIME_ENTRY = runtime;
 env.RECEPTION_WA_FIXTURE_TEMP = temporary;
-if (process.argv.includes('--reference-no-cdp')) env.RECEPTION_WA_REFERENCE_NO_CDP = '1';
+if (process.argv.includes('--reference-no-cdp')) {
+  env.RECEPTION_WA_REFERENCE_NO_CDP = '1';
+  env.RECEPTION_WA_SCREENSHOT_OUTPUT = path.join(directory, 'public-page-redacted.png');
+}
 env.LOCALAPPDATA = path.join(temporary, 'local-app-data');
 let report = { status: 'failed', error_code: 'NO_FIXTURE_RESULT' };
 try {

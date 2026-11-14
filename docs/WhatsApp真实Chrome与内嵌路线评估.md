@@ -67,7 +67,7 @@
 
 ## 5. 两个容易忽略的维护点
 
-1. 当前ViewTransport向Puppeteer提供的是虚拟Browser/Target，其中Browser.getVersion返回固定Chrome/140，而实际页面运行于Chromium 156。这是内部CDP版本信息差异，不等于发给WhatsApp的HTTP User-Agent；后续应校正，真实Chrome标准CDP可以减少这类自定义维护。
+1. 评估时ViewTransport向Puppeteer提供虚拟Browser/Target，其中Browser.getVersion返回固定Chrome/140，而实际页面运行于Chromium 156。这是内部CDP版本信息差异，不等于HTTP User-Agent；0.3.18已校正为受控WebContents的原生版本信息。真实Chrome标准CDP仍可减少这类自定义维护。
 2. 当前SDK默认User-Agent仍是固定的Mac/Chrome 101字符串。当前宿主明确关闭了该默认覆盖；真实Chrome路线也必须保留真实客户端标识，不能简单采用SDK全部默认配置并声称它反映实际Windows/Chrome环境。
 
 ## 6. 推荐的Chrome试验方式

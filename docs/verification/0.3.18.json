@@ -1,7 +1,7 @@
 {
   "version": "0.3.18",
   "date": "2026-11-14",
-  "status": "source-built-targeted-tested-public-sdk-blocked",
+  "status": "final-source-built-public-sdk-verified",
   "public_latest": "0.3.17",
   "architecture": "single-electron-webcontentsview-shared-with-sdk",
   "targeted_tests": {
@@ -16,17 +16,14 @@
       "status": "passed"
     },
     "desktop": {
-      "whatsapp_connection": {
-        "cases": 16,
-        "status": "passed"
-      },
+      "whatsapp_connection": 17,
       "whatsapp_transport": 3,
       "whatsapp_host_lifecycle": 2,
       "whatsapp_coordinator": 6,
       "whatsapp_ledger": 1,
       "renderer_workbench_and_whatsapp_page": 104,
       "product_pages_0313": 11,
-      "distinct_cases": 143,
+      "distinct_cases": 144,
       "status": "passed"
     },
     "tools": {
@@ -37,37 +34,56 @@
     "full_suite_run": false
   },
   "whatsapp_public_page": {
-    "status": "blocked-sdk-bootstrap-not-verified",
+    "status": "passed-source-sdk-to-qr",
+    "source_report": "artifacts/verification/whatsapp-native-source-0318-i/report.json",
     "formal_chinese_application_name": true,
-    "http_400_repair": "HTTP 200 with ASCII view/session user agents and actual browser versions",
+    "http_status": 200,
+    "view_and_session_user_agents_ascii": true,
+    "actual_chromium_browser_agent": true,
+    "optional_app_and_electron_product_tokens_omitted": true,
+    "request_and_cdp_chrome_match_actual_engine": true,
+    "native_client_hints_preserved": true,
     "same_visible_dom": true,
     "exposed_function_and_preload": true,
     "runtime_environment_consistency_checks": "passed",
     "remote_business_bridge": false,
-    "sdk_qr_event": false,
-    "source_report": "artifacts/verification/whatsapp-native-source-0318-h/report.json",
-    "earlier_native_qr_visible_without_sdk_qr_event": "artifacts/verification/whatsapp-native-source-0318-e/report.json",
-    "no_cdp_reference": {
-      "report": "artifacts/verification/whatsapp-native-reference-0318-a/report.json",
-      "http_status": 200,
-      "qr_ready": false,
-      "uses_puppeteer_or_sdk": false
-    },
-    "limitation": "Public page application modules did not reliably become ready; the same condition occurred without CDP/SDK. The original HTTP 400 is resolved, but this does not establish successful SDK startup or identify the remaining public-page initialization cause.",
+    "sdk_qr_event": true,
+    "normal_close": true,
     "real_account_login": false,
     "real_account_reconnection": false,
     "real_ai_calls": 0,
     "real_customer_sends": 0,
     "qr_or_credentials_recorded": false,
     "experimental_automation_patches_adopted": false,
-    "sdk_dependency_versions_changed": false
+    "sdk_dependency_versions_changed": false,
+    "earlier_observations": {
+      "minimum_ascii_product_replacement": "Resolved HTTP 400 but did not establish browser support or SDK readiness.",
+      "initial_sdk_report": "artifacts/verification/whatsapp-native-source-0318-h/report.json",
+      "no_cdp_reference_report": "artifacts/verification/whatsapp-native-reference-0318-b/report.json",
+      "reference_screenshot": "artifacts/verification/whatsapp-native-reference-0318-b/public-page-redacted.png",
+      "reference_screenshot_visually_reviewed": true,
+      "reference_media_hidden_before_capture": true,
+      "identified_page": "WhatsApp browser-support page asking for Chrome 100 or later, despite actual Chromium 156.",
+      "final_change": "Use the actual Chromium browser agent without optional application/Electron product tags; request/browser/CDP versions remain real.",
+      "cache_miss_not_claimed_as_root_cause": true
+    }
+  },
+  "previous_source_build": {
+    "commit": "cc942bf",
+    "status": "passed",
+    "public_sdk_status_at_that_build": "blocked",
+    "window_report": "artifacts/verification/workbench-0318-source-a/report.json",
+    "screenshots": 7,
+    "screenshots_visually_reviewed": true
   },
   "desktop_build": {
     "status": "passed",
-    "output": "artifacts/app"
+    "output": "artifacts/app",
+    "main_sha256": "b86ff610d007d27e92a12af1e43c5b96910d392814d04e5a1060ff3e7fcc8301",
+    "preload_sha256": "effa011702592db24c3d8003c0f84d623ad67a6bacdc39ccc84262470e138504"
   },
   "actual_window": {
-    "status": "pending",
+    "status": "pending-final-rebuild",
     "synthetic_only": true
   },
   "packaging": {

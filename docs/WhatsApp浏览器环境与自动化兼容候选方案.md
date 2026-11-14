@@ -16,8 +16,8 @@
 
 ## 2. 客户端标识与CDP：本版正式修复
 
-- 保留中文窗口与应用显示名称，WhatsApp请求仅将中文产品标识替换为ASCII产品标识和实际应用版本。
-- Chrome/Electron版本从运行环境取得，不写死其他版本；保留原生Client Hints，不凭空补造。
+- 保留中文窗口与应用显示名称，WhatsApp请求使用真实Chromium标准浏览器标识，移除附加应用/Electron产品token；实际验证表明最小ASCII替换仍会触发浏览器不支持页。
+- 网络Chrome版本与本地Electron版本均从运行环境取得；网络不写死其他版本，宿主版本留在本地诊断，保留原生Client Hints，不凭空补造。
 - 保持SDK的`userAgent: false`，避免默认旧Mac/Chrome 101标识覆盖实际环境。
 - 校正ViewTransport的`Browser.getVersion`，使用当前WebContents原生CDP版本信息；继续只操作这一个受控页面。
 - 核对可见DOM、预注入脚本、回调绑定和SDK使用同一页面、同一会话。

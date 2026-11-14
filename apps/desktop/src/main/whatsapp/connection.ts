@@ -10,7 +10,10 @@ export class WhatsAppConnectionError extends Error {
 export function whatsappUserAgent(original: string, applicationName: string, version: string): string {
   if (!/^[0-9A-Za-z.+-]+$/.test(version)) throw new WhatsAppConnectionError('sdk_error');
   const escaped = applicationName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const normalized = original.replace(new RegExp(`${escaped}/[^\\s]+`, 'g'), `ReceptionWorkbench/${version}`);
+  // Use the actual Chromium browser agent. Optional app/Electron product tags
+  // can make WhatsApp's browser parser read the host version as Chrome's.
+  const normalized = original.replace(new RegExp(`(?:^|\\s)${escaped}/[^\\s]+`, 'g'), ' ')
+    .replace(/\sElectron\/[^\s]+/g, '').replace(/\s{2,}/g, ' ').trim();
   if (!normalized || /[^\x20-\x7e]/.test(normalized)) throw new WhatsAppConnectionError('sdk_error');
   return normalized;
 }

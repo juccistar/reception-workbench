@@ -27,7 +27,7 @@ export interface WhatsAppContext {
     supplement: { body?: string; attachments?: { id: string; name: string; text?: string }[] };
   };
 }
-export type WhatsAppHostErrorCode = 'http_error' | 'network_error' | 'tls_error' | 'navigation_timeout' | 'sdk_timeout' | 'ready_timeout' | 'auth_failed' | 'sdk_error' | 'invalid_response' | 'page_closed' | 'unexpected_navigation';
+export type WhatsAppHostErrorCode = 'http_error' | 'network_error' | 'tls_error' | 'navigation_timeout' | 'sdk_timeout' | 'ready_timeout' | 'auth_failed' | 'sdk_error' | 'invalid_response' | 'page_closed' | 'unexpected_navigation' | 'browser_unsupported';
 export interface WhatsAppHostInfo { status: string; account_id: string; connection_epoch: string; error_code?: WhatsAppHostErrorCode; http_status?: number }
 export interface WhatsAppViewRequest { visible: boolean; bounds?: { x: number; y: number; width: number; height: number } }
 export interface WhatsAppHostBridge {

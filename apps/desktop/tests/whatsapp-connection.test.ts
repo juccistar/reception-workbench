@@ -22,7 +22,7 @@ function setup(status: number | null = 200) {
     loadURL: vi.fn(async () => {}), getURL: () => 'https://web.whatsapp.com/',
     session: { setUserAgent: vi.fn(), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
   });
-  const page = Object.assign(new EventEmitter(), { goto: vi.fn(async (): Promise<any> => status === null ? null : { status: () => status }), url: () => 'https://web.whatsapp.com/', evaluate: vi.fn(async () => false), waitForFunction: vi.fn(async () => ({})), mainFrame: vi.fn() });
+  const page = Object.assign(new EventEmitter(), { goto: vi.fn(async (): Promise<any> => status === null ? null : { status: () => status }), url: () => 'https://web.whatsapp.com/', evaluate: vi.fn(async () => false), waitForFunction: vi.fn(async () => ({ jsonValue: async () => 'ready', dispose: async () => {} })), mainFrame: vi.fn() });
   const browser = Object.assign(new EventEmitter(), { newPage: vi.fn(async () => page), disconnect: vi.fn() });
   runtime.connect.mockResolvedValue(browser);
   const events: any[] = [];
@@ -45,17 +45,18 @@ afterEach(async () => {
 });
 
 describe('WhatsApp connection compatibility', () => {
-  it('keeps actual browser versions while converting only the application product to ASCII', () => {
+  it('keeps the actual Chromium version while removing optional application and host tokens', () => {
     expect(whatsappUserAgent('Mozilla/5.0 询盘接待助手/0.3.17 Chrome/156.0.8078.80 Electron/45.2.3 Safari/537.36', '询盘接待助手', '0.3.18'))
-      .toBe('Mozilla/5.0 ReceptionWorkbench/0.3.18 Chrome/156.0.8078.80 Electron/45.2.3 Safari/537.36');
-    expect(whatsappUserAgent('a App.(Name)/1 Chrome/156', 'App.(Name)', '0.3.18')).toBe('a ReceptionWorkbench/0.3.18 Chrome/156');
+      .toBe('Mozilla/5.0 Chrome/156.0.8078.80 Safari/537.36');
+    expect(whatsappUserAgent('a App.(Name)/1 Chrome/156', 'App.(Name)', '0.3.18')).toBe('a Chrome/156');
   });
   it.each([400, 401, 403, 429, 500, 503])('does not inject the SDK into an HTTP %i document', async status => {
     const { host, clients, contents, browser } = setup(status);
     await host.connect();
     await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ status: 'error', error_code: 'http_error', http_status: status }));
     expect(clients[0].inject).not.toHaveBeenCalled();
-    expect(contents.setUserAgent).toHaveBeenCalledWith(expect.stringContaining('ReceptionWorkbench/0.3.18'));
+    expect(contents.setUserAgent).toHaveBeenCalledWith(expect.stringContaining('Chrome/156.0.8078.80 Safari/537.36'));
+    expect(contents.setUserAgent.mock.calls[0][0]).not.toMatch(/询盘|ReceptionWorkbench|Electron\//);
     expect(contents.session.setUserAgent).toHaveBeenCalledExactlyOnceWith(contents.setUserAgent.mock.calls[0][0]);
     expect(contents.stop).toHaveBeenCalled(); expect(browser.disconnect).toHaveBeenCalled();
   });
@@ -105,13 +106,20 @@ describe('WhatsApp connection compatibility', () => {
     expect(page.listenerCount('response')).toBe(0);
     expect(browser.disconnect).toHaveBeenCalled();
   });
+  it('reports an unsupported-browser page explicitly and stops before SDK injection', async () => {
+    const { host, clients, page } = setup();
+    page.waitForFunction.mockResolvedValueOnce({ jsonValue: async () => 'browser_unsupported', dispose: async () => {} });
+    await host.connect();
+    await vi.waitFor(() => expect(host.getStatus()).toMatchObject({ status: 'error', error_code: 'browser_unsupported' }));
+    expect(clients[0].inject).not.toHaveBeenCalled();
+  });
   it('gives SDK authentication a fresh budget after the application modules load', async () => {
     const { host, clients, page } = setup();
     const bootstrap = deferred<any>(); page.waitForFunction.mockImplementationOnce(() => bootstrap.promise);
     await host.connect(); await vi.waitFor(() => expect(page.waitForFunction).toHaveBeenCalled());
     host.clearPhase(); vi.useFakeTimers(); host.phase(host.generation, 'sdk_timeout');
     await vi.advanceTimersByTimeAsync(59_000);
-    bootstrap.resolve({}); await vi.advanceTimersByTimeAsync(0);
+    bootstrap.resolve({ jsonValue: async () => 'ready', dispose: async () => {} }); await vi.advanceTimersByTimeAsync(0);
     expect(clients[0].inject).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(2_000);
     expect(host.getStatus().status).toBe('connecting');
