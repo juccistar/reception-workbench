@@ -9,7 +9,7 @@ import type { ViewTransport } from '../../apps/desktop/src/main/whatsapp/transpo
 export function compiledWhatsAppHost(filename: string) {
   const bytes = readFileSync(filename);
   let text = bytes.toString('utf8');
-  const startup = /\nvoid start\(\)\.catch\(\(\) => [A-Za-z0-9_$]+\.app\.exit\(2\)\);\s*$/;
+  const startup = /\nvoid start\(\)\.catch\(\(\) => [A-Za-z0-9_$]+\.app\.exit\(2\)\);(?=\s*(?:\/\*![\s\S]*?\*\/\s*)?$)/;
   if (!startup.test(text) || !text.includes('var WhatsAppHost = class') || !text.includes('var ViewTransport = class')) throw new Error('HOST_ENTRY_UNSUPPORTED');
   text = text.replace(startup, '\nmodule.exports = { WhatsAppHost, ViewTransport };\n');
   const route = ': __filename); require =';

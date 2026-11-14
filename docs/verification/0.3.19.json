@@ -1,7 +1,7 @@
 {
   "version": "0.3.19",
   "date": "2026-11-14",
-  "status": "source-built-awaiting-window-verification",
+  "status": "source-verified-not-packaged",
   "public_latest": "0.3.18",
   "architecture": "single-electron-webcontentsview-shared-with-sdk",
   "targeted_tests": {
@@ -32,19 +32,82 @@
   },
   "desktop_build": {
     "status": "passed",
-    "output": "artifacts/app"
+    "source_commit": "f7f3c51",
+    "output": "artifacts/app",
+    "integrity_report": "artifacts/verification/source-0319/integrity.json",
+    "main_sha256": "3c1dac62a7d1068fbf907bd01b8e5f0453b599153146cb1d56d7b184ec48c2f8",
+    "preload_sha256": "effa011702592db24c3d8003c0f84d623ad67a6bacdc39ccc84262470e138504",
+    "renderer_sha256": "96140c5c3d45c2cfbdca2062428e52e49d8b336cad08e25bcbcc4d89567debfb"
   },
   "actual_window": {
-    "status": "pending",
+    "status": "passed",
+    "source_commit": "f7f3c51",
+    "report": "artifacts/verification/workbench-0319-source-a/report.json",
     "synthetic_only": true,
     "actual_renderer_preload_and_demo_backend": true,
     "host_event_injected": true,
     "actual_sdk_fault_in_window": false,
-    "screenshots_visually_reviewed": false
+    "screenshots": 6,
+    "screenshots_visually_reviewed": true,
+    "sizes": ["1440x960", "1100x720"],
+    "normal_close": true,
+    "completed": [
+      "disconnected-baseline",
+      "native-page-available-sdk-failed-and-authorization-disabled",
+      "failure-phase-reason-and-diagnostic-id-visible",
+      "wide-and-narrow-failure-details",
+      "native-page-loading-sdk-failed",
+      "http-403-page-failure"
+    ]
   },
   "whatsapp_public_page": {
-    "normal_cold_start": { "status": "pending" },
-    "controlled_post_qr_sdk_failure": { "status": "pending" },
+    "normal_cold_start": {
+      "status": "passed",
+      "report": "artifacts/verification/whatsapp-native-source-0319-c/report.json",
+      "http_status": 200,
+      "sdk_inject_completed": true,
+      "native_qr_visible": true,
+      "qr_refresh_observed": true,
+      "stable_observation_ms": 60456,
+      "final_host_status": "qr",
+      "final_page_state": "available",
+      "same_visible_dom_and_protocol_checks": "passed",
+      "remote_node_integration_disabled": true,
+      "remote_business_bridge_absent": true,
+      "normal_close": true,
+      "redacted_screenshot_visually_reviewed": true
+    },
+    "controlled_post_qr_sdk_failure": {
+      "status": "passed",
+      "report": "artifacts/verification/whatsapp-native-source-0319-fault-a/report.json",
+      "http_status": 200,
+      "sdk_inject_completed_before_controlled_throw": true,
+      "failure_phase": "sdk_inject",
+      "failure_code": "sdk_error",
+      "final_host_status": "error",
+      "final_page_state": "available",
+      "native_qr_visible": true,
+      "qr_refresh_observed_after_retirement": true,
+      "stable_observation_ms": 60421,
+      "same_visible_dom_and_protocol_checks": "passed",
+      "remote_node_integration_disabled": true,
+      "remote_business_bridge_absent": true,
+      "normal_close": true,
+      "diagnostic_log": "artifacts/verification/whatsapp-native-source-0319-fault-a/host-diagnostics.jsonl",
+      "diagnostic_phase_code_and_relative_frames_checked": true,
+      "source_exception_message_omitted": true,
+      "redacted_screenshot_visually_reviewed": true
+    },
+    "earlier_fixture_failures": [
+      {
+        "report": "artifacts/verification/whatsapp-native-source-0319-a/report.json",
+        "reason": "fixture loader rejected a trailing bundled-license comment before host loading; fixed without changing application outputs"
+      },
+      {
+        "report": "artifacts/verification/whatsapp-native-source-0319-b/report.json",
+        "reason": "fixture mistook WhatsApp's own web require loader for Node access; actual SDK/QR observation and protocol checks passed, final report failed; isolation now checks actual WebPreferences plus privileged globals"
+      }
+    ],
     "compiled_host_used": true,
     "fixture_startup_replaced": true,
     "real_merchant_bootstrap_used": false,
@@ -56,7 +119,9 @@
     "real_customer_sends": 0,
     "real_ai_calls": 0,
     "qr_or_credentials_recorded": false,
-    "screenshots_visually_reviewed": false,
+    "redacted_screenshots": 2,
+    "screenshots_visually_reviewed": true,
+    "cross_check_report": "artifacts/verification/source-0319/public-evidence-check.json",
     "sdk_dependency_versions_changed": false
   },
   "actual_merchant_failure": {

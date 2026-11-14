@@ -11,7 +11,7 @@ app.setName('询盘接待助手');
 const reference = process.env.RECEPTION_WA_REFERENCE_NO_CDP === '1';
 const controlledFailure = process.env.RECEPTION_WA_SYNTHETIC_FAILURE === '1';
 const report: any = { status: 'failed', version: app.getVersion(), cold_start: true, prewarm_before_connect: false,
-  compiled_host_used: true, fixture_startup_replaced: true, real_merchant_bootstrap_used: false,
+  compiled_host_used: false, fixture_startup_replaced: false, real_merchant_bootstrap_used: false,
   reference_no_cdp: reference, controlled_sdk_failure: controlledFailure, formal_chinese_application_name: true,
   actual_ascii_request: false, application_tokens_omitted: false, request_chrome_matches_engine: false,
   session_ascii_user_agent: false, public_http_status: 0, sdk_injected_to_qr: false, sdk_inject_completed: false,
@@ -25,6 +25,8 @@ let deadline: ReturnType<typeof setTimeout>;
 let watcher: ReturnType<typeof setInterval>;
 let visibleSince = 0, missingSamples = 0, probing = false, finished = false;
 let expectedFault = false;
+// WhatsApp has its own web module loader named require; verify Node isolation
+// through actual WebPreferences and the absence of privileged page globals.
 const qrProbe = `(() => {
   const node = document.querySelector('canvas[data-ref], [data-testid=qrcode], [data-ref] canvas');
   const visible = !!node && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0;
@@ -32,7 +34,7 @@ const qrProbe = `(() => {
   const previous = window.__fixtureQrReference;
   const changed = !!reference && !!previous && reference !== previous;
   if (reference) window.__fixtureQrReference = reference;
-  return { visible, changed, bridge_absent: typeof window.reception === 'undefined' && typeof process === 'undefined' && typeof require === 'undefined' };
+  return { visible, changed, bridge_absent: typeof window.reception === 'undefined' && typeof process === 'undefined' };
 })()`;
 
 async function protocolAfterColdRun() {
@@ -80,7 +82,7 @@ async function finish(code = '') {
     : report.sdk_inject_completed && report.final_host_status === 'qr');
   const common = report.actual_ascii_request && report.session_ascii_user_agent && report.application_tokens_omitted
     && report.request_chrome_matches_engine && report.public_http_status === 200 && report.native_qr_visible
-    && report.stable_observation_ms >= 60_000 && report.qr_refresh_observed && report.remote_business_bridge_absent
+    && report.stable_observation_ms >= 60_000 && report.qr_refresh_observed && report.remote_business_bridge_absent && report.remote_node_integration_disabled
     && report.final_page_state === 'available'
     && report.normal_close && !report.error_code && !report.logged_in;
   report.status = reference ? common ? 'reference-ready' : 'failed'
@@ -93,6 +95,8 @@ async function finish(code = '') {
 
 app.whenReady().then(async () => {
   classes = compiledWhatsAppHost(process.env.RECEPTION_WA_HOST_ENTRY!);
+  report.compiled_host_used = true;
+  report.fixture_startup_replaced = true;
   report.host_sha256 = classes.host_sha256;
   fixtureWindow = new BrowserWindow({ width: 980, height: 740, show: true, webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } });
   host = new classes.WhatsAppHost({ window: fixtureWindow, partition: 'persist:wa-fixture-' + randomUUID(),
@@ -111,6 +115,8 @@ app.whenReady().then(async () => {
   host.setVisible(true, { x: 0, y: 0, width: 980, height: 740 });
   const internal = host as any;
   const contents = internal.view.webContents;
+  const preferences = contents.getLastWebPreferences();
+  report.remote_node_integration_disabled = preferences.nodeIntegration === false && preferences.contextIsolation === true && preferences.sandbox === true;
   report.session_ascii_user_agent = !/[^\x20-\x7e]/.test(contents.session.getUserAgent());
   contents.session.webRequest.onBeforeSendHeaders((details: Electron.OnBeforeSendHeadersListenerDetails, callback: (response: Electron.BeforeSendResponse) => void) => {
     if (details.resourceType === 'mainFrame' && details.url.startsWith('https://web.whatsapp.com/')) {
