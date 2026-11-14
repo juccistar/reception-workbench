@@ -62,7 +62,10 @@ try {
   ipcMain.removeHandler('reception:invoke');
   ipcMain.handle('reception:invoke', async (event, method, params) => {
    const result = await original(event, method, params);
-   if (method === 'get_conversation' && params.conversation_id === 'demo-emma') result.reply_batches = result.reply_batches.map(batch => ({ ...batch, status: 'waiting_sync', wait_reason: 'source_sync_pending', current_index: 1 }));
+   if (method === 'get_conversation' && params.conversation_id === 'demo-emma') {
+    result.reply_batches = result.reply_batches.map(batch => ({ ...batch, status: 'waiting_sync', wait_reason: 'source_sync_pending', current_index: 1 }));
+    result.recoverable_reply_batches = [];
+   }
    return result;
   });
   globalThis.__restoreRecoverySmoke = () => { ipcMain.removeHandler('reception:invoke'); ipcMain.handle('reception:invoke', original); };

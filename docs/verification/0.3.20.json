@@ -30,8 +30,8 @@
     ]
   },
   "build": { "status": "passed", "command": "npm run build", "typecheck": "passed", "immediate_local_commit": "recorded_in_git_history" },
-  "source_window": { "status": "pending" },
-  "candidate": { "status": "pending" },
+  "source_window": { "status": "passed", "source_commit": "af25756", "recovery_report": "artifacts/verification/recovery-0320-source-a/report.json", "reply_report": "artifacts/verification/replies-0319-source-0320-a/report.json", "screenshots_visually_reviewed": 12, "waiting_projection_and_whatsapp_fault_events_are_synthetic": true, "tail_recovery_uses_real_demo_rpc": true, "normal_close": true },
+  "candidate": { "status": "built_pending_final_verification", "directory": "relase/release-0.3.20-a", "command": "npm run package:release -- --candidate --output relase/release-0.3.20-a", "immediate_local_commit": "recorded_in_git_history", "installed": false },
   "release": { "status": "pending" },
   "boundaries": {
     "synthetic_only_for_business_verification": true,
