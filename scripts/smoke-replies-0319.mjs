@@ -76,6 +76,9 @@ try {
  await shot('two-part-editor-wide');
  await resize(1100, 820); await shot('two-part-editor-narrow');
  await resize(1440, 960); await second.focus();
+ await invoke('check_ai');
+ await until(async () => (await invoke('get_snapshot')).checks.ai.status === 'demo', 'Demo AI capability check');
+ report.demo_ai_check = true;
  await page.getByRole('button', { name: '润色当前回复', exact: true }).click();
  await until(async () => (await detail()).manual_suggestion?.mode === 'polish' && (await detail()).manual_suggestion?.input_part_index === 1, 'selected part polished');
  await page.getByRole('button', { name: '替换到输入框', exact: true }).click();
@@ -91,6 +94,8 @@ try {
  assert.equal(seller.filter(message => frozen.includes(message.text)).length, 2);
  assert.equal(new Set(seller.filter(message => frozen.includes(message.text)).map(message => message.message_id)).size, 2);
  report.sent_message_ids = seller.filter(message => frozen.includes(message.text)).map(message => message.message_id);
+ await page.getByRole('textbox', { name: '回复正文', exact: true }).waitFor();
+ await page.getByText('已发送 2/2 条', { exact: true }).waitFor();
  await shot('two-receipts-wide');
  report.completed.push('two-message-preview-and-adoption', 'per-part-edit-save', 'selected-part-demo-polish', 'two-separate-demo-submissions-and-receipts', 'unchanged-requirements-revision');
  await page.getByRole('textbox', { name: '回复正文', exact: true }).fill('New unsent draft after completed batch.');

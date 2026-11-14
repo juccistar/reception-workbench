@@ -1,7 +1,7 @@
 {
   "version": "0.3.19",
   "date": "2026-11-14",
-  "status": "source-built-window-verification-pending",
+  "status": "candidate-built-verification-pending",
   "public_latest": "0.3.18",
   "diagnostic_baseline": {
     "version": "0.3.19",
@@ -238,13 +238,61 @@
     "sha256": {
       "main/index.js": "e6231594b12e828c67d747521e70aaaad264ba7aea4ae5705f39bb3a231182c3",
       "preload/index.js": "125da8ce58203411d9933471ffc855a0cd3803b7c2792baca5e9e9867effd087"
-    }
+    },
+    "source_commit": "85a91ce"
   },
   "actual_window": {
-    "status": "not-run-for-incremental-changes"
+    "status": "passed",
+    "version": "0.3.19",
+    "actual_window": true,
+    "packaged_executable": null,
+    "synthetic_only": true,
+    "production_data_accessed": false,
+    "real_ai_calls": 0,
+    "real_customer_sends": 0,
+    "suggestion_seeded": true,
+    "business_ipc_mocked": false,
+    "scope": "Preseeded synthetic two-part suggestion; actual renderer/preload, Demo polish, saved draft, batch sends and receipts",
+    "screenshots": [
+      "two-part-suggestion-wide.png",
+      "two-part-editor-wide.png",
+      "two-part-editor-narrow.png",
+      "selected-part-polish-wide.png",
+      "two-receipts-wide.png",
+      "new-input-after-batch-narrow.png"
+    ],
+    "completed": [
+      "two-message-preview-and-adoption",
+      "per-part-edit-save",
+      "selected-part-demo-polish",
+      "two-separate-demo-submissions-and-receipts",
+      "unchanged-requirements-revision",
+      "new-editor-version-retained",
+      "wide-and-narrow-layouts"
+    ],
+    "errors": [],
+    "normal_close": true,
+    "demo_ai_check": true,
+    "sent_message_ids": [
+      "demo-send-9f2fb698ebf84fc9ab4b33f81ed4a467",
+      "demo-send-8ca25a37b135457f9bb7ba4130abd08d"
+    ],
+    "report": "artifacts/verification/replies-0319-source-c/report.json",
+    "source_commit": "85a91ce",
+    "screenshots_visually_reviewed": true,
+    "sizes": [
+      "1440x960",
+      "1100x820"
+    ]
   },
   "packaging": {
-    "status": "not-run"
+    "status": "built-verification-pending",
+    "candidate": "relase/release-0.3.19-a",
+    "installer_sha256": "3f6f8868ed56d2819a3089de22f8ad24dc1ccc5fc3876af2c1eebb05fbcdb718",
+    "archive_sha256": "31beb5148d47e38e28d57651665a619938936106e4ca7d39c0d15ebc132aeec4",
+    "installer_signed": false,
+    "release_signature": "ed25519",
+    "default_entry_changed": false
   },
   "public_release": {
     "status": "not-run"
@@ -261,5 +309,17 @@
     "existing_local_source_scope_identity_and_pending_sync_guards": true,
     "early_echo_requires_exact_receipt_identity_and_unchanged_other_basis": true,
     "unexplained_coverage_changes_stop_tail": true
-  }
+  },
+  "earlier_driver_results": [
+    {
+      "label": "source-a",
+      "status": "failed",
+      "reason": "fixture omitted the actual Demo AI capability check required for polish; driver corrected"
+    },
+    {
+      "label": "source-b",
+      "status": "passed",
+      "reason": "backend receipts passed; final driver now waits for renderer 2/2 display before taking receipt screenshot"
+    }
+  ]
 }
