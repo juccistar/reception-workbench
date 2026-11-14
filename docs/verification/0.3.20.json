@@ -5,7 +5,7 @@
   "base_commit": "0a2ddc6",
   "branch": "fix/reply-sync-whatsapp-recovery-0.3.20",
   "authorization": "用户明确要求按0.3.20方案开发，开发完快速打包发布",
-  "status": "source_built",
+  "status": "published_and_verified",
   "changes": [
     "per_evaluation_send_gate_reasons_and_native_checkpoints",
     "bounded_waiting_sync_with_original_part_attempt_budget",
@@ -17,9 +17,30 @@
   ],
   "tests": {
     "backend_unique_final_passed": 173,
-    "backend_scope": ["test_reply_sync_0320", "test_reply_batches_0319", "test_send_retry_policy", "test_continuity_service", "test_supplement_followup", "test_whatsapp_0317", "test_native_automatic_chat", "test_native_manual_guards", "test_native_chat", "test_native_continuation", "test_send_failure_diagnostics_031", "test_manual_chat"],
+    "backend_scope": [
+      "test_reply_sync_0320",
+      "test_reply_batches_0319",
+      "test_send_retry_policy",
+      "test_continuity_service",
+      "test_supplement_followup",
+      "test_whatsapp_0317",
+      "test_native_automatic_chat",
+      "test_native_manual_guards",
+      "test_native_chat",
+      "test_native_continuation",
+      "test_send_failure_diagnostics_031",
+      "test_manual_chat"
+    ],
     "desktop_unique_final_passed": 165,
-    "desktop_scope": ["whatsapp-connection", "whatsapp-coordinator", "whatsapp-session-host", "whatsapp-page", "whatsapp-page-probe", "whatsapp-transport", "renderer-workbench"],
+    "desktop_scope": [
+      "whatsapp-connection",
+      "whatsapp-coordinator",
+      "whatsapp-session-host",
+      "whatsapp-page",
+      "whatsapp-page-probe",
+      "whatsapp-transport",
+      "renderer-workbench"
+    ],
     "typecheck": "passed",
     "full_suite_run": false,
     "earlier_failures": [
@@ -27,12 +48,179 @@
       "final/supplement新增夹具补齐原生ACK账本及pending工作状态，重新通过",
       "Node桥首次因PATH缺失跳过，补齐既有Node路径后单项通过",
       "ESM rename spy不兼容，改为模块替身后配置写入失败用例通过"
-    ]
+    ],
+    "tool_whatsapp_runtime_passed": 1
   },
-  "build": { "status": "passed", "command": "npm run build", "typecheck": "passed", "immediate_local_commit": "recorded_in_git_history" },
-  "source_window": { "status": "passed", "source_commit": "af25756", "recovery_report": "artifacts/verification/recovery-0320-source-a/report.json", "reply_report": "artifacts/verification/replies-0319-source-0320-a/report.json", "screenshots_visually_reviewed": 12, "waiting_projection_and_whatsapp_fault_events_are_synthetic": true, "tail_recovery_uses_real_demo_rpc": true, "normal_close": true },
-  "candidate": { "status": "built_pending_final_verification", "directory": "relase/release-0.3.20-b", "previous_local_candidate": "relase/release-0.3.20-a", "command": "npm run package:release -- --candidate --output relase/release-0.3.20-b", "immediate_local_commit": "recorded_in_git_history", "installed": false, "queued_self_echo_regression": "passed", "latest_targeted_rerun": { "backend_passed": 74, "scope": ["test_reply_sync_0320", "test_reply_batches_0319", "test_manual_chat"] } },
-  "release": { "status": "pending" },
+  "build": {
+    "status": "passed",
+    "command": "npm run build",
+    "typecheck": "passed",
+    "immediate_local_commit": "recorded_in_git_history"
+  },
+  "source_window": {
+    "status": "passed",
+    "source_commit": "af25756",
+    "recovery_report": "artifacts/verification/recovery-0320-source-a/report.json",
+    "reply_report": "artifacts/verification/replies-0319-source-0320-a/report.json",
+    "screenshots_visually_reviewed": 12,
+    "waiting_projection_and_whatsapp_fault_events_are_synthetic": true,
+    "tail_recovery_uses_real_demo_rpc": true,
+    "normal_close": true
+  },
+  "candidate": {
+    "status": "passed",
+    "directory": "relase/release-0.3.20-b",
+    "previous_local_candidate": "relase/release-0.3.20-a",
+    "command": "npm run package:release -- --candidate --output relase/release-0.3.20-b",
+    "immediate_local_commit": "recorded_in_git_history",
+    "installed": false,
+    "queued_self_echo_regression": "passed",
+    "latest_targeted_rerun": {
+      "backend_passed": 74,
+      "scope": [
+        "test_reply_sync_0320",
+        "test_reply_batches_0319",
+        "test_manual_chat"
+      ]
+    },
+    "final_build_commit": "225364c",
+    "staging": "artifacts/build/package-input-1794673362390",
+    "source_integrity": {
+      "status": "passed",
+      "version": "0.3.20",
+      "delivery": "e:\\ReceptionWorkbench\\relase\\release-0.3.20-b\\delivery.json",
+      "staging": "e:\\ReceptionWorkbench\\artifacts\\build\\package-input-1794673362390",
+      "python_inputs": 89,
+      "frozen_backend_files": 75,
+      "compiled_app_files": 6,
+      "external_launch_modules": 7,
+      "asar_sha256": "23b02284b6ddb28e83fa7be5fce49ea04e4445445eb7cde3d3b81b5988df6ed3",
+      "source_manifest_sha256": "8eabd51b6aa7882ea3cec31cf9484d80a25b03efd4e4161f79d08814e49792d2",
+      "production_workspace_accessed": false
+    },
+    "update_signature": {
+      "status": "passed",
+      "version": "0.3.20",
+      "installer_bytes": 140111264,
+      "installer_sha256": "60064e41759b5bd8cb5f783ab936e2b5f8fc12068c0790d53dbe33d7be2781a1",
+      "installer_sha512": "nbLoZcrLkQrQxsgshWOSOq1pgpto//J4jQn+Y7N0V4lU7Sbg8LDeffuFkXRS3ITaVGexDOf38ANkLsZ5uhsnTg==",
+      "release_signature": "ed25519",
+      "windows_signed": false,
+      "feed_files": 3,
+      "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+      "python_inputs": 89,
+      "source_manifest": "artifacts\\build\\package-input-1794673362390\\source-manifest.json",
+      "compiled_host_matches_stage": true,
+      "installed_marker_baked_in": false,
+      "merchant_launch_inputs": 7,
+      "merchant_launch_inputs_match_source": true,
+      "update_source_preconfigured": true,
+      "update_source_type": "github",
+      "update_source_url": "https://github.com/juccistar/reception-workbench-releases/",
+      "actual_installer_executed": false
+    },
+    "sdk_runtime": {
+      "status": "passed",
+      "version": "0.3.20",
+      "runtime_packages": 193,
+      "runtime_files": 3377,
+      "exact_file_hashes_verified": true,
+      "unlisted_dependencies": false,
+      "bundles": [
+        {
+          "path": "relase/release-0.3.20-b/win-unpacked",
+          "runtime_archive_sha256": "eaee2930b1140de6363549f9f1212aa0ade411b640581bb48ec18f600779f317",
+          "asar_sha256": "23b02284b6ddb28e83fa7be5fce49ea04e4445445eb7cde3d3b81b5988df6ed3",
+          "compiled_host_and_preload_match": true
+        },
+        {
+          "path": "relase/release-0.3.20-b/installer-build/win-unpacked",
+          "runtime_archive_sha256": "eaee2930b1140de6363549f9f1212aa0ade411b640581bb48ec18f600779f317",
+          "asar_sha256": "23b02284b6ddb28e83fa7be5fce49ea04e4445445eb7cde3d3b81b5988df6ed3",
+          "compiled_host_and_preload_match": true
+        }
+      ]
+    },
+    "window": {
+      "status": "passed",
+      "recovery_report": "artifacts/verification/recovery-0320-final-b/report.json",
+      "replies_report": "artifacts/verification/replies-0319-final-0320-b/report.json",
+      "screenshots_visually_reviewed": 12,
+      "normal_close": true,
+      "scripts_run_serially": true
+    },
+    "earlier_window_failure": {
+      "report": "artifacts/verification/recovery-0320-candidate-a/report.json",
+      "failure": "firstWindow closed before acquisition during parallel candidate launch",
+      "subsequent_independent_and_final_serial_runs": "passed",
+      "unique_cause": "not-established"
+    }
+  },
+  "release": {
+    "status": "published_and_anonymously_verified",
+    "id": 445422313,
+    "url": "https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.20",
+    "published_at_utc": "2026-11-14T16:29:24Z",
+    "tag": "v0.3.20",
+    "public_latest": "v0.3.20",
+    "draft": false,
+    "final_candidate": "relase/release-0.3.20-b",
+    "assets": [
+      {
+        "name": "latest.yml",
+        "bytes": 726,
+        "sha256": "3e4d86d5dd49213fc69ebba2d07283eff3619e2be2faa566c886010defd6bbde",
+        "sha512": "QdXyIIchioJOYFj1gMLP7nJLFj7Aqqrl4u9HTYknfXiFSXqMk70LLugCdJ6eCxPPCLEfsZd5MzABRUALXHpRYw==",
+        "server_digest": "sha256:3e4d86d5dd49213fc69ebba2d07283eff3619e2be2faa566c886010defd6bbde",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.20/latest.yml",
+        "saved_path": "artifacts/verification/public-0320-b/latest.yml/latest.yml",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-0.3.20.zip",
+        "bytes": 183462499,
+        "sha256": "d94de04a69c98222979c75fd440202a326fbe08c100398b6eadfcf8dd919b349",
+        "sha512": "57kRn9pc1PzqAyNYtRH/GQX/T/4/H2ZsPksktP/p+lmvMgwjGc544hpQThVUntKb9goTx1eaVh8HL+5xO2ijBQ==",
+        "server_digest": "sha256:d94de04a69c98222979c75fd440202a326fbe08c100398b6eadfcf8dd919b349",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.20/ReceptionWorkbench-0.3.20.zip",
+        "saved_path": "artifacts/verification/public-0320-b/ReceptionWorkbench-0.3.20.zip/ReceptionWorkbench-0.3.20.zip",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.20.exe",
+        "bytes": 140111264,
+        "sha256": "60064e41759b5bd8cb5f783ab936e2b5f8fc12068c0790d53dbe33d7be2781a1",
+        "sha512": "nbLoZcrLkQrQxsgshWOSOq1pgpto//J4jQn+Y7N0V4lU7Sbg8LDeffuFkXRS3ITaVGexDOf38ANkLsZ5uhsnTg==",
+        "server_digest": "sha256:60064e41759b5bd8cb5f783ab936e2b5f8fc12068c0790d53dbe33d7be2781a1",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.20/ReceptionWorkbench-Setup-0.3.20.exe",
+        "saved_path": "artifacts/verification/public-0320-b/ReceptionWorkbench-Setup-0.3.20.exe/ReceptionWorkbench-Setup-0.3.20.exe",
+        "complete": true
+      },
+      {
+        "name": "ReceptionWorkbench-Setup-0.3.20.exe.blockmap",
+        "bytes": 146759,
+        "sha256": "85141c077d0299c94fe8ecedd4514c1b16fc70c221d7e79be9e224b803e3b98e",
+        "sha512": "pLQcA0UyddYJSoijcGGHvxSeuB/1XudmvhwThjSCqZbCx+x1LfHRGBJPKNYzj2a7xuOVFPRarncV7XCbWnUTBA==",
+        "server_digest": "sha256:85141c077d0299c94fe8ecedd4514c1b16fc70c221d7e79be9e224b803e3b98e",
+        "public_url": "https://github.com/juccistar/reception-workbench-releases/releases/download/v0.3.20/ReceptionWorkbench-Setup-0.3.20.exe.blockmap",
+        "saved_path": "artifacts/verification/public-0320-b/ReceptionWorkbench-Setup-0.3.20.exe.blockmap/ReceptionWorkbench-Setup-0.3.20.exe.blockmap",
+        "complete": true
+      }
+    ],
+    "anonymous_complete_download": true,
+    "downloaded_update_signature": {
+      "status": "passed",
+      "algorithm": "ed25519",
+      "version": "0.3.20",
+      "artifact": "ReceptionWorkbench-Setup-0.3.20.exe",
+      "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+      "installer_sha512_matches_complete_download": true
+    },
+    "public_report": "artifacts/verification/public-0320-b/report.json",
+    "source_pushed": false,
+    "installed": false,
+    "default_delivery_pointer_promoted": false
+  },
   "boundaries": {
     "synthetic_only_for_business_verification": true,
     "production_merchant_rebuilt": false,
@@ -43,5 +231,48 @@
     "prompts_changed": false,
     "installed_or_migrated_real_data": false,
     "private_source_pushed": false
-  }
+  },
+  "commits": {
+    "source_build": "af25756",
+    "candidate_a_build": "3e8a6b7",
+    "final_candidate_b_build": "225364c",
+    "each_build_committed_immediately": true
+  },
+  "whatsapp_public_page": {
+    "status": "passed",
+    "normal_report": "artifacts/verification/whatsapp-native-0320-candidate-a/report.json",
+    "controlled_fault_report": "artifacts/verification/whatsapp-native-0320-candidate-fault-a/report.json",
+    "normal_observation_ms": 60504,
+    "fault_observation_ms": 60443,
+    "refresh_observed_both": true,
+    "screenshots_visually_reviewed": 2,
+    "compiled_host_sha256": "312c247b408c3e0cb9d05b54210945876a3753a80279b69c79efbabb53c3a38f",
+    "final_b_app_and_sdk_archives_byte_identical_to_tested_a": true,
+    "final_b_archive_identity_proof": "artifacts/verification/release-0320/runtime-b.json",
+    "real_merchant_bootstrap_used": false,
+    "real_account_logged_in": false
+  },
+  "whatsapp_recovery_fixture": {
+    "status": "passed",
+    "report": "artifacts/verification/session-0320/candidate-e/report.json",
+    "actual_native_dialog_cancel_and_confirm": true,
+    "actual_electron_views": true,
+    "compiled_coordinator_and_session_store": true,
+    "synthetic_transport_and_business_service": true,
+    "inflight_settled_before_switch": true,
+    "old_partition_and_ledger_preserved": true,
+    "other_merchant_unchanged": true,
+    "old_operation_epoch_preserved": true,
+    "reception_not_restored": true,
+    "screenshots_visually_reviewed": 2,
+    "earlier_fixture_failures": [
+      "a: dialog automation stalled; owned fixture timed out",
+      "b: UIAutomation could not find owned dialog",
+      "c: UIAutomation traversal stalled; owned fixture timed out",
+      "d: fixture read a destroyed view getter; native dialogs had completed",
+      "e: owned foreground-window keyboard automation and retained WebContents reference passed"
+    ],
+    "not_a_real_merchant_rebuild_or_full_live_ipc_identity_acceptance": true
+  },
+  "current_acceptance_screenshots_visually_reviewed": 28
 }
