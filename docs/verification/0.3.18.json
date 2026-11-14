@@ -1,7 +1,7 @@
 {
   "version": "0.3.18",
   "date": "2026-11-14",
-  "status": "development-and-source-verification-complete",
+  "status": "candidate-built-awaiting-package-verification",
   "public_latest": "0.3.17",
   "architecture": "single-electron-webcontentsview-shared-with-sdk",
   "targeted_tests": {
@@ -121,7 +121,20 @@
     ]
   },
   "packaging": {
-    "status": "not-run"
+    "status": "built-awaiting-verification",
+    "output": "relase/release-0.3.18-a",
+    "source_commit": "ff4f353",
+    "source_head_before_packaging": "9daff52",
+    "staging": "artifacts/build/package-input-1794637335213",
+    "python_inputs": 86,
+    "portable_files": 165,
+    "archive_sha256": "d488d54740bef77506626136842c22ab38f1daacbd486c2d1140ccb612222718",
+    "installer_sha256": "4423b82843ef7a92d1e0c460ab35f143673e7d60dece58c4b9a4d4239659427c",
+    "installer_bytes": 140047304,
+    "release_signature": "ed25519",
+    "windows_authenticode": "NotSigned",
+    "candidate": true,
+    "installer_executed": false
   },
   "delivery": {
     "public_release_created": false,
