@@ -29,6 +29,9 @@ export function WhatsAppAccounts({ bridge, onBack, onModels }: Props) {
   const binding = state?.bindings.find(item => item.chat_id === chatId);
   const chat = state?.conversations.find(item => item.chat_id === chatId);
   const identity = state?.account_id && state.connection_epoch ? { expected_account_id: state.account_id, expected_connection_epoch: state.connection_epoch } : null;
+  const connecting = ['connecting', 'qr', 'authenticated', 'ready'].includes(snapshot?.host.status ?? '');
+  const browserOpen = connecting || snapshot?.host.page_state === 'available' || snapshot?.host.page_state === 'loading';
+  const hostStatus = ({ connecting: '正在连接', qr: '等待扫码', authenticated: '正在初始化', ready: '已连接', error: '连接异常', disconnected: '未连接', closed: '已关闭' } as Record<string, string>)[snapshot?.host.status ?? ''] ?? '未连接';
 
   const refresh = useCallback(() => {
     if (refreshQueued.current || document.visibilityState === 'hidden') return;
@@ -90,8 +93,8 @@ export function WhatsAppAccounts({ bridge, onBack, onModels }: Props) {
           {snapshot.profiles.length > 0 && <label>选择环境<select aria-label="选择环境" value={snapshot.selected_workspace_id ?? ''} disabled={busy} onChange={e => { const id = e.target.value; action(() => bridge.selectWhatsAppAccount(id), { select: true }); }}><option value="" disabled>请选择环境</option>{snapshot.profiles.map(p => <option key={p.workspace_id} value={p.workspace_id} title={p.label}>{p.label}{p.account_tail ? ` (${p.account_tail})` : ''}</option>)}</select></label>}
           {!snapshot.profiles.length && <p>还没有账号环境，请先创建。</p>}
           {creating ? <div className="wa-create"><label>环境名称<input value={label} maxLength={100} onChange={e => setLabel(e.target.value)} /></label><div className="wa-actions"><button className="secondary" disabled={busy || !label.trim()} onClick={() => { const value = label.trim(); action(async () => { const next = await bridge.createWhatsAppAccount(value); if (mounted.current) { setCreating(false); setLabel(''); } return next; }, { select: true }); }}>创建</button><button className="quiet" onClick={() => setCreating(false)}>取消</button></div></div> : <button className="secondary" disabled={busy} onClick={() => setCreating(true)}>新建环境</button>}
-          {snapshot.selected_workspace_id && <div className="wa-actions"><button className="primary" disabled={busy || !!state?.connected} onClick={() => action(() => bridge.connectWhatsAppAccount())}>连接真实 Chrome</button><button className="secondary" disabled={busy} onClick={() => action(() => bridge.openWhatsAppAccount())}>打开或切换到 Chrome</button><button className="secondary" disabled={busy || !state?.connected} onClick={() => action(() => bridge.disconnectWhatsAppAccount())}>断开连接</button></div>}
-          <p>Chrome 状态：{state?.connected ? '已连接' : '未连接'}{snapshot.host.status ? `（${snapshot.host.status}）` : ''}</p>
+          {snapshot.selected_workspace_id && <div className="wa-actions"><button className="primary" disabled={busy || connecting || !!state?.connected} onClick={() => action(() => bridge.connectWhatsAppAccount())}>连接真实 Chrome</button><button className="secondary" disabled={busy} onClick={() => action(() => bridge.openWhatsAppAccount())}>打开或切换到 Chrome</button><button className="secondary" disabled={busy || !(browserOpen || state?.connected)} onClick={() => action(() => bridge.disconnectWhatsAppAccount())}>断开连接</button></div>}
+          <p>Chrome 状态：{hostStatus}</p>
         </section>
         {state && <>
           <section><h2>接待与模型</h2><p>模型：{state.model.ready ? '已就绪' : '未就绪'}{state.model.message ? ` · ${state.model.message}` : ''}</p><button className="quiet" onClick={onModels}>前往模型配置</button><p>旧登录来源：{state.legacy.status === 'ready' ? '已核验' : state.legacy.status === 'blocked' ? '受阻' : '未核验'}{state.legacy.reason ? ` · ${state.legacy.reason}` : ''}</p><button className="secondary" disabled={busy || !state.connected} onClick={() => action(() => bridge.verifyWhatsAppLegacySources())}>核查旧接入记录</button>

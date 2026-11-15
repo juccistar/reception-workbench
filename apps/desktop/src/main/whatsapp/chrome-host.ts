@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { resolveWindowsUserLocalAppData } from '../windows-user-directories';
 import type { WhatsAppTransportHost } from '../whatsapp-coordinator';
 import type { WhatsAppHostInfo } from '../../shared/whatsapp';
-import type { WhatsAppEvent, WhatsAppMessage } from './host';
+import type { WhatsAppEvent, WhatsAppMessage } from './events';
 import { SendLedger, type FrozenIntent, type SendResult } from './ledger';
 
 const direct = (id: string) => /@(c\.us|lid)$/.test(id);
@@ -211,7 +211,6 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
     void task.finally(() => { if (this.initializing === task) this.initializing = undefined; });
   }
   getStatus(): WhatsAppHostInfo { return { ...this.status }; }
-  setVisible(visible: boolean): void { if (visible) void this.open().catch(() => {}); }
   async open(): Promise<void> {
     const page = this.client?.pupPage;
     if (!page || page.isClosed()) throw new Error('WhatsApp page unavailable');

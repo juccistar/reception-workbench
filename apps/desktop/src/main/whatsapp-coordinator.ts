@@ -1,13 +1,12 @@
 import { createHash } from 'node:crypto';
-import type { WhatsAppContact, WhatsAppHostInfo, WhatsAppViewRequest } from '../shared/whatsapp';
-import type { WhatsAppEvent } from './whatsapp/host';
+import type { WhatsAppContact, WhatsAppHostInfo } from '../shared/whatsapp';
+import type { WhatsAppEvent } from './whatsapp/events';
 import type { FrozenIntent, LedgerRecord, SendResult } from './whatsapp/ledger';
 
 export interface WhatsAppTransportHost {
   connect(): Promise<void>;
   close(): Promise<void>;
   getStatus(): WhatsAppHostInfo;
-  setVisible(visible: boolean, bounds?: { x: number; y: number; width: number; height: number }): void;
   listChats(): Promise<WhatsAppContact[]>;
   sendFrozen(intent: FrozenIntent): Promise<SendResult>;
   readLedger(operationId: string): LedgerRecord | undefined;
@@ -22,20 +21,6 @@ interface Options {
   shutdownGraceMs?: number;
 }
 const disconnected: WhatsAppHostInfo = { status: 'disconnected', account_id: '', connection_epoch: '' };
-
-export function validateWhatsAppView(value: unknown, size: { width: number; height: number }): WhatsAppViewRequest {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('WhatsApp 窗口范围无效。');
-  const input = value as Record<string, unknown>;
-  if (Object.keys(input).some(key => key !== 'visible' && key !== 'bounds') || typeof input.visible !== 'boolean') throw new Error('WhatsApp 窗口范围无效。');
-  if (!input.visible) return { visible: false };
-  const bounds = input.bounds as Record<string, unknown> | undefined;
-  if (!bounds || typeof bounds !== 'object' || Array.isArray(bounds) || Object.keys(bounds).length !== 4 || !['x', 'y', 'width', 'height'].every(key => typeof bounds[key] === 'number' && Number.isSafeInteger(bounds[key]) && Math.abs(bounds[key] as number) <= 100000)) throw new Error('WhatsApp 窗口范围无效。');
-  if ((bounds.x as number) < 56 || (bounds.y as number) < 160 || (bounds.width as number) < 120 || (bounds.height as number) < 80) throw new Error('WhatsApp 窗口不能遮挡工作台控制区。');
-  const x = bounds.x as number; const y = bounds.y as number;
-  const width = Math.min(bounds.width as number, size.width - x);
-  const height = Math.min(bounds.height as number, size.height - y - 24);
-  return width >= 120 && height >= 80 ? { visible: true, bounds: { x, y, width, height } } : { visible: false };
-}
 
 /** Serializes native observations while external submissions remain independent. */
 export class WhatsAppCoordinator {
@@ -56,7 +41,6 @@ export class WhatsAppCoordinator {
   }
   private readonly sends = new Map<string, Promise<void>>();
   private readonly reconciliations = new Set<Promise<void>>();
-  private recovering = false;
   private readonly unsettled = new Set<string>();
   private stopping = false;
   private generation = 0;
@@ -70,7 +54,6 @@ export class WhatsAppCoordinator {
     return next;
   }
   async connect(): Promise<WhatsAppHostInfo> {
-    if (this.recovering) throw new Error('WhatsApp 登录环境正在重建。');
     this.stopping = false;
     if (!this.host) {
       if (!this.creating) {
@@ -83,7 +66,6 @@ export class WhatsAppCoordinator {
     await this.host.connect();
     return this.getStatus();
   }
-  setView(request: WhatsAppViewRequest): void { if (this.host && !this.stopping) this.host.setVisible(request.visible, request.bounds); }
   receive(event: WhatsAppEvent): void {
     let accountIdentity = '';
     if (event.type === 'account') {
@@ -207,7 +189,7 @@ export class WhatsAppCoordinator {
     void task.catch(() => {}).finally(() => { this.sends.delete(operationId); });
   }
   async reconcile(operationId: string): Promise<void> {
-    if (this.stopping || this.recovering) return;
+    if (this.stopping) return;
     const task = this.reconcileExisting(operationId);
     this.reconciliations.add(task);
     try { await task; } finally { this.reconciliations.delete(task); }
@@ -231,19 +213,6 @@ export class WhatsAppCoordinator {
     await this.enqueue(() => this.options.invoke('_wa_transport_result', { operation_id: intent.operation_id, account_id: intent.account_id, connection_epoch: intent.connection_epoch, status: 'submitted', ...evidence }));
     this.unsettled.delete(operationId);
   }
-  async rebuild(commit: () => Promise<void>): Promise<WhatsAppHostInfo> {
-    if (this.recovering) throw new Error('WhatsApp 登录环境正在重建。');
-    this.recovering = true;
-    try {
-      this.options.notify({ event: 'whatsapp.recovery.changed', data: { stage: 'waiting' } });
-      await this.stop();
-      this.options.notify({ event: 'whatsapp.recovery.changed', data: { stage: 'committing' } });
-      await commit();
-      this.recovering = false;
-      this.options.notify({ event: 'whatsapp.recovery.changed', data: { stage: 'connecting' } });
-      return await this.connect();
-    } finally { this.recovering = false; }
-  }
   async stop(): Promise<void> {
     this.stopping = true;
     for (const cancel of this.cancelMedia) cancel();
@@ -256,11 +225,11 @@ export class WhatsAppCoordinator {
       await Promise.race([pending, new Promise<void>(resolve => { timer = setTimeout(() => { timedOut = true; resolve(); }, this.options.shutdownGraceMs ?? 10000); })]);
     } finally { if (timer) clearTimeout(timer); }
     const host = this.host;
-    if (timedOut && host) { host.setVisible(false); await host.close(); }
+    if (timedOut && host) { await host.close(); }
     const settled = await pending;
     await this.observations;
     if (this.unsettled.size || settled.some(result => result.status === 'rejected')) throw new Error('WhatsApp 在途操作收尾未完成，请保留原环境。');
-    if (!timedOut && host) { host.setVisible(false); await host.close(); }
+    if (!timedOut && host) { await host.close(); }
     await this.observations;
     this.host = null;
     ++this.generation;

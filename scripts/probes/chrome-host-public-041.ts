@@ -6,18 +6,26 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { ChromeWhatsAppHost } from '../../apps/desktop/src/main/whatsapp/chrome-host';
 
-const [root, output] = process.argv.slice(2);
-assert(root && output && path.isAbsolute(root) && path.isAbsolute(output));
-const sdk = createRequire(path.join(root, 'artifacts/app/main/index.js'))('whatsapp-web.js');
+const [root, output, sdkEntry] = process.argv.slice(2);
+assert(root && output && path.isAbsolute(root) && path.isAbsolute(output) && (!sdkEntry || path.isAbsolute(sdkEntry)));
+const sdk = createRequire(sdkEntry || path.join(root, 'artifacts/app/main/index.js'))('whatsapp-web.js');
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 function resources(ownedId: number) {
-  const program = `$ErrorActionPreference='Stop';$seen=[Collections.Generic.HashSet[int]]::new();$todo=[Collections.Generic.Queue[int]]::new();$todo.Enqueue(${ownedId});$rows=@();while($todo.Count -gt 0){$ownedId=$todo.Dequeue();if(-not $seen.Add($ownedId)){continue};$item=Get-CimInstance Win32_Process -Filter "ProcessId=$ownedId";if($item){$rows += [pscustomobject]@{pid=$ownedId;working_set=[long]$item.WorkingSetSize;private_bytes=[long]$item.PrivatePageCount};Get-CimInstance Win32_Process -Filter "ParentProcessId=$ownedId AND Name='chrome.exe'" | ForEach-Object {$todo.Enqueue([int]$_.ProcessId)}}};ConvertTo-Json -Compress -InputObject @($rows)`;
+  const program = `$ErrorActionPreference='Stop';$seen=[Collections.Generic.HashSet[int]]::new();$todo=[Collections.Generic.Queue[int]]::new();$todo.Enqueue(${ownedId});$rows=@();while($todo.Count -gt 0){$ownedId=$todo.Dequeue();if(-not $seen.Add($ownedId)){continue};$item=Get-CimInstance Win32_Process -Filter "ProcessId=$ownedId";if($item){$rows += [pscustomobject]@{pid=$ownedId;working_set=[long]$item.WorkingSetSize;private_bytes=[long]$item.PrivatePageCount;cpu_ms=([long]$item.KernelModeTime+[long]$item.UserModeTime)/10000.0;creation_utc=$item.CreationDate.ToUniversalTime().ToString('o')};Get-CimInstance Win32_Process -Filter "ParentProcessId=$ownedId AND Name='chrome.exe'" | ForEach-Object {$todo.Enqueue([int]$_.ProcessId)}}};ConvertTo-Json -Compress -InputObject @($rows)`;
   const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
   return JSON.parse(execFileSync(ps, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(program, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 15000, windowsHide: true }));
 }
+function remainingOwned(rows: Array<{ pid: number; creation_utc: string }>) {
+  assert(rows.length > 0 && rows.every(row => Number.isSafeInteger(row.pid) && row.pid > 0));
+  const filter = rows.map(row => `ProcessId=${row.pid}`).join(' OR ');
+  const program = `$ErrorActionPreference='Stop';$remainingOwned=@(Get-CimInstance Win32_Process -Filter "${filter}" | ForEach-Object {[pscustomobject]@{pid=[int]$_.ProcessId;creation_utc=$_.CreationDate.ToUniversalTime().ToString('o')}});ConvertTo-Json -Compress -InputObject $remainingOwned`;
+  const ps = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
+  const current = JSON.parse(execFileSync(ps, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(program, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 15000, windowsHide: true }));
+  return current.filter((item: any) => rows.some(row => row.pid === item.pid && row.creation_utc === item.creation_utc));
+}
 async function main() {
-  await mkdir(output, { recursive: true });
-  const report: any = { status: 'failed', production_host: true, launcher_ui: false, real_system_chrome: true, sdk_initialize_fault_injected: true, real_account_authenticated: false, contact_reads: 0, customer_sends: 0, model_calls: 0, scenarios: [] };
+  await mkdir(output);
+  const report: any = { status: 'failed', production_host: true, launcher_ui: false, real_system_chrome: true, verified_runtime_snapshot: !!sdkEntry, sdk_initialize_fault_injected: true, real_account_authenticated: false, contact_reads: 0, customer_sends: 0, model_calls: 0, scenarios: [] };
   for (const mode of ['normal', 'initialize-fault']) {
     const temporary = await mkdtemp(path.join(os.tmpdir(), 'arw-chrome-host-041-'));
     const row: any = { mode, qr_times: [], statuses: [], screenshots: [] };
@@ -96,6 +104,11 @@ async function main() {
       row.close_completed = true;
       row.owned_root_process_exited = owned.exitCode !== null || owned.signalCode !== null;
       assert(row.owned_root_process_exited);
+      const closeDeadline = Date.now() + 5000;
+      let remaining = remainingOwned(row.process_group);
+      while (remaining.length && Date.now() < closeDeadline) { await pause(250); remaining = remainingOwned(row.process_group); }
+      row.owned_processes_remaining = remaining.length;
+      assert.equal(row.owned_processes_remaining, 0, 'owned Chrome processes still running');
       row.status = 'passed';
     } catch (error) {
       row.status = 'failed'; row.error = error instanceof Error ? error.message : 'probe failed';

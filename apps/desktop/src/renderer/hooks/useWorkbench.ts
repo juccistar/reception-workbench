@@ -3,7 +3,7 @@ import type { ApiMethod, ChatSendParams, ConversationDetail, Draft, ExecutorHeal
 import { executorHealth } from '../executorHealth';
 import { createEventRefresh } from './eventRefresh';
 
-export type Page = 'home' | 'reception' | 'whatsapp' | 'handoff' | 'customers' | 'policies' | 'settings' | 'activity' | 'products' | 'suppliers' | 'procurement';
+export type Page = 'home' | 'reception' | 'handoff' | 'customers' | 'policies' | 'settings' | 'activity' | 'products' | 'suppliers' | 'procurement';
 type SendStatus = Job['status'] | 'requesting' | 'retry' | 'accepted' | 'rejected';
 export interface ChatSend {
   params: ChatSendParams;

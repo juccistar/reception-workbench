@@ -217,7 +217,10 @@ describe('native chat IPC boundary', () => {
     await expect(bridge.invoke('send_chat', { ...request, expected_revision: null })).rejects.toThrow('版本无效');
     await expect(bridge.invoke('shell' as any, {})).rejects.toThrow('不允许');
     await expect(bridge.invoke('confirm_send', {})).rejects.toThrow('不允许');
+    for (const method of ['get_whatsapp_state', 'save_whatsapp_binding', 'get_whatsapp_context', 'set_whatsapp_reception', 'takeover_whatsapp', 'reconcile_whatsapp_operation']) {
+      await expect(bridge.invoke(method as any, {})).rejects.toThrow('不允许');
+    }
     expect(host.ipcInvoke).not.toHaveBeenCalled();
-    expect(Object.keys(bridge).sort()).toEqual(['chooseWorkctl', 'chooseSupplementAttachment', 'chooseSupplementAttachments', 'uploadSupplementAttachments', 'pasteSupplementAttachments', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate', 'getTranslationSettings', 'setTranslationEnabled', 'importLegacyTranslation', 'getModelSummary', 'openModelLauncher', 'clearTranslationCache', 'connectWhatsApp', 'disconnectWhatsApp', 'rebuildWhatsAppSession', 'getWhatsAppHostInfo', 'listWhatsAppChats', 'setWhatsAppView', 'copyProductText', 'openProductLink', 'getImageOriginal', 'cancelImageOriginal', 'showImageMenu'].sort());
+    expect(Object.keys(bridge).sort()).toEqual(['chooseWorkctl', 'chooseSupplementAttachment', 'chooseSupplementAttachments', 'uploadSupplementAttachments', 'pasteSupplementAttachments', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate', 'getTranslationSettings', 'setTranslationEnabled', 'importLegacyTranslation', 'getModelSummary', 'openModelLauncher', 'clearTranslationCache', 'copyProductText', 'openProductLink', 'getImageOriginal', 'cancelImageOriginal', 'showImageMenu'].sort());
   });
 });

@@ -1,10 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest';
-import { WhatsAppCoordinator, validateWhatsAppView, type WhatsAppTransportHost } from '../src/main/whatsapp-coordinator';
+import { WhatsAppCoordinator, type WhatsAppTransportHost } from '../src/main/whatsapp-coordinator';
 const intent = { operation_id: 'operation', account_id: 'self@c.us', connection_epoch: 'epoch-old', chat_id: 'customer@lid', body: 'Frozen reply' };
 function setup(shutdownGraceMs = 10000) {
   const invoke = vi.fn(async (method: string, _params?: Record<string, unknown>): Promise<unknown> => method === '_wa_prepare_send' ? intent : method === 'get_whatsapp_state' ? { pending_operations: [] } : {});
-  const host = { connect: vi.fn(async () => {}), close: vi.fn(async () => {}), getStatus: vi.fn(() => ({ status: 'ready', account_id: intent.account_id, connection_epoch: intent.connection_epoch })), setVisible: vi.fn(), listChats: vi.fn(async () => [{ chat_id: intent.chat_id, name: 'Synthetic customer' }]), sendFrozen: vi.fn(async () => ({ message_id: 'exact-id', ack: 0 })), readLedger: vi.fn(() => undefined as ReturnType<WhatsAppTransportHost['readLedger']>), lookupMessage: vi.fn(async () => ({ message_id: 'exact-id', ack: 1 })) };
+  const host = { connect: vi.fn(async () => {}), close: vi.fn(async () => {}), getStatus: vi.fn(() => ({ status: 'ready', account_id: intent.account_id, connection_epoch: intent.connection_epoch })), listChats: vi.fn(async () => [{ chat_id: intent.chat_id, name: 'Synthetic customer' }]), sendFrozen: vi.fn(async () => ({ message_id: 'exact-id', ack: 0 })), readLedger: vi.fn(() => undefined as ReturnType<WhatsAppTransportHost['readLedger']>), lookupMessage: vi.fn(async () => ({ message_id: 'exact-id', ack: 1 })) };
   const notify = vi.fn();
   const coordinator = new WhatsAppCoordinator({ invoke: invoke as never, createHost: async () => host, notify, shutdownGraceMs });
   return { coordinator, host, invoke, notify };
@@ -108,27 +108,6 @@ describe('WhatsApp host/service coordination', () => {
     expect(invoke).toHaveBeenCalledWith('_wa_transport_result', expect.objectContaining({ operation_id: intent.operation_id, status: 'unknown' }));
     expect(host.sendFrozen).toHaveBeenCalledOnce();
   });
-  it('waits for the in-flight result and closes the old host before committing a new generation', async () => {
-    const { coordinator, host, invoke } = setup(); await coordinator.connect();
-    let finish!: (result: { message_id: string; ack: number }) => void;
-    host.sendFrozen.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
-    coordinator.handleServiceEvent(request);
-    await vi.waitFor(() => expect(host.sendFrozen).toHaveBeenCalled());
-    const commit = vi.fn(async () => { expect(host.close).toHaveBeenCalledOnce(); expect(invoke).toHaveBeenCalledWith('_wa_transport_result', expect.objectContaining({ message_id: 'exact-id' })); });
-    const rebuilding = coordinator.rebuild(commit);
-    await expect(coordinator.connect()).rejects.toThrow('正在重建');
-    expect(commit).not.toHaveBeenCalled();
-    finish({ message_id: 'exact-id', ack: 0 });
-    await rebuilding;
-    expect(commit).toHaveBeenCalledOnce();
-  });
-  it('does not commit when old host cleanup fails', async () => {
-    const { coordinator, host } = setup(); await coordinator.connect();
-    host.close.mockRejectedValue(new Error('cleanup failed'));
-    const commit = vi.fn(async () => {});
-    await expect(coordinator.rebuild(commit)).rejects.toThrow('cleanup failed');
-    expect(commit).not.toHaveBeenCalled();
-  });
   it('registers a chosen SDK contact as metadata without generating a new buyer message', async () => {
     const { coordinator, invoke } = setup(); await coordinator.connect(); await coordinator.listChats();
     expect(invoke).toHaveBeenCalledWith('_wa_ingest', expect.objectContaining({ messages: [expect.objectContaining({ metadata_only: true, is_history: true, body: '', chat_id: intent.chat_id })] }));
@@ -185,11 +164,5 @@ describe('WhatsApp host/service coordination', () => {
     release({ transfer_id: 'late-transfer' });
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('_wa_media_fail', expect.objectContaining({ transfer_id: 'late-transfer' })));
     expect(invoke.mock.calls.some(([method]) => method === '_wa_media_chunk')).toBe(false);
-  });
-  it('clamps native bounds and rejects any attempt to cover trusted controls', () => {
-    expect(validateWhatsAppView({ visible: true, bounds: { x: 184, y: 240, width: 1300, height: 1000 } }, { width: 1440, height: 960 })).toEqual({ visible: true, bounds: { x: 184, y: 240, width: 1256, height: 696 } });
-    expect(() => validateWhatsAppView({ visible: true, bounds: { x: 0, y: 0, width: 1440, height: 960 } }, { width: 1440, height: 960 })).toThrow('控制区');
-    expect(() => validateWhatsAppView({ visible: true, bounds: { x: 184, y: 240, width: Number.NaN, height: 600 } }, { width: 1440, height: 960 })).toThrow();
-    expect(() => validateWhatsAppView({ visible: false, evaluate: 'arbitrary' }, { width: 1440, height: 960 })).toThrow();
   });
 });

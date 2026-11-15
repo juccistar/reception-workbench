@@ -34,6 +34,21 @@ it('saves the selected contact with its account identity and binding revision', 
   await waitFor(() => expect(bridge.reconcileWhatsAppAccountOperation).toHaveBeenCalledWith('original-op'));
 });
 
+it('can disconnect the visible QR page before account authentication completes', async () => {
+  const snapshot = connected();
+  snapshot.host = { status: 'qr', account_id: '', connection_epoch: '', page_state: 'available' };
+  snapshot.state = { ...snapshot.state!, connected: false, account_id: null, connection_epoch: null };
+  const bridge = makeBridge(snapshot);
+  bridge.disconnectWhatsAppAccount = vi.fn().mockResolvedValue(base());
+  mount(bridge);
+  const stop = await screen.findByRole('button', { name: '断开连接' });
+  expect((screen.getByRole('button', { name: '连接真实 Chrome' }) as HTMLButtonElement).disabled).toBe(true);
+  expect((stop as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.getByText('Chrome 状态：等待扫码')).toBeTruthy();
+  fireEvent.click(stop);
+  await waitFor(() => expect(bridge.disconnectWhatsAppAccount).toHaveBeenCalledTimes(1));
+});
+
 it('does not let an old refresh overwrite an explicit environment selection', async () => {
   const first = connected(); let resolveRefresh!: (s: WhatsAppLauncherSnapshot) => void;
   const bridge = makeBridge(first);

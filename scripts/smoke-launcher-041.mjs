@@ -70,11 +70,17 @@ try {
   await page.keyboard.press('Escape');
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(440, 559));
   await page.waitForFunction(() => innerWidth <= 440);
+  assert(await page.evaluate(() => [...document.querySelectorAll('footer button')].every(button => {
+    const r = button.getBoundingClientRect();
+    return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight;
+  })), 'narrow footer must keep every action visible');
   await screenshot(page, '06-narrow-home.png');
   await page.getByRole('button', { name: 'WhatsApp', exact: true }).click();
   await page.getByRole('button', { name: '连接真实 Chrome', exact: true }).waitFor();
   await screenshot(page, '07-narrow-account.png');
-  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && [...document.querySelectorAll('.wa-scroll')].every(node => node.scrollWidth <= node.clientWidth)), 'account management must not overflow horizontally');
+  await page.locator('.wa-scroll').evaluate(node => { node.scrollTop = node.scrollHeight; });
+  await screenshot(page, '08-narrow-account-controls.png');
   report.checks.company_titles_and_narrow_layout = true;
   const owned = app.process();
   const exited = new Promise(resolve => owned.once('exit', resolve));

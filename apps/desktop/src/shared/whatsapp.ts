@@ -47,12 +47,3 @@ export interface WhatsAppHostInfo {
   previous_phase?: WhatsAppPhase;
   diagnostic_id?: string;
 }
-export interface WhatsAppViewRequest { visible: boolean; bounds?: { x: number; y: number; width: number; height: number } }
-export interface WhatsAppHostBridge {
-  getWhatsAppHostInfo(): Promise<WhatsAppHostInfo>;
-  connectWhatsApp(): Promise<WhatsAppHostInfo>;
-  rebuildWhatsAppSession(): Promise<WhatsAppHostInfo | null>;
-  disconnectWhatsApp(): Promise<void>;
-  setWhatsAppView(request: WhatsAppViewRequest): Promise<void>;
-  listWhatsAppChats(): Promise<WhatsAppContact[]>;
-}

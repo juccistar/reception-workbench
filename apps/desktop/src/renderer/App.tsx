@@ -10,7 +10,6 @@ import { ProductsPage, SuppliersPage, ProcurementPage } from './components/Produ
 import { executorHealth } from './executorHealth';
 import './styles.css';
 import './reception-layout.css';
-import './whatsapp.css';
 
 const navigation: { id: Page; title: string; icon: typeof Home }[] = [
   { id: 'home', title: '开始', icon: Home }, { id: 'reception', title: '客户接待', icon: MessageCircle }, { id: 'products', title: '产品库', icon: ClipboardList }, { id: 'suppliers', title: '供应商', icon: UsersRound }, { id: 'procurement', title: '采购中心', icon: Store }, { id: 'handoff', title: '待我报价', icon: ClipboardCheck }, { id: 'customers', title: '客户资料', icon: UsersRound }, { id: 'policies', title: '资料与政策', icon: BookOpen }, { id: 'settings', title: '连接与设置', icon: Settings2 }, { id: 'activity', title: '运行记录', icon: ScrollText },
