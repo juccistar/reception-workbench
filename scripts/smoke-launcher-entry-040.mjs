@@ -14,7 +14,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const options = new Map();
 for (let i = 2; i < process.argv.length; i += 2) {
   const key = process.argv[i], value = process.argv[i + 1];
-  assert(['--label', '--executable', '--expect-legacy', '--read-only-home', '--redirected-home', '--expect-seller-tail'].includes(key) && value && !value.startsWith('--') && !options.has(key), 'Invalid arguments');
+  assert(['--label', '--executable', '--expect-legacy', '--read-only-home', '--redirected-home', '--expect-seller-tail', '--expected-version'].includes(key) && value && !value.startsWith('--') && !options.has(key), 'Invalid arguments');
   options.set(key, value);
 }
 assert(!options.has('--expect-legacy') || options.get('--expect-legacy') === '1', 'Expected --expect-legacy 1');
@@ -26,10 +26,13 @@ const sellerTail = options.get('--expect-seller-tail');
 assert(!redirectedHome && !sellerTail || (readOnlyHome && expectLegacy && redirectedHome && path.isAbsolute(redirectedHome) && !/^(?:\\\\|\/\/)/.test(redirectedHome) && /^[0-9]{4}$/.test(sellerTail || '')), 'Redirected home and seller tail require read-only legacy mode');
 const label = options.get('--label');
 assert(/^[a-z0-9][a-z0-9-]{0,60}$/.test(label || ''), 'Pass a new --label');
-const output = path.join(root, 'artifacts/verification', `launcher-entry-040-${label}`);
+const expectedVersion = options.get('--expected-version') || '0.4.0';
+assert(['0.4.0', '0.4.1'].includes(expectedVersion), 'Expected version must be a supported launcher version');
+assert(expectedVersion !== '0.4.1' || readOnlyHome, '0.4.1 actual entry verification requires read-only home mode');
+const output = path.join(root, 'artifacts/verification', `launcher-entry-${expectedVersion.replaceAll('.', '')}-${label}`);
 await mkdir(output);
 const report = { status: 'failed', production_main: false, actual_exe_entry: false, no_model_calls: false, no_business_open: false, screenshots: [], checks: {}, timings_ms: {}, files: {}, limitations: ['Timings are launch-to-window observations, not OS cold-start or performance measurements.', 'No real authorization, customer session, or model quality is tested.', 'Child process and module checks are snapshots; no model-check or business-opening action is invoked.'] };
-let app, temp, targets, before, legacyFiles, legacyBefore;
+let app, temp, targets, before, legacyFiles, legacyBefore, ownedUserData;
 async function readSafe(file, limit) {
   await checkParents(path.dirname(file));
   const stat = await lstat(file);
@@ -62,7 +65,7 @@ async function metadataState(file) {
   } catch (error) { if (error.code === 'ENOENT') return { exists: false }; throw error; }
 }
 async function homeState() {
-  return { settings: await metadataState(targets.settings), initialized: await metadataState(targets.initialized), registry: (await assertAbsent(targets.registry), { exists: false }) };
+  return { settings: await metadataState(targets.settings), initialized: await metadataState(targets.initialized), registry: expectedVersion === '0.4.1' ? await fileState(targets.registry) : (await assertAbsent(targets.registry), { exists: false }) };
 }
 async function assertAbsent(file) {
   try { await lstat(file); throw new Error('Blocked: existing global model or launcher state; no content was read.'); }
@@ -100,7 +103,7 @@ try {
   if (expectLegacy) {
     const local = path.dirname(path.dirname(modelDirectory));
     if (!redirectedHome) assert(process.env.LOCALAPPDATA && path.resolve(process.env.LOCALAPPDATA).toLowerCase() === local.toLowerCase(), 'Legacy mode requires standard LocalAppData');
-    await assertAbsent(path.join(path.dirname(modelDirectory), 'launcher-activation'));
+    if (expectedVersion === '0.4.0') await assertAbsent(path.join(path.dirname(modelDirectory), 'launcher-activation'));
     const directories = [...new Set([path.join(local, 'AlibabaReceptionWorkbenchHost'), ...(redirectedHome ? [path.join(path.resolve(redirectedHome), 'AppData', 'Local', 'AlibabaReceptionWorkbenchHost')] : [])])];
     legacyFiles = [];
     for (const legacyDir of directories) {
@@ -128,7 +131,7 @@ try {
   const archive = candidate ? path.join(path.dirname(executable), 'resources', 'app.asar') : null;
   if (archive) assertReleasePath(root, archive);
   const manifest = candidate ? JSON.parse(extractFile(archive, 'package.json').toString('utf8')) : JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
-  assert.equal(manifest.version, '0.4.0', 'Target package version must be 0.4.0');
+  assert.equal(manifest.version, expectedVersion, 'Target package version mismatch');
   if (candidate) assert.equal(manifest.main, 'main/index.js', 'Candidate must use production main');
   const entry = path.join(root, 'artifacts/app/main/index.js');
   if (!candidate) assert((await lstat(entry)).isFile(), 'Production main build is missing');
@@ -140,8 +143,13 @@ try {
     Object.assign(env, { USERPROFILE: home, LOCALAPPDATA: path.join(home, 'AppData', 'Local'), APPDATA: path.join(home, 'AppData', 'Roaming') });
     report.limitations.push('Redirected environment simulates Accio; no real Accio host connection or model readiness is tested.');
   }
-  const userData = path.join(temp, 'electron-user-data');
-  await mkdir(userData);
+  const userData = expectedVersion === '0.4.1' ? path.join(path.dirname(modelDirectory), 'launcher-host') : path.join(temp, 'electron-user-data');
+  if (expectedVersion === '0.4.1') {
+    await checkParents(userData);
+    try { const stat = await lstat(userData); assert(stat.isDirectory() && !stat.isSymbolicLink(), 'Unsafe native launcher cache'); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; await mkdir(userData, { recursive: true }); ownedUserData = userData; }
+    report.limitations.push('0.4.1 uses its fixed native launcher cache namespace. Existing cache is used only by the normal application and never copied, read by this driver, removed or replaced. Existing model files are checked by lstat only; launcher routing index is hashed read-only.');
+  } else await mkdir(userData);
   const launch = () => electron.launch({ executablePath: executable, args: [...(candidate ? [] : [root]), `--user-data-dir=${userData}`], cwd: root, env, timeout: 45000 });
   const inspect = async () => {
     const snapshot = () => app.evaluate(async ({ app }) => {
@@ -156,7 +164,7 @@ try {
       await new Promise(resolve => setTimeout(resolve, 50));
       value = await snapshot();
     }
-    assert.equal(value.version, '0.4.0'); assert.equal(value.packaged, candidate);
+    assert.equal(value.version, expectedVersion); assert.equal(value.packaged, candidate);
     assert.equal(path.resolve(value.exe).toLowerCase(), path.resolve(executable).toLowerCase());
     assert.equal(path.resolve(value.userData).toLowerCase(), path.resolve(userData).toLowerCase(), 'Electron cache was not isolated');
     assert.deepEqual(value.modules, [], 'WhatsApp SDK was loaded'); assert.equal(value.children, 0, `Main has active child programs: ${value.child_programs.join(', ')}`);
@@ -166,7 +174,7 @@ try {
     if (readOnlyHome) assert.deepEqual(await homeState(), before, 'Home metadata changed before launch');
     else for (const file of Object.values(targets)) await assertAbsent(file);
     if (expectLegacy) {
-      await assertAbsent(path.join(path.dirname(modelDirectory), 'launcher-activation'));
+      if (expectedVersion === '0.4.0') await assertAbsent(path.join(path.dirname(modelDirectory), 'launcher-activation'));
       assert.deepEqual(await legacySnapshot(legacyFiles), legacyBefore, 'Legacy metadata changed before launch');
     }
     const started = Date.now(); app = await launch();
@@ -178,15 +186,15 @@ try {
     // Wait for real launcher IPC, including the asynchronous KnownFolder resolver.
     const merchants = await page.evaluate(() => window.launcher.merchants());
     if (expectLegacy) {
-      assert(merchants.length > 0 && merchants.every(m => m.verified_at === 0 && m.status === 'reauthorize'), 'Expected historical entries requiring authorization');
+      assert(merchants.length > 0 && merchants.every(m => expectedVersion === '0.4.1' ? Number.isSafeInteger(m.verified_at) && m.verified_at >= 0 && ['reauthorize', 'opened'].includes(m.status) : m.verified_at === 0 && m.status === 'reauthorize'), 'Expected valid read-only merchant routing entries');
       if (sellerTail) {
         assert(merchants.some(m => m.account_tail === sellerTail && m.verified_at === 0 && m.status === 'reauthorize'), 'Expected seller is missing');
-        await page.getByRole('radio', { name: new RegExp(`商家 ${sellerTail}`) }).first().click();
+        await page.getByRole('radio', { name: new RegExp(expectedVersion === '0.4.1' ? sellerTail : `商家 ${sellerTail}`) }).first().click();
         report.checks[`${run}_expected_seller_visible`] = true;
       }
       report.checks[`${run}_merchant_count`] = merchants.length;
-      report.checks[`${run}_merchant_status`] = 'reauthorize';
-      report.checks[`${run}_verified_at`] = 0;
+      report.checks[`${run}_merchant_status`] = expectedVersion === '0.4.1' ? [...new Set(merchants.map(m => m.status))] : 'reauthorize';
+      report.checks[`${run}_verified_at`] = expectedVersion === '0.4.1' ? 'original_value_preserved' : 0;
       assert.equal(await page.getByRole('radio').count(), merchants.length);
     } else assert.deepEqual(merchants, []);
     await inspect();
@@ -219,7 +227,7 @@ try {
     report.checks[`${run}_normal_exit`] = true;
     app = undefined;
   }
-  Object.assign(report.checks, { empty_launcher: !expectLegacy, legacy_launcher: expectLegacy, empty_models: !readOnlyHome, model_page_not_opened: readOnlyHome, no_reception_bridge: true, no_active_business_child: true, no_whatsapp_sdk_in_module_cache: true, normal_exit_and_restart: true, isolated_electron_user_data: true });
+  Object.assign(report.checks, { empty_launcher: !expectLegacy, legacy_launcher: expectLegacy, empty_models: !readOnlyHome, model_page_not_opened: readOnlyHome, no_reception_bridge: true, no_active_business_child: true, no_whatsapp_sdk_in_module_cache: true, normal_exit_and_restart: true, isolated_electron_user_data: expectedVersion === '0.4.0', native_launcher_cache_namespace: expectedVersion === '0.4.1' });
   report.no_model_calls = true; report.no_business_open = true; report.status = 'passed';
 } catch (error) { report.error = String(error?.stack || error); process.exitCode = 1; }
 finally {
@@ -234,8 +242,12 @@ finally {
     try {
       report.files.legacy_after = await legacySnapshot(legacyFiles);
       assert.deepEqual(report.files.legacy_after, legacyBefore, 'Legacy metadata changed during verification');
-      await assertAbsent(path.join(path.dirname(targets.registry), '..', 'launcher-activation'));
+      if (expectedVersion === '0.4.0') await assertAbsent(path.join(path.dirname(targets.registry), '..', 'launcher-activation'));
     } catch (error) { report.status = 'failed'; report.error = [report.error, `Legacy verification failed: ${error.message}`].filter(Boolean).join('\n'); process.exitCode = 1; }
+  }
+  if (ownedUserData && report.status === 'passed') {
+    try { await rm(ownedUserData, { recursive: true, maxRetries: 5, retryDelay: 100 }); report.checks.owned_new_launcher_cache_removed = true; }
+    catch { report.status = 'failed'; report.error = 'Unable to remove the newly created launcher verification cache.'; process.exitCode = 1; }
   }
   if (temp) await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {});
   await writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });

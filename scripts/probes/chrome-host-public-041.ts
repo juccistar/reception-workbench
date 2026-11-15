@@ -33,18 +33,62 @@ async function main() {
     let auth = false;
     let client: any;
     let host: ChromeWhatsAppHost;
+    const initializationFailure = (error: unknown) => {
+      const message = error instanceof Error ? error.message : 'SDK initialization failed';
+      row.sdk_initialization_error = { name: error instanceof Error ? error.name : 'Error', message: message.replace(/https?:\/\/[^\s]+/g, '[public URL]').replace(/[A-Za-z0-9+/_=-]{40,}/g, '[redacted]').slice(0, 300) };
+    };
+    const pageState = async () => {
+      const page = client?.pupPage;
+      if (!page || page.isClosed()) return { page_closed: true };
+      if (new URL(page.url()).hostname !== 'web.whatsapp.com') return { allowed_origin: false };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([page.evaluate(() => {
+          let socket = 'unavailable';
+          try {
+            const state = (window as any).require?.('WAWebSocketModel')?.Socket?.state;
+            const allowed = ['CONFLICT', 'CONNECTED', 'DEPRECATED_VERSION', 'OPENING', 'PAIRING', 'PROXYBLOCK', 'SMB_TOS_BLOCK', 'TIMEOUT', 'TOS_BLOCK', 'UNLAUNCHED', 'UNPAIRED', 'UNPAIRED_IDLE'];
+            socket = allowed.includes(state) ? state : state == null ? 'unavailable' : 'other';
+          } catch { socket = 'read_failed'; }
+          return { allowed_origin: true, page_closed: false, document_ready: document.readyState, debug_version_present: !!(window as any).Debug?.VERSION, socket_state: socket };
+        }), new Promise(resolve => { timer = setTimeout(() => resolve({ observation_timed_out: true }), 5000); })]);
+      } catch { return { observation_failed: true }; }
+      finally { if (timer) clearTimeout(timer); }
+    };
     class PublicClient extends sdk.Client {
       constructor(options: any) {
         super(options); client = this;
         this.on('qr', () => row.qr_times.push(Date.now()));
         for (const event of ['authenticated', 'ready']) this.on(event, () => { auth = true; report.real_account_authenticated = true; void this.pupBrowser?.close().catch(() => {}); });
       }
+      async inject() {
+        const page = this.pupPage;
+        if (!page.__arwWaitObserved) {
+          page.__arwWaitObserved = true;
+          const wait = page.waitForFunction;
+          page.waitForFunction = async function (fn: any, options: any, ...args: any[]) {
+            const text = String(fn);
+            const item: any = { condition: text.includes('Debug') ? 'debug_version' : text.includes('WAWebSocketModel') ? 'socket_state' : text.includes('WWebJS') ? 'utility_ready' : 'other', timeout_ms: options?.timeout, started_at_ms: Date.now() - start };
+            item.sdk_call_site = new Error().stack?.match(/Client\.js:\d+:\d+/)?.[0];
+            (row.sdk_waits ||= []).push(item);
+            try { const result = await wait.call(this, fn, options, ...args); item.status = 'passed'; return result; }
+            catch (error) { item.status = 'failed'; item.error_name = error instanceof Error ? error.name : 'Error'; item.page_state = await pageState(); throw error; }
+            finally { item.finished_at_ms = Date.now() - start; }
+          };
+        }
+        return super.inject();
+      }
       async initialize() {
-        if (mode === 'normal') return super.initialize();
-        const qr = new Promise(resolve => this.once('qr', resolve));
-        // Inject rejection at the SDK initialize API boundary while retaining
-        // its genuine visible page. No alternate browser or page is created.
-        void super.initialize().catch(() => {});
+        if (mode === 'normal') {
+          try { return await super.initialize(); }
+          catch (error) { initializationFailure(error); throw error; }
+        }
+        let qrReached = false;
+        let rejectBeforeQr!: (error: unknown) => void;
+        const qr = new Promise<void>((resolve, reject) => { rejectBeforeQr = reject; this.once('qr', () => { qrReached = true; resolve(); }); });
+        // A failure before the injection point must stay visible in the report.
+        // Only reject deliberately after the genuine page first emits a QR.
+        void super.initialize().catch((error: unknown) => { if (!qrReached) { initializationFailure(error); rejectBeforeQr(error); } });
         await qr;
         throw new Error('controlled initialize rejection after first public QR');
       }
@@ -53,11 +97,10 @@ async function main() {
       authorizeAccount: async () => { throw new Error('public probe never authorizes an account'); },
       onEvent: event => { if (event.type === 'account') row.statuses.push({ status: event.status, page_state: event.page_state, error_code: event.error_code, phase: event.phase }); },
     });
-    const start = Date.now();
+    const start = Date.now(), end = start + 180000;
     try {
       await host.connect();
-      const end = Date.now() + 180000;
-      while (!auth && !row.qr_times.length && Date.now() < end) await pause(250);
+      while (!auth && !row.qr_times.length && host.getStatus().status !== 'error' && Date.now() < end) await pause(250);
       assert(!auth, 'authentication was stopped'); assert(row.qr_times.length, 'public QR was not reached');
       const first = Date.now();
       const browser = client.pupBrowser, page = client.pupPage;
@@ -113,8 +156,20 @@ async function main() {
     } catch (error) {
       row.status = 'failed'; row.error = error instanceof Error ? error.message : 'probe failed';
       process.exitCode = 1;
+      if (!auth && !row.qr_times.length && client?.pupPage && !client.pupPage.isClosed()) {
+        row.after_failure_observations = [{ elapsed_ms: 0, state: await pageState() }];
+        const failureTime = Date.now();
+        for (const elapsed of [10000, 30000, 45000]) {
+          await pause(Math.max(0, Math.min(end - Date.now(), elapsed - (Date.now() - failureTime))));
+          if (auth || client.pupPage.isClosed() || Date.now() >= end) break;
+          row.after_failure_observations.push({ elapsed_ms: Date.now() - failureTime, state: await pageState() });
+        }
+      }
     } finally {
-      await host.close().catch(() => {});
+      try { await host.close(); }
+      catch { row.cleanup_error = 'owned browser cleanup failed'; row.status = 'failed'; process.exitCode = 1; }
+      const owned = client?.pupBrowser?.process?.();
+      row.cleanup_root_exited = !owned || owned.exitCode !== null || owned.signalCode !== null;
       await writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
       await rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {});
     }

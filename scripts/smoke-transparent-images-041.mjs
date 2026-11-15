@@ -8,14 +8,20 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-assert(process.argv.length === 4 && process.argv[2] === '--label' && /^[a-z0-9][a-z0-9-]{0,60}$/.test(process.argv[3]), 'Pass a new --label');
-const output = path.join(root, 'artifacts/verification', `transparent-images-041-${process.argv[3]}`);
+const options = new Map();
+for (let i = 2; i < process.argv.length; i += 2) {
+  const key = process.argv[i], value = process.argv[i + 1];
+  assert(['--label', '--assets'].includes(key) && value && !value.startsWith('--') && !options.has(key), 'Use --label and optionally --assets');
+  options.set(key, value);
+}
+assert(/^[a-z0-9][a-z0-9-]{0,60}$/.test(options.get('--label') || ''), 'Pass a new --label');
+const output = path.join(root, 'artifacts/verification', `transparent-images-041-${options.get('--label')}`);
 await mkdir(output);
 const temp = await mkdtemp(path.join(os.tmpdir(), 'arw-transparent-041-'));
 const env = { ...process.env };
 for (const key of Object.keys(env)) if (/^(ACCIO|PHOENIX|RECEPTION|HARNESS)_/i.test(key) || /^(ELECTRON_RUN_AS_NODE|PYTHONPATH|PYTHONHOME|GH_TOKEN|GITHUB_TOKEN)$/i.test(key) || /credential|secret|token|password|api.?key/i.test(key)) delete env[key];
-Object.assign(env, { HARNESS_ROOT: root, HARNESS_TEMP: temp, HARNESS_ASSETS: path.join(root, 'artifacts/app'), HARNESS_PYTHON: path.join(root, 'services/reception/.venv/Scripts/python.exe'), LOCALAPPDATA: path.join(temp, 'local'), APPDATA: path.join(temp, 'roaming') });
-const report = { status: 'failed', production_renderer_preload: true, production_service_client_and_image_rpc: true, synthetic_host_and_merchant: true, legacy_white_preview_seeded: true, actual_exe_entry: false, actual_window: false, real_data_accessed: false, real_network_or_model_calls: 0, screenshots: [], checks: {}, errors: [] };
+Object.assign(env, { HARNESS_ROOT: root, HARNESS_TEMP: temp, HARNESS_ASSETS: options.has('--assets') ? path.resolve(options.get('--assets')) : path.join(root, 'artifacts/app'), HARNESS_PYTHON: path.join(root, 'services/reception/.venv/Scripts/python.exe'), LOCALAPPDATA: path.join(temp, 'local'), APPDATA: path.join(temp, 'roaming') });
+const report = { status: 'failed', candidate_assets: options.has('--assets'), production_renderer_preload: true, production_service_client_and_image_rpc: true, synthetic_host_and_merchant: true, legacy_white_preview_seeded: true, actual_exe_entry: false, actual_window: false, real_data_accessed: false, real_network_or_model_calls: 0, screenshots: [], checks: {}, errors: [] };
 let app;
 try {
   const host = path.join(temp, 'host.cjs');
