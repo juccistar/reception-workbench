@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { resolveModelSettingsDirectory } from './model-settings-store';
 // @ts-ignore Existing Windows mutex helper.
@@ -49,7 +49,66 @@ export class LauncherRegistry {
     } finally { await release(); }
   }
 }
+// Historical profiles are routing hints, not proof of a current authorization.
+export async function readHistoricalMerchants(directory: string): Promise<LauncherMerchant[]> {
+  if (!validPath(directory)) return [];
+  const read = async (file: string, limit: number) => {
+    await checkParents(path.dirname(file));
+    const st = await lstat(file);
+    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > limit) throw new Error('invalid');
+    const f = await open(file, 'r');
+    try {
+      const actual = await f.stat();
+      if (!actual.isFile() || actual.nlink !== 1 || actual.size > limit || actual.ino !== st.ino || actual.dev !== st.dev) throw new Error('invalid');
+      const bytes = await f.readFile(); if (bytes.length > limit) throw new Error('invalid');
+      return JSON.parse(bytes.toString('utf8'));
+    } finally { await f.close(); }
+  };
+  try {
+    const registry = await read(path.join(directory, 'merchants.json'), 1024 * 1024);
+    if (!registry || registry.format !== 1 || Object.keys(registry).sort().join(',') !== 'format,profiles' || !registry.profiles || typeof registry.profiles !== 'object' || Array.isArray(registry.profiles) || Object.keys(registry.profiles).length > 512) return [];
+    const result: LauncherMerchant[] = [];
+    for (const [seller, raw] of Object.entries(registry.profiles)) {
+      try {
+        const record = raw as Record<string, unknown>;
+        const state = path.join(directory, 'profiles', createHash('sha256').update(seller).digest('hex'), 'state');
+        const same = (a: unknown, b: string) => typeof a === 'string' && (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+        if (!/^[1-9][0-9]{0,127}$/.test(seller) || !record || Object.keys(record).sort().join(',') !== 'initialDataRoot,sellerId,stateDirectory,status' || record.sellerId !== seller || !['created', 'verified'].includes(String(record.status)) || !same(record.stateDirectory, state) || !validPath(record.initialDataRoot)) continue;
+        const storage = await read(path.join(state, 'storage.json'), 65536);
+        if (!storage || storage.version !== 1 || Object.keys(storage).some(k => !['version', 'dataRoot', 'previousRoot', 'lastBackup', 'lastResult'].includes(k)) || !validPath(storage.dataRoot)) continue;
+        await checkParents(storage.dataRoot);
+        const root = await lstat(storage.dataRoot); if (!root.isDirectory() || root.isSymbolicLink()) continue;
+        const hash = createHash('sha256').update((process.platform === 'win32' ? directory.toLowerCase() : directory) + '\0' + seller).digest('hex');
+        result.push({ record_id: `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`, seller_id: seller, name: `商家 ${seller.slice(-4)}`, registry_directory: directory, state_directory: state, data_root: storage.dataRoot, verified_at: 0 });
+      } catch { /* Invalid profiles do not hide other valid profiles. */ }
+    }
+    return result;
+  } catch { return []; }
+}
+
+export async function listLauncherCandidates(registry: LauncherRegistry, directories: string[]): Promise<LauncherMerchant[]> {
+  const current = await registry.list();
+  const historical = (await Promise.all(directories.map(readHistoricalMerchants))).flat();
+  const key = (item: LauncherMerchant) => `${process.platform === 'win32' ? item.registry_directory.toLowerCase() : item.registry_directory}\0${item.seller_id}`;
+  const merged = new Map<string, LauncherMerchant>();
+  for (const item of historical) merged.set(key(item), item);
+  for (const item of current) {
+    const prior = merged.get(key(item));
+    // A moved root invalidates the old activation binding until a fresh verified launch.
+    if (!prior || (process.platform === 'win32' ? prior.data_root.toLowerCase() === item.data_root.toLowerCase() : prior.data_root === item.data_root)) merged.set(key(item), item);
+  }
+  return [...merged.values()];
+}
+
 export async function createLauncherRegistry(): Promise<LauncherRegistry> {
   const base = await resolveModelSettingsDirectory(); const directory = path.join(path.dirname(base), 'launcher');
   return new LauncherRegistry(directory, () => acquireMerchantRegistryMutex(directory, 10000));
+}
+
+export async function historicalRegistryDirectories(): Promise<string[]> {
+  const base = await resolveModelSettingsDirectory();
+  const known = path.join(path.dirname(path.dirname(base)), 'AlibabaReceptionWorkbenchHost');
+  const explicit = process.env.RECEPTION_MERCHANT_REGISTRY_DIR;
+  const local = process.env.LOCALAPPDATA && path.isAbsolute(process.env.LOCALAPPDATA) ? path.join(process.env.LOCALAPPDATA, 'AlibabaReceptionWorkbenchHost') : '';
+  return [...new Set([known, ...(local && validPath(local) ? [local] : []), ...(explicit && validPath(explicit) ? [explicit] : [])])];
 }

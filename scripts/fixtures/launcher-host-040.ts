@@ -1,9 +1,10 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'node:path';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { isWorkbenchPage } from '../../apps/desktop/src/main/trusted-page';
 import { ModelSettingsStore } from '../../apps/desktop/src/main/model-settings-store';
-import { LauncherRegistry } from '../../apps/desktop/src/main/launcher-registry';
+import { LauncherRegistry, listLauncherCandidates } from '../../apps/desktop/src/main/launcher-registry';
 
 const root = process.env.HARNESS_ROOT!;
 const temporary = process.env.HARNESS_TEMP!;
@@ -13,11 +14,23 @@ const lock = async () => async () => {};
 const store = new ModelSettingsStore(path.join(temporary, 'models'), encryption, lock);
 const registry = new LauncherRegistry(path.join(temporary, 'registry'), lock);
 const tasks = new Map<string, { cancelled: boolean }>();
+const legacy = path.join(temporary, 'legacy');
+const profiles: Record<string, unknown> = {};
+async function addLegacy(seller: string) {
+  const state = path.join(legacy, 'profiles', createHash('sha256').update(seller).digest('hex'), 'state');
+  const data = path.join(temporary, 'legacy-data', seller);
+  await mkdir(state, { recursive: true }); await mkdir(data, { recursive: true });
+  await writeFile(path.join(state, 'storage.json'), JSON.stringify({ version: 1, dataRoot: data }));
+  profiles[seller] = { sellerId: seller, stateDirectory: state, initialDataRoot: data, status: 'verified' };
+  await writeFile(path.join(legacy, 'merchants.json'), JSON.stringify({ format: 1, profiles }));
+}
+(globalThis as any).addSyntheticLegacy = addLegacy;
 async function start() {
   await app.whenReady();
   session.defaultSession.setPermissionRequestHandler((_w, _p, cb) => cb(false));
   session.defaultSession.webRequest.onBeforeRequest((details, cb) => cb({ cancel: !details.url.startsWith('file:') && !details.url.startsWith('devtools:') }));
   if (process.env.HARNESS_MERCHANTS === '1') {
+    await addLegacy('20001');
     for (const [seller_id, name] of [['10001', '合成商家甲'], ['10002', '合成商家乙']]) {
       const directories = { registry_directory: path.join(temporary, 'registry', seller_id), state_directory: path.join(temporary, 'state', seller_id), data_root: path.join(temporary, 'data', seller_id) };
       await Promise.all(Object.values(directories).map(directory => mkdir(directory, { recursive: true })));
@@ -29,7 +42,7 @@ async function start() {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event, url) => { if (!isWorkbenchPage(url, file)) event.preventDefault(); });
   const bind = (name: string, fn: (...args: any[]) => any) => ipcMain.handle(name, (event, ...args) => { if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || !isWorkbenchPage(event.senderFrame.url, file)) throw new Error('invalid sender'); return fn(...args); });
-  bind('launcher:merchants', async () => (await registry.list()).map(m => ({ id: m.record_id, name: m.name, account_tail: m.seller_id.slice(-4), status: 'reauthorize', data_root: m.data_root, verified_at: m.verified_at })));
+  bind('launcher:merchants', async () => (await listLauncherCandidates(registry, [legacy])).map(m => ({ id: m.record_id, name: m.name, account_tail: m.seller_id.slice(-4), status: 'reauthorize', data_root: m.data_root, verified_at: m.verified_at })));
   bind('launcher:open', () => { throw new Error('合成宿主不打开商家'); });
   bind('launcher:authorization', () => '合成授权说明');
   bind('launcher:copy-authorization', () => {});

@@ -37,7 +37,7 @@ node scripts/smoke-launcher-040.mjs --label <新标签>
 node scripts/smoke-workbench-040.mjs --label <新标签>
 ```
 
-`smoke-launcher-entry-040`使用正式主进程；发现已有全局模型配置或商家索引时停止，不覆盖真实配置。另两组使用正式renderer/preload与独立合成宿主，工作台通过真实ServiceClient执行隔离Python业务，不能当作真实商家验收。候选入口使用`--executable <候选EXE>`；另两组使用`--assets <候选resources/app.asar>`核对包内界面资源，但仍不是候选正式主进程。
+`smoke-launcher-entry-040`使用正式主进程；发现已有全局模型配置或新启动台索引时停止，不覆盖真实配置。默认检查空列表；若本机已有旧版登记，可显式加`--expect-legacy 1`检查其可见性，该模式要求激活目录也不存在，只读旧索引与精确引用的storage.json并核对前后哈希，不读取业务库或已有激活凭据。另两组使用正式renderer/preload与独立合成宿主，启动台覆盖旧登记发现和保持打开时刷新，工作台通过真实ServiceClient执行隔离Python业务，不能当作真实商家验收。候选入口使用`--executable <候选EXE>`；另两组使用`--assets <候选resources/app.asar>`核对包内界面资源，但仍不是候选正式主进程。
 
 候选冻结后台可用`node scripts/smoke-packaged-models-040.mjs --label <新标签> --executable <候选resources/backend/reception-backend.exe>`检查两种协议的真实请求编码；它只连接临时回环HTTP替身，不调用付费模型、不打开商家库。公共WhatsApp扫码仍用下述native脚本指定候选宿主和SDK，正常及受控故障各观察超过60秒并覆盖刷新，不登录实号。构建、闭包、窗口、签名与匿名完整下载结果分别记录。
 

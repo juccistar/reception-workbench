@@ -1,0 +1,49 @@
+{
+  "version": "0.4.0",
+  "status": "candidate_b_built_window_pending",
+  "user_report": "The launcher does not show previously authorized merchants.",
+  "confirmed_cause": "The launcher only read launcher-registry-v1, omitting existing format:1 merchant profiles.",
+  "local_observation": {
+    "legacy_profiles": 1,
+    "legacy_status_distribution": {
+      "verified": 1
+    },
+    "legacy_data_roots_exist": true,
+    "new_launcher_index": "missing",
+    "knownfolder_equals_current_localappdata": true,
+    "source": "artifacts/verification/launcher-discovery-040-observed/report.json"
+  },
+  "changes": [
+    "Read supported legacy routing metadata without persisting or migrating it.",
+    "Use current storage.json data_root; do not reuse stale activation bindings after a root move.",
+    "Keep historical verified_at=0 and require existing bilateral activation handshake or a fresh supported authorization.",
+    "Refresh every 5 seconds while visible and on focus."
+  ],
+  "targeted_tests": {
+    "status": "passed",
+    "files": 3,
+    "tests": 14,
+    "new_unique_tests": 4,
+    "log": "artifacts/verification/launcher-legacy-040-fix/targeted-final.log",
+    "covers": [
+      "legacy metadata discovery",
+      "read-only access and duplicate merge",
+      "changed data root",
+      "historical candidate cannot activate before matching verified registration and handshake",
+      "directory junction metadata rejection",
+      "existing activation tests",
+      "trusted IPC origins"
+    ],
+    "junction_test_executed_without_permission_skip": true
+  },
+  "typecheck": "passed",
+  "real_data_modified": false,
+  "real_business_database_opened": false,
+  "authorization_validity_of_observed_merchant_checked": false,
+  "candidate_a_preserved": true,
+  "replacement_candidate": "relase/release-0.4.0-candidate-b",
+  "limitations": [
+    "An Accio redirected registry that is no longer referenced by the current environment or persisted index cannot be inferred by scanning; discovery is bounded to real KnownFolder, current LOCALAPPDATA and explicitly provided registry.",
+    "Legacy registration does not restore previous process authorization or enable automatic sending."
+  ]
+}

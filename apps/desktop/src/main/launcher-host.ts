@@ -4,7 +4,7 @@ import { ModelCheckHost } from './model-check-host';
 import { MODEL_CAPABILITIES, type ModelCapability, type ModelCapabilityState } from '../shared/model-settings';
 import path from 'node:path';
 import { isWorkbenchPage } from './trusted-page';
-import { createLauncherRegistry } from './launcher-registry';
+import { createLauncherRegistry, historicalRegistryDirectories, listLauncherCandidates } from './launcher-registry';
 import { createWindowsLauncherActivation } from './launcher-activation';
 import { createModelSettingsStore } from './model-settings-store';
 import { buildAccioLaunchInfo } from './launch-command';
@@ -22,15 +22,17 @@ export async function runLauncher(): Promise<void> {
   let storePromise: ReturnType<typeof createModelSettingsStore> | undefined;
   const registry = () => registryPromise ??= createLauncherRegistry();
   const store = () => storePromise ??= createModelSettingsStore();
+  let historicalDirectories: ReturnType<typeof historicalRegistryDirectories> | undefined;
+  const candidates = async () => listLauncherCandidates(await registry(), await (historicalDirectories ??= historicalRegistryDirectories()));
   ipcMain.handle('launcher:merchants', async event => {
     valid(event);
-    const items = await (await registry()).list();
+    const items = await candidates();
     const activation = await createWindowsLauncherActivation().catch(() => null);
     return Promise.all(items.map(async item => ({ id: item.record_id, name: item.name, account_tail: item.seller_id.slice(-4), status: activation && await activation.probe(item).catch(() => false) ? 'opened' as const : 'reauthorize' as const, data_root: item.data_root, verified_at: item.verified_at })));
   });
   ipcMain.handle('launcher:open', async (event, id: unknown) => {
     valid(event);
-    const item = typeof id === 'string' ? (await (await registry()).list()).find(entry => entry.record_id === id) : undefined;
+    const item = typeof id === 'string' ? (await candidates()).find(entry => entry.record_id === id) : undefined;
     if (!item) throw new Error('商家记录不存在。');
     const activation = await createWindowsLauncherActivation().catch(() => null);
     if (!activation || !await activation.activate(item).catch(() => false)) throw new Error('当前窗口不可用，请从该商家的 Accio Work 授权会话重新启动。');

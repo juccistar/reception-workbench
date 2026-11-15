@@ -28,7 +28,20 @@ function App() {
   const error = (reason: unknown) => setMessage(reason instanceof Error ? reason.message : '操作未完成，请重试。');
   const refreshMerchants = async () => { const items = await window.launcher.merchants(); setMerchants(items); setSelected(current => items.some(item => item.id === current) ? current : items[0]?.id ?? ''); };
   const loadModels = async () => { const value = await window.launcher.modelSettings(); setSnapshot(value); setProfiles(value.profiles); setRoutes(value.routes); setKeys({}); setPage('models'); setMessage(''); };
-  useEffect(() => { void refreshMerchants().catch(error); }, []);
+  useEffect(() => {
+    let stopped = false, pending = false;
+    const refresh = async () => {
+      if (pending || stopped) return;
+      pending = true;
+      try { const items = await window.launcher.merchants(); if (!stopped) { setMerchants(items); setSelected(current => items.some(item => item.id === current) ? current : items[0]?.id ?? ''); } }
+      catch (e) { if (!stopped) error(e); }
+      finally { pending = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 5000);
+    window.addEventListener('focus', refresh);
+    return () => { stopped = true; window.clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, []);
   useEffect(() => { if (!modal) return; const listener = (event: KeyboardEvent) => { if (event.key === 'Escape') setModal(null); }; document.addEventListener('keydown', listener); return () => document.removeEventListener('keydown', listener); }, [modal]);
   async function showAuthorization() { try { setAuthorization(await window.launcher.authorization()); setModal('authorization'); } catch (e) { error(e); } }
   async function openMerchant() { if (!active) return; if (active.status === 'reauthorize') { await showAuthorization(); return; } setBusy(true); setMessage('正在打开…'); try { await window.launcher.openMerchant(active.id); await refreshMerchants(); setMessage(''); } catch (e) { setMerchants(current => current.map(item => item.id === active.id ? { ...item, status: 'reauthorize' } : item)); error(e); } finally { setBusy(false); } }

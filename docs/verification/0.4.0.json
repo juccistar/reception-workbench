@@ -1,7 +1,7 @@
 {
   "version": "0.4.0",
   "date": "2026-11-15",
-  "status": "candidate_verified_public_release_blocked_authentication",
+  "status": "candidate_b_built_verification_pending",
   "base_commit": "c6be2c575a4d235ac2f1b42fa1ad035064c16740",
   "branch": "feat/launcher-multimodal-0.4.0",
   "plan": "docs/0.4.0开发方案.md",
@@ -41,8 +41,8 @@
     },
     "targeted_desktop_host": {
       "status": "passed",
-      "files": 20,
-      "tests": 121,
+      "files": 21,
+      "tests": 125,
       "targets": [
         "chat-host",
         "media-host",
@@ -63,7 +63,8 @@
         "launcher-host-trust",
         "trusted-page",
         "whatsapp-connection",
-        "whatsapp-native-hook"
+        "whatsapp-native-hook",
+        "launcher-registry-legacy"
       ],
       "final_fixture_regression": {
         "status": "passed",
@@ -82,6 +83,14 @@
           "artifacts/verification/wa-connection-fixture-20261115/diagnostic-2.log"
         ],
         "reason": "Legacy wrappers discarded the SDK parameter and their module mocks did not intercept delayed CommonJS loading. Production code was unchanged."
+      },
+      "launcher_discovery_regression": {
+        "status": "passed",
+        "files": 3,
+        "tests": 14,
+        "additional_unique_tests": 4,
+        "repeated_tests_not_added_to_total": 10,
+        "log": "artifacts/verification/launcher-legacy-040-fix/targeted-final.log"
       }
     },
     "targeted_tools": {
@@ -120,15 +129,14 @@
     "candidate_build": {
       "status": "passed",
       "record": "docs/verification/0.4.0-candidate.json",
-      "output": "relase/release-0.4.0-candidate-a",
+      "output": "relase/release-0.4.0-candidate-b",
       "immediate_local_commit": true,
-      "commit": "228983295ef885cc6895aa0b5c52a29be82a944a"
+      "log": "artifacts/verification/build-040-candidate-b/package.log"
     },
     "candidate_window": {
-      "status": "passed",
-      "record": "docs/verification/0.4.0-windows.json",
-      "ui_screenshots_viewed": 11,
-      "public_page_screenshots_viewed": 2
+      "status": "pending",
+      "candidate": "b",
+      "reason": "Recheck the rebuilt launcher and package after the user-reported discovery fix."
     },
     "update_signature": {
       "status": "passed",
@@ -219,7 +227,31 @@
     "typecheck_after_final_fixture_fix": {
       "status": "passed",
       "command": "node node_modules/typescript/bin/tsc --noEmit -p apps/desktop/tsconfig.json"
-    }
+    },
+    "launcher_existing_merchants": {
+      "status": "candidate_b_built_window_pending",
+      "record": "docs/verification/0.4.0-launcher-discovery.json",
+      "observed_legacy_merchants": 1,
+      "old_new_index_gap_confirmed": true,
+      "real_data_modified": false
+    },
+    "candidate_build_history": [
+      {
+        "status": "passed",
+        "record": "docs/verification/0.4.0-candidate.json",
+        "output": "relase/release-0.4.0-candidate-a",
+        "immediate_local_commit": true,
+        "commit": "228983295ef885cc6895aa0b5c52a29be82a944a"
+      }
+    ],
+    "candidate_window_history": [
+      {
+        "status": "passed",
+        "record": "docs/verification/0.4.0-windows.json",
+        "ui_screenshots_viewed": 11,
+        "public_page_screenshots_viewed": 2
+      }
+    ]
   },
   "release": {
     "repository": "juccistar/reception-workbench-releases",
@@ -229,7 +261,8 @@
     "published": false,
     "installed": false,
     "blockers": [
-      "GitHub CLI is not authenticated; no draft, upload, publication or anonymous 0.4.0 asset download was performed."
+      "User-reported existing-merchant discovery issue is being fixed before publication.",
+      "The last GitHub CLI authentication check could not see a login."
     ],
     "public_readiness": {
       "report": "artifacts/verification/public-readiness-040-candidate-a.json",

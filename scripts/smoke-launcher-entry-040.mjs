@@ -14,15 +14,32 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const options = new Map();
 for (let i = 2; i < process.argv.length; i += 2) {
   const key = process.argv[i], value = process.argv[i + 1];
-  assert(['--label', '--executable'].includes(key) && value && !value.startsWith('--') && !options.has(key), 'Use --label and optionally --executable once each');
+  assert(['--label', '--executable', '--expect-legacy'].includes(key) && value && !value.startsWith('--') && !options.has(key), 'Use --label, optional --executable, and optional --expect-legacy 1');
   options.set(key, value);
 }
+assert(!options.has('--expect-legacy') || options.get('--expect-legacy') === '1', 'Expected --expect-legacy 1');
+const expectLegacy = options.has('--expect-legacy');
 const label = options.get('--label');
 assert(/^[a-z0-9][a-z0-9-]{0,60}$/.test(label || ''), 'Pass a new --label');
 const output = path.join(root, 'artifacts/verification', `launcher-entry-040-${label}`);
 await mkdir(output);
 const report = { status: 'failed', production_main: false, actual_exe_entry: false, no_model_calls: false, no_business_open: false, screenshots: [], checks: {}, timings_ms: {}, files: {}, limitations: ['Timings are launch-to-window observations, not OS cold-start or performance measurements.', 'No real authorization, customer session, or model quality is tested.', 'Child process and module checks are snapshots; no model-check or business-opening action is invoked.'] };
-let app, temp, targets, before;
+let app, temp, targets, before, legacyFiles, legacyBefore;
+async function readSafe(file, limit) {
+  await checkParents(path.dirname(file));
+  const stat = await lstat(file);
+  assert(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size <= limit, 'Unsafe legacy metadata');
+  const { open } = await import('node:fs/promises');
+  const handle = await open(file, 'r');
+  try {
+    const actual = await handle.stat();
+    assert(actual.isFile() && actual.nlink === 1 && actual.size <= limit && actual.ino === stat.ino && actual.dev === stat.dev, 'Legacy metadata changed');
+    const bytes = await handle.readFile(); assert(bytes.length <= limit, 'Legacy metadata exceeds budget'); return bytes;
+  } finally { await handle.close(); }
+}
+async function legacySnapshot(files) {
+  return Promise.all(files.map(async ({ file, limit }) => createHash('sha256').update(await readSafe(file, limit)).digest('hex')));
+}
 async function fileState(file) {
   try {
     const stat = await lstat(file);
@@ -58,6 +75,25 @@ try {
   for (const file of Object.values(targets)) await assertAbsent(file);
   before = Object.fromEntries(Object.keys(targets).map(key => [key, { exists: false }]));
   report.files.before = before;
+  if (expectLegacy) {
+    const local = path.dirname(path.dirname(modelDirectory));
+    assert(process.env.LOCALAPPDATA && path.resolve(process.env.LOCALAPPDATA).toLowerCase() === local.toLowerCase(), 'Legacy mode requires standard LocalAppData');
+    await assertAbsent(path.join(path.dirname(modelDirectory), 'launcher-activation'));
+    const legacyDir = path.join(local, 'AlibabaReceptionWorkbenchHost');
+    const legacyIndex = path.join(legacyDir, 'merchants.json');
+    const bytes = await readSafe(legacyIndex, 1024 * 1024);
+    const data = JSON.parse(bytes.toString('utf8'));
+    assert(data?.format === 1 && data.profiles && typeof data.profiles === 'object' && !Array.isArray(data.profiles) && Object.keys(data.profiles).length <= 512, 'Invalid legacy index');
+    legacyFiles = [{ file: legacyIndex, limit: 1024 * 1024 }];
+    for (const seller of Object.keys(data.profiles)) {
+      assert(/^[1-9][0-9]{0,127}$/.test(seller), 'Invalid legacy profile');
+      legacyFiles.push({ file: path.join(legacyDir, 'profiles', createHash('sha256').update(seller).digest('hex'), 'state', 'storage.json'), limit: 65536 });
+    }
+    assert(legacyFiles.length > 1, 'No legacy profiles');
+    legacyBefore = await legacySnapshot(legacyFiles);
+    assert.equal(legacyBefore[0], createHash('sha256').update(bytes).digest('hex'), 'Legacy index changed during snapshot');
+    report.files.legacy_before = legacyBefore;
+  }
   const candidate = options.has('--executable');
   const executable = candidate ? assertReleasePath(root, options.get('--executable')) : path.join(root, 'node_modules/electron/dist/electron.exe');
   assert((await lstat(executable)).isFile() && /\.exe$/i.test(executable), 'Executable must be an existing EXE');
@@ -94,13 +130,22 @@ try {
   };
   for (const run of ['first', 'restart']) {
     for (const file of Object.values(targets)) await assertAbsent(file);
+    if (expectLegacy) {
+      await assertAbsent(path.join(path.dirname(modelDirectory), 'launcher-activation'));
+      assert.deepEqual(await legacySnapshot(legacyFiles), legacyBefore, 'Legacy metadata changed before launch');
+    }
     const started = Date.now(); app = await launch();
     const child = app.process();
     const page = await app.firstWindow();
-    await page.getByText('添加第一个商家').waitFor({ timeout: 45000 });
+    if (expectLegacy) await page.getByRole('radio').first().waitFor({ timeout: 45000 });
+    else await page.getByText('添加第一个商家').waitFor({ timeout: 45000 });
     report.timings_ms[run] = Date.now() - started;
     // Wait for real launcher IPC, including the asynchronous KnownFolder resolver.
-    assert.deepEqual(await page.evaluate(() => window.launcher.merchants()), []);
+    const merchants = await page.evaluate(() => window.launcher.merchants());
+    if (expectLegacy) {
+      assert(merchants.length > 0 && merchants.every(m => m.verified_at === 0 && m.status === 'reauthorize'), 'Expected historical entries requiring authorization');
+      assert.equal(await page.getByRole('radio').count(), merchants.length);
+    } else assert.deepEqual(merchants, []);
     await inspect();
     report.timings_ms[`${run}_ready`] = Date.now() - started;
     assert.deepEqual(await page.evaluate(() => ({ reception: typeof window.reception, launcher: typeof window.launcher })), { reception: 'undefined', launcher: 'object' });
@@ -121,7 +166,7 @@ try {
     });
     app = undefined;
   }
-  report.checks = { empty_launcher: true, empty_models: true, no_reception_bridge: true, no_active_business_child: true, no_whatsapp_sdk_in_module_cache: true, normal_exit_and_restart: true, isolated_electron_user_data: true };
+  report.checks = { empty_launcher: !expectLegacy, legacy_launcher: expectLegacy, empty_models: true, no_reception_bridge: true, no_active_business_child: true, no_whatsapp_sdk_in_module_cache: true, normal_exit_and_restart: true, isolated_electron_user_data: true };
   report.no_model_calls = true; report.no_business_open = true; report.status = 'passed';
 } catch (error) { report.error = String(error?.stack || error); process.exitCode = 1; }
 finally {
@@ -131,6 +176,13 @@ finally {
       report.files.after = Object.fromEntries(await Promise.all(Object.entries(targets).map(async ([key, file]) => [key, await fileState(file)])));
       if (JSON.stringify(before) !== JSON.stringify(report.files.after)) { report.status = 'failed'; report.error = [report.error, 'Global target files changed during verification.'].filter(Boolean).join('\n'); process.exitCode = 1; }
     } catch (error) { report.status = 'failed'; report.error = [report.error, `Unable to verify global files: ${error.message}`].filter(Boolean).join('\n'); process.exitCode = 1; }
+  }
+  if (legacyFiles && legacyBefore) {
+    try {
+      report.files.legacy_after = await legacySnapshot(legacyFiles);
+      assert.deepEqual(report.files.legacy_after, legacyBefore, 'Legacy metadata changed during verification');
+      await assertAbsent(path.join(path.dirname(targets.registry), '..', 'launcher-activation'));
+    } catch (error) { report.status = 'failed'; report.error = [report.error, `Legacy verification failed: ${error.message}`].filter(Boolean).join('\n'); process.exitCode = 1; }
   }
   if (temp) await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {});
   await writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n', { flag: 'wx' });

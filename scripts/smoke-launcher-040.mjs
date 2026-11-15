@@ -30,7 +30,24 @@ try {
   await page.getByText('添加第一个商家').waitFor(); await screenshot(page, '01-empty.png'); report.checks.empty = true;
   await app.close(); app = undefined; env.HARNESS_MERCHANTS = '1';
   app = await launch(); page = await app.firstWindow();
-  await page.getByRole('radio', { name: /合成商家甲/ }).waitFor(); await screenshot(page, '02-merchants.png'); report.checks.merchants = true;
+  await page.getByRole('radio', { name: /合成商家甲/ }).waitFor();
+  await page.getByRole('radio', { name: /商家 0001/ }).waitFor();
+  const legacy = (await page.evaluate(() => window.launcher.merchants())).filter(m => m.verified_at === 0);
+  assert.equal(legacy.length, 1); assert.equal(legacy[0].status, 'reauthorize');
+  await screenshot(page, '02-merchants.png'); report.checks.merchants = true;
+  await app.evaluate(() => globalThis.addSyntheticLegacy('30001'));
+  await page.waitForFunction(() => document.querySelectorAll('[role=radio]').length >= 4, null, { timeout: 16000 });
+  const refreshed = (await page.evaluate(() => window.launcher.merchants())).filter(m => m.verified_at === 0);
+  assert.equal(refreshed.length, 2); assert(refreshed.every(m => m.status === 'reauthorize'));
+  assert.equal(await page.getByRole('radio', { name: /商家 0001/ }).count(), 2);
+  await screenshot(page, '05-legacy-refresh.png');
+  await page.getByRole('radio', { name: /商家 0001/ }).first().click();
+  await page.getByRole('button', { name: '商家详情' }).click();
+  await page.getByText('上次核验：未提供').waitFor(); await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: '重新授权', exact: true }).click();
+  await page.getByText('合成授权说明').waitFor();
+  assert.equal(await app.evaluate(() => process._getActiveHandles().filter(x => x?.constructor?.name === 'ChildProcess' && x.exitCode === null).length), 0);
+  await page.keyboard.press('Escape'); report.checks.legacy_refresh_and_authorization = true;
   await page.getByRole('button', { name: '模型配置', exact: true }).click();
   async function add(name, protocol) {
     await page.getByRole('button', { name: '＋ 添加 API' }).click();
