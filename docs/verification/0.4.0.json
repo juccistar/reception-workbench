@@ -1,7 +1,7 @@
 {
   "version": "0.4.0",
   "date": "2026-11-15",
-  "status": "candidate_b_built_verification_pending",
+  "status": "current_merchant_discovery_unresolved_whatsapp_independence_design_review",
   "base_commit": "c6be2c575a4d235ac2f1b42fa1ad035064c16740",
   "branch": "feat/launcher-multimodal-0.4.0",
   "plan": "docs/0.4.0开发方案.md",
@@ -113,37 +113,46 @@
     "performance": "docs/verification/0.4.0-performance.json",
     "source_build": {
       "status": "passed",
-      "command": "node scripts/build.mjs",
+      "command": "node scripts/package.mjs --installer --candidate --output relase/release-0.4.0-candidate-b",
       "output": "artifacts/app",
-      "change": "launcher IPC accepts the same Windows file after drive-letter normalization",
+      "change": "Discover prior merchant registration metadata and refresh the launcher list.",
+      "included_in_candidate_build": true,
       "immediate_local_commit": true,
-      "commit": "97fe7c2a794b2ac714219da533831e5fc45a45d4"
+      "commit": "b79a395"
     },
     "source_window": {
       "status": "passed",
       "screenshots_viewed": 11,
       "record": "docs/verification/0.4.0-windows.json",
       "production_entry": true,
-      "business_workbench": "isolated_synthetic_fixture"
+      "business_workbench": "isolated_synthetic_fixture",
+      "baseline_commit": "97fe7c2a794b2ac714219da533831e5fc45a45d4",
+      "latest_launcher_patch_verified_via": "candidate_b_production_exe"
     },
     "candidate_build": {
       "status": "passed",
       "record": "docs/verification/0.4.0-candidate.json",
       "output": "relase/release-0.4.0-candidate-b",
       "immediate_local_commit": true,
-      "log": "artifacts/verification/build-040-candidate-b/package.log"
+      "log": "artifacts/verification/build-040-candidate-b/package.log",
+      "commit": "b79a395"
     },
     "candidate_window": {
-      "status": "pending",
+      "status": "passed",
       "candidate": "b",
-      "reason": "Recheck the rebuilt launcher and package after the user-reported discovery fix."
+      "record": "docs/verification/0.4.0-windows.json",
+      "ui_screenshots_viewed": 7,
+      "public_page_screenshots_viewed": 2,
+      "production_exe_read_only_home": true,
+      "real_merchant_authorization": "not_verified"
     },
     "update_signature": {
       "status": "passed",
+      "candidate": "b",
       "algorithm": "ed25519",
       "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
       "windows_authenticode": "NotSigned",
-      "report": "artifacts/verification/package-040-candidate-a/update.json"
+      "report": "artifacts/verification/package-040-candidate-b/update.json"
     },
     "anonymous_release_downloads": null,
     "real_provider_quality": "not_verified",
@@ -156,6 +165,14 @@
         "output": "artifacts/app",
         "immediate_local_commit": true,
         "commit": "dbc5e2818336237e46470b10ac39b93a43e2b3f2"
+      },
+      {
+        "status": "passed",
+        "command": "node scripts/build.mjs",
+        "output": "artifacts/app",
+        "change": "launcher IPC accepts the same Windows file after drive-letter normalization",
+        "immediate_local_commit": true,
+        "commit": "97fe7c2a794b2ac714219da533831e5fc45a45d4"
       }
     ],
     "source_window_history": [
@@ -172,10 +189,11 @@
     ],
     "candidate_integrity": {
       "status": "passed",
+      "candidate": "b",
       "record": "docs/verification/0.4.0-candidate.json"
     },
     "frozen_model_protocols": {
-      "report": "artifacts/verification/packaged-models-040-candidate-a-001/report.json",
+      "report": "artifacts/verification/packaged-models-040-candidate-b-001/report.json",
       "status": "passed",
       "frozen_backend": true,
       "provider": "synthetic_loopback_http",
@@ -216,12 +234,12 @@
     },
     "public_whatsapp": {
       "status": "passed",
+      "candidate": "b",
       "record": "docs/verification/0.4.0-windows.json",
-      "normal_observation_ms": 60587,
-      "controlled_fault_observation_ms": 60548,
+      "normal_observation_ms": 60436,
+      "controlled_fault_observation_ms": 60472,
       "both_qr_refresh_observed": true,
       "screenshots_viewed": 2,
-      "candidate_host_unchanged": true,
       "initial_fixture_failures_retained": true
     },
     "typecheck_after_final_fixture_fix": {
@@ -229,11 +247,13 @@
       "command": "node node_modules/typescript/bin/tsc --noEmit -p apps/desktop/tsconfig.json"
     },
     "launcher_existing_merchants": {
-      "status": "candidate_b_built_window_pending",
+      "status": "standard_legacy_record_visible_current_merchant_unresolved",
       "record": "docs/verification/0.4.0-launcher-discovery.json",
       "observed_legacy_merchants": 1,
-      "old_new_index_gap_confirmed": true,
-      "real_data_modified": false
+      "visible_after_restart": 1,
+      "real_data_modified": false,
+      "actual_authorization_not_performed": true,
+      "scope_limit": "The standard-directory merchant is visible after restart, but the user reports their currently used merchant remains missing."
     },
     "candidate_build_history": [
       {
@@ -256,13 +276,13 @@
   "release": {
     "repository": "juccistar/reception-workbench-releases",
     "github_cli_available": true,
-    "github_cli_authentication_current_session": "not_logged_in_after_final_local_checks",
+    "github_cli_authentication_current_session": "not_logged_in_after_candidate_b_build",
     "draft_created": false,
     "published": false,
     "installed": false,
     "blockers": [
-      "User-reported existing-merchant discovery issue is being fixed before publication.",
-      "The last GitHub CLI authentication check could not see a login."
+      "The currently used merchant is still not visible according to the latest user feedback; publication is paused.",
+      "The publishing process has not observed a GitHub CLI login."
     ],
     "public_readiness": {
       "report": "artifacts/verification/public-readiness-040-candidate-a.json",
@@ -274,5 +294,16 @@
     "default_entry_promoted": false,
     "real_data_migrated": false,
     "private_source_pushed": false
+  },
+  "proposed_scope_change": {
+    "whatsapp_independent_window_from_launcher": true,
+    "cross_merchant_binding": true,
+    "status": "feasible_architecture_assessed_not_implemented",
+    "implemented": false,
+    "recommended_window": "independent_Electron_Chromium_top_level",
+    "binding_unit": "WhatsApp_account_and_single_chat_one_active_merchant",
+    "whatsapp_qr_requires_accio_merchant": false,
+    "old_data_and_unknown_preserved": true,
+    "merchant_discovery_also_unresolved": true
   }
 }

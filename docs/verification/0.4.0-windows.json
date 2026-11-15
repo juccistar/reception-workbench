@@ -141,68 +141,11 @@
     "scope": "production launcher entry plus isolated launcher/workbench fixtures"
   },
   "candidate": {
+    "candidate": "b",
     "status": "passed",
     "reports": {
-      "production_entry": {
-        "report": "artifacts/verification/launcher-entry-040-candidate-a-001/report.json",
-        "result": {
-          "status": "passed",
-          "production_main": true,
-          "actual_exe_entry": true,
-          "no_model_calls": true,
-          "no_business_open": true,
-          "screenshots": [
-            "01-empty-launcher.png",
-            "02-empty-models.png"
-          ],
-          "checks": {
-            "empty_launcher": true,
-            "empty_models": true,
-            "no_reception_bridge": true,
-            "no_active_business_child": true,
-            "no_whatsapp_sdk_in_module_cache": true,
-            "normal_exit_and_restart": true,
-            "isolated_electron_user_data": true
-          },
-          "timings_ms": {
-            "first": 2844,
-            "first_ready": 6515,
-            "restart": 324,
-            "restart_ready": 4081
-          },
-          "files": {
-            "before": {
-              "settings": {
-                "exists": false
-              },
-              "initialized": {
-                "exists": false
-              },
-              "registry": {
-                "exists": false
-              }
-            },
-            "after": {
-              "settings": {
-                "exists": false
-              },
-              "initialized": {
-                "exists": false
-              },
-              "registry": {
-                "exists": false
-              }
-            }
-          },
-          "limitations": [
-            "Timings are launch-to-window observations, not OS cold-start or performance measurements.",
-            "No real authorization, customer session, or model quality is tested.",
-            "Child process and module checks are snapshots; no model-check or business-opening action is invoked."
-          ]
-        }
-      },
       "launcher_fixture": {
-        "report": "artifacts/verification/launcher-040-candidate-a-001/result.json",
+        "report": "artifacts/verification/launcher-040-candidate-b-legacy-001/result.json",
         "result": {
           "status": "passed",
           "actual_exe_entry": false,
@@ -217,12 +160,14 @@
           "screenshots": [
             "01-empty.png",
             "02-merchants.png",
+            "05-legacy-refresh.png",
             "03-models.png",
             "04-checked.png"
           ],
           "checks": {
             "empty": true,
             "merchants": true,
+            "legacy_refresh_and_authorization": true,
             "multiple_profiles_and_routes": true,
             "cancel": true,
             "synthetic_check": true,
@@ -230,67 +175,150 @@
           }
         }
       },
-      "workbench_fixture": {
-        "report": "artifacts/verification/workbench-040-candidate-a-001/report.json",
+      "production_entry_initial_preflight": {
+        "report": "artifacts/verification/launcher-entry-040-candidate-b-legacy-001/report.json",
+        "status": "blocked_before_launch",
+        "reason": "Global model state exists; no content was read and EXE was not launched."
+      },
+      "production_entry": {
+        "report": "artifacts/verification/launcher-entry-040-candidate-b-home-003/report.json",
         "result": {
           "status": "passed",
-          "actual_window": true,
-          "actual_exe_entry": false,
-          "production_main": false,
-          "fixture_host": true,
-          "synthetic_launch_and_update_info": true,
-          "production_service_client": true,
-          "real_service_rpc": true,
-          "synthetic_python_integration": true,
-          "production_renderer_and_preload": true,
-          "candidate_assets": true,
-          "real_ai_calls": 0,
-          "real_customer_sends": 0,
+          "production_main": true,
+          "actual_exe_entry": true,
+          "no_model_calls": true,
+          "no_business_open": true,
           "screenshots": [
-            "01-conversation.png",
-            "02-draft.png",
-            "03-receipt.png",
-            "04-suggestion-requirements.png",
-            "05-model-summary.png"
+            "01-home.png",
+            "02-details.png"
           ],
           "checks": {
-            "selection": true,
-            "edit_and_save": true,
-            "synthetic_send_accepted": true,
-            "suggestion_summary_requirements": true,
-            "model_summary": true,
-            "normal_shutdown": true
+            "first_merchant_count": 1,
+            "first_merchant_status": "reauthorize",
+            "first_verified_at": 0,
+            "first_normal_exit": true,
+            "restart_merchant_count": 1,
+            "restart_merchant_status": "reauthorize",
+            "restart_verified_at": 0,
+            "restart_normal_exit": true,
+            "empty_launcher": false,
+            "legacy_launcher": true,
+            "empty_models": false,
+            "model_page_not_opened": true,
+            "no_reception_bridge": true,
+            "no_active_business_child": true,
+            "no_whatsapp_sdk_in_module_cache": true,
+            "normal_exit_and_restart": true,
+            "isolated_electron_user_data": true
           },
-          "renderer_errors": []
+          "timings_ms": {
+            "first": 5815,
+            "first_ready": 7488,
+            "restart": 5757,
+            "restart_ready": 7522
+          },
+          "files": {
+            "before": {
+              "settings": {
+                "exists": true,
+                "dev": 2698071375,
+                "ino": 19140298416711050,
+                "size": 1351,
+                "nlink": 1,
+                "mtimeMs": 1794747188225.235,
+                "ctimeMs": 1794747188230.2214
+              },
+              "initialized": {
+                "exists": true,
+                "dev": 2698071375,
+                "ino": 12666373952290268,
+                "size": 17,
+                "nlink": 1,
+                "mtimeMs": 1794746096027.3965,
+                "ctimeMs": 1794746096027.3965
+              },
+              "registry": {
+                "exists": false
+              }
+            },
+            "legacy_before": [
+              "810bdcd4902d4d6cb6e9788536f16000e795b6dd90a0f3b79d26b226ce250f79",
+              "1dabef52b31cc64db65c0fb5d59d572392fa54c22a2b19665ef71038252245c3"
+            ],
+            "after": {
+              "settings": {
+                "exists": true,
+                "dev": 2698071375,
+                "ino": 19140298416711050,
+                "size": 1351,
+                "nlink": 1,
+                "mtimeMs": 1794747188225.235,
+                "ctimeMs": 1794747188230.2214
+              },
+              "initialized": {
+                "exists": true,
+                "dev": 2698071375,
+                "ino": 12666373952290268,
+                "size": 17,
+                "nlink": 1,
+                "mtimeMs": 1794746096027.3965,
+                "ctimeMs": 1794746096027.3965
+              },
+              "registry": {
+                "exists": false
+              }
+            },
+            "legacy_after": [
+              "810bdcd4902d4d6cb6e9788536f16000e795b6dd90a0f3b79d26b226ce250f79",
+              "1dabef52b31cc64db65c0fb5d59d572392fa54c22a2b19665ef71038252245c3"
+            ]
+          },
+          "limitations": [
+            "Timings are launch-to-window observations, not OS cold-start or performance measurements.",
+            "No real authorization, customer session, or model quality is tested.",
+            "Child process and module checks are snapshots; no model-check or business-opening action is invoked.",
+            "Model page was not opened; existing model files were checked by lstat metadata only, without reading or hashing contents."
+          ]
         }
+      },
+      "production_entry_screenshot_retry": {
+        "report": "artifacts/verification/launcher-entry-040-candidate-b-home-002/report.json",
+        "status": "failed_screenshot_timeout",
+        "fix": "Bring the verification window to front; candidate B unchanged."
       }
     },
     "screenshots_viewed": [
-      "artifacts/verification/launcher-entry-040-candidate-a-001/01-empty-launcher.png",
-      "artifacts/verification/launcher-entry-040-candidate-a-001/02-empty-models.png",
-      "artifacts/verification/launcher-040-candidate-a-001/01-empty.png",
-      "artifacts/verification/launcher-040-candidate-a-001/02-merchants.png",
-      "artifacts/verification/launcher-040-candidate-a-001/03-models.png",
-      "artifacts/verification/launcher-040-candidate-a-001/04-checked.png",
-      "artifacts/verification/workbench-040-candidate-a-001/01-conversation.png",
-      "artifacts/verification/workbench-040-candidate-a-001/02-draft.png",
-      "artifacts/verification/workbench-040-candidate-a-001/03-receipt.png",
-      "artifacts/verification/workbench-040-candidate-a-001/04-suggestion-requirements.png",
-      "artifacts/verification/workbench-040-candidate-a-001/05-model-summary.png"
+      "artifacts/verification/launcher-040-candidate-b-legacy-001/01-empty.png",
+      "artifacts/verification/launcher-040-candidate-b-legacy-001/02-merchants.png",
+      "artifacts/verification/launcher-040-candidate-b-legacy-001/05-legacy-refresh.png",
+      "artifacts/verification/launcher-040-candidate-b-legacy-001/03-models.png",
+      "artifacts/verification/launcher-040-candidate-b-legacy-001/04-checked.png",
+      "artifacts/verification/launcher-entry-040-candidate-b-home-003/01-home.png",
+      "artifacts/verification/launcher-entry-040-candidate-b-home-003/02-details.png"
     ],
-    "scope": "production candidate EXE launcher plus candidate renderer/preload in isolated synthetic launcher/workbench hosts",
-    "screenshots_viewed_by": "candidate GUI verification agent aa73144c2666319f9",
+    "scope": "Candidate B production EXE read-only home and details using existing legacy metadata, plus candidate renderer/preload in isolated synthetic launcher/model fixture.",
+    "unchanged_workbench_assets": {
+      "comparison": "candidate B integrity verification agent",
+      "renderer_index_html": true,
+      "preload_index_js": true,
+      "workbench_js_css_files": 3,
+      "all_compared_bytes_equal": true,
+      "prior_record": "artifacts/verification/workbench-040-candidate-a-001/report.json",
+      "scope_limit": "Prior A workbench interaction evidence is a reference for identical frontend assets, not a B full-host end-to-end run."
+    },
     "limitations": [
-      "Only production_entry is the actual candidate EXE production main.",
-      "The launcher fixture does not separately record normal shutdown; production entry and workbench fixture do."
+      "The real merchant authorization and business connection were not performed.",
+      "Existing global model settings were observed by lstat metadata only; the model page was not opened and file contents were not read.",
+      "Prior A workbench interaction evidence references identical business frontend assets; B was not run with an authenticated merchant business service."
     ]
   },
   "public_whatsapp": {
+    "candidate": "b",
     "status": "passed",
     "reports": {
       "normal": {
-        "report": "artifacts/verification/whatsapp-native-040-candidate-a-normal-002/report.json",
-        "diagnostics": "artifacts/verification/whatsapp-native-040-candidate-a-normal-002/host-diagnostics.jsonl",
+        "report": "artifacts/verification/whatsapp-native-040-candidate-b-normal-001/report.json",
+        "diagnostics": "artifacts/verification/whatsapp-native-040-candidate-b-normal-001/host-diagnostics.jsonl",
         "result": {
           "status": "passed",
           "version": "0.4.0",
@@ -313,7 +341,7 @@
           "native_qr_visible": true,
           "qr_refresh_observed": true,
           "qr_refresh_requested": false,
-          "stable_observation_ms": 60587,
+          "stable_observation_ms": 60436,
           "sdk_state_stable": true,
           "normal_close": true,
           "qr_recorded": false,
@@ -322,7 +350,7 @@
           "real_customer_sends": 0,
           "production_data_accessed": false,
           "error_code": "",
-          "host_sha256": "a364d6a74c92c2c78cfc3c38bc40da467b09134d869a99af80e96a3665458760",
+          "host_sha256": "4bb739a2b16e2ff96b45386eeae16436850398d3c9a2dffb3fe354fab42ba998",
           "current_session_host_used": true,
           "session_generation": 1,
           "partition_name_length": 27,
@@ -339,8 +367,8 @@
           "expose_function": true,
           "preload_script": true,
           "exit_code": 0,
-          "runtime_entry": "relase/release-0.4.0-candidate-a/installer-build/win-unpacked/resources/whatsapp-runtime.asar/entry.cjs",
-          "host_entry": "relase/release-0.4.0-candidate-a/installer-build/win-unpacked/resources/app.asar/main/index.js",
+          "runtime_entry": "relase/release-0.4.0-candidate-b/installer-build/win-unpacked/resources/whatsapp-runtime.asar/entry.cjs",
+          "host_entry": "relase/release-0.4.0-candidate-b/installer-build/win-unpacked/resources/app.asar/main/index.js",
           "packaged_host_resources": true,
           "packaged_sdk_resources": true,
           "diagnostics_saved": true
@@ -348,8 +376,8 @@
         "verification_script_exit_code": 0
       },
       "controlled_fault": {
-        "report": "artifacts/verification/whatsapp-native-040-candidate-a-fault-002/report.json",
-        "diagnostics": "artifacts/verification/whatsapp-native-040-candidate-a-fault-002/host-diagnostics.jsonl",
+        "report": "artifacts/verification/whatsapp-native-040-candidate-b-fault-001/report.json",
+        "diagnostics": "artifacts/verification/whatsapp-native-040-candidate-b-fault-001/host-diagnostics.jsonl",
         "result": {
           "status": "passed",
           "version": "0.4.0",
@@ -372,7 +400,7 @@
           "native_qr_visible": true,
           "qr_refresh_observed": true,
           "qr_refresh_requested": false,
-          "stable_observation_ms": 60548,
+          "stable_observation_ms": 60472,
           "sdk_state_stable": true,
           "normal_close": true,
           "qr_recorded": false,
@@ -381,7 +409,7 @@
           "real_customer_sends": 0,
           "production_data_accessed": false,
           "error_code": "",
-          "host_sha256": "a364d6a74c92c2c78cfc3c38bc40da467b09134d869a99af80e96a3665458760",
+          "host_sha256": "4bb739a2b16e2ff96b45386eeae16436850398d3c9a2dffb3fe354fab42ba998",
           "current_session_host_used": true,
           "session_generation": 1,
           "partition_name_length": 27,
@@ -400,8 +428,8 @@
           "expose_function": true,
           "preload_script": true,
           "exit_code": 0,
-          "runtime_entry": "relase/release-0.4.0-candidate-a/installer-build/win-unpacked/resources/whatsapp-runtime.asar/entry.cjs",
-          "host_entry": "relase/release-0.4.0-candidate-a/installer-build/win-unpacked/resources/app.asar/main/index.js",
+          "runtime_entry": "relase/release-0.4.0-candidate-b/installer-build/win-unpacked/resources/whatsapp-runtime.asar/entry.cjs",
+          "host_entry": "relase/release-0.4.0-candidate-b/installer-build/win-unpacked/resources/app.asar/main/index.js",
           "packaged_host_resources": true,
           "packaged_sdk_resources": true,
           "diagnostics_saved": true
@@ -410,16 +438,10 @@
       }
     },
     "screenshots_viewed": [
-      "artifacts/verification/whatsapp-native-040-candidate-a-normal-002/public-page-redacted.png",
-      "artifacts/verification/whatsapp-native-040-candidate-a-fault-002/public-page-redacted.png"
+      "artifacts/verification/whatsapp-native-040-candidate-b-normal-001/public-page-redacted.png",
+      "artifacts/verification/whatsapp-native-040-candidate-b-fault-001/public-page-redacted.png"
     ],
-    "screenshots_viewed_by": "candidate QR recheck workflow wf_e3c3f154-bd6",
-    "production_or_candidate_modified_for_fix": false,
-    "scope": "public QR page with candidate host and fixed SDK archive; temporary profile, no real-account login, history reads, model calls or customer sends",
-    "limitations": [
-      "The compiled host is invoked by an isolated fixture, not an authenticated production merchant bootstrap.",
-      "Public QR checks do not verify real-account login or messaging."
-    ]
+    "scope": "Candidate B compiled host and fixed SDK in isolated public QR fixture, no authenticated merchant bootstrap or real-account login."
   },
   "public_whatsapp_history": [
     {
@@ -551,6 +573,291 @@
       ],
       "screenshots_viewed_by": "candidate GUI verification agent aa73144c2666319f9",
       "observations": "Both redacted public-page screenshots are blank; no QR display or refresh was verified."
+    },
+    {
+      "candidate": "a",
+      "status": "passed",
+      "reports": {
+        "normal": {
+          "report": "artifacts/verification/whatsapp-native-040-candidate-a-normal-002/report.json",
+          "diagnostics": "artifacts/verification/whatsapp-native-040-candidate-a-normal-002/host-diagnostics.jsonl",
+          "result": {
+            "status": "passed",
+            "version": "0.4.0",
+            "cold_start": true,
+            "prewarm_before_connect": false,
+            "compiled_host_used": true,
+            "fixture_startup_replaced": true,
+            "real_merchant_bootstrap_used": false,
+            "reference_no_cdp": false,
+            "controlled_sdk_failure": false,
+            "formal_chinese_application_name": true,
+            "actual_ascii_request": true,
+            "application_tokens_omitted": true,
+            "request_chrome_matches_engine": true,
+            "session_ascii_user_agent": true,
+            "public_http_status": 200,
+            "sdk_injected_to_qr": true,
+            "sdk_inject_completed": true,
+            "qr_events": 3,
+            "native_qr_visible": true,
+            "qr_refresh_observed": true,
+            "qr_refresh_requested": false,
+            "stable_observation_ms": 60587,
+            "sdk_state_stable": true,
+            "normal_close": true,
+            "qr_recorded": false,
+            "logged_in": false,
+            "real_ai_calls": 0,
+            "real_customer_sends": 0,
+            "production_data_accessed": false,
+            "error_code": "",
+            "host_sha256": "a364d6a74c92c2c78cfc3c38bc40da467b09134d869a99af80e96a3665458760",
+            "current_session_host_used": true,
+            "session_generation": 1,
+            "partition_name_length": 27,
+            "profile_path_length": 93,
+            "post_login_history_disabled": true,
+            "partition_path_matches_expected": true,
+            "remote_node_integration_disabled": true,
+            "remote_business_bridge_absent": true,
+            "final_host_status": "qr",
+            "final_page_state": "available",
+            "redacted_screenshot": true,
+            "cdp_version_matches_engine": true,
+            "same_visible_dom": true,
+            "expose_function": true,
+            "preload_script": true,
+            "exit_code": 0,
+            "runtime_entry": "relase/release-0.4.0-candidate-a/installer-build/win-unpacked/resources/whatsapp-runtime.asar/entry.cjs",
+            "host_entry": "relase/release-0.4.0-candidate-a/installer-build/win-unpacked/resources/app.asar/main/index.js",
+            "packaged_host_resources": true,
+            "packaged_sdk_resources": true,
+            "diagnostics_saved": true
+          },
+          "verification_script_exit_code": 0
+        },
+        "controlled_fault": {
+          "report": "artifacts/verification/whatsapp-native-040-candidate-a-fault-002/report.json",
+          "diagnostics": "artifacts/verification/whatsapp-native-040-candidate-a-fault-002/host-diagnostics.jsonl",
+          "result": {
+            "status": "passed",
+            "version": "0.4.0",
+            "cold_start": true,
+            "prewarm_before_connect": false,
+            "compiled_host_used": true,
+            "fixture_startup_replaced": true,
+            "real_merchant_bootstrap_used": false,
+            "reference_no_cdp": false,
+            "controlled_sdk_failure": true,
+            "formal_chinese_application_name": true,
+            "actual_ascii_request": true,
+            "application_tokens_omitted": true,
+            "request_chrome_matches_engine": true,
+            "session_ascii_user_agent": true,
+            "public_http_status": 200,
+            "sdk_injected_to_qr": true,
+            "sdk_inject_completed": true,
+            "qr_events": 2,
+            "native_qr_visible": true,
+            "qr_refresh_observed": true,
+            "qr_refresh_requested": false,
+            "stable_observation_ms": 60548,
+            "sdk_state_stable": true,
+            "normal_close": true,
+            "qr_recorded": false,
+            "logged_in": false,
+            "real_ai_calls": 0,
+            "real_customer_sends": 0,
+            "production_data_accessed": false,
+            "error_code": "",
+            "host_sha256": "a364d6a74c92c2c78cfc3c38bc40da467b09134d869a99af80e96a3665458760",
+            "current_session_host_used": true,
+            "session_generation": 1,
+            "partition_name_length": 27,
+            "profile_path_length": 93,
+            "post_login_history_disabled": true,
+            "partition_path_matches_expected": true,
+            "remote_node_integration_disabled": true,
+            "remote_business_bridge_absent": true,
+            "failure_phase": "sdk_inject",
+            "failure_code": "sdk_error",
+            "final_host_status": "error",
+            "final_page_state": "available",
+            "redacted_screenshot": true,
+            "cdp_version_matches_engine": true,
+            "same_visible_dom": true,
+            "expose_function": true,
+            "preload_script": true,
+            "exit_code": 0,
+            "runtime_entry": "relase/release-0.4.0-candidate-a/installer-build/win-unpacked/resources/whatsapp-runtime.asar/entry.cjs",
+            "host_entry": "relase/release-0.4.0-candidate-a/installer-build/win-unpacked/resources/app.asar/main/index.js",
+            "packaged_host_resources": true,
+            "packaged_sdk_resources": true,
+            "diagnostics_saved": true
+          },
+          "verification_script_exit_code": 0
+        }
+      },
+      "screenshots_viewed": [
+        "artifacts/verification/whatsapp-native-040-candidate-a-normal-002/public-page-redacted.png",
+        "artifacts/verification/whatsapp-native-040-candidate-a-fault-002/public-page-redacted.png"
+      ],
+      "screenshots_viewed_by": "candidate QR recheck workflow wf_e3c3f154-bd6",
+      "production_or_candidate_modified_for_fix": false,
+      "scope": "public QR page with candidate host and fixed SDK archive; temporary profile, no real-account login, history reads, model calls or customer sends",
+      "limitations": [
+        "The compiled host is invoked by an isolated fixture, not an authenticated production merchant bootstrap.",
+        "Public QR checks do not verify real-account login or messaging."
+      ]
+    }
+  ],
+  "candidate_history": [
+    {
+      "candidate": "a",
+      "status": "passed",
+      "reports": {
+        "production_entry": {
+          "report": "artifacts/verification/launcher-entry-040-candidate-a-001/report.json",
+          "result": {
+            "status": "passed",
+            "production_main": true,
+            "actual_exe_entry": true,
+            "no_model_calls": true,
+            "no_business_open": true,
+            "screenshots": [
+              "01-empty-launcher.png",
+              "02-empty-models.png"
+            ],
+            "checks": {
+              "empty_launcher": true,
+              "empty_models": true,
+              "no_reception_bridge": true,
+              "no_active_business_child": true,
+              "no_whatsapp_sdk_in_module_cache": true,
+              "normal_exit_and_restart": true,
+              "isolated_electron_user_data": true
+            },
+            "timings_ms": {
+              "first": 2844,
+              "first_ready": 6515,
+              "restart": 324,
+              "restart_ready": 4081
+            },
+            "files": {
+              "before": {
+                "settings": {
+                  "exists": false
+                },
+                "initialized": {
+                  "exists": false
+                },
+                "registry": {
+                  "exists": false
+                }
+              },
+              "after": {
+                "settings": {
+                  "exists": false
+                },
+                "initialized": {
+                  "exists": false
+                },
+                "registry": {
+                  "exists": false
+                }
+              }
+            },
+            "limitations": [
+              "Timings are launch-to-window observations, not OS cold-start or performance measurements.",
+              "No real authorization, customer session, or model quality is tested.",
+              "Child process and module checks are snapshots; no model-check or business-opening action is invoked."
+            ]
+          }
+        },
+        "launcher_fixture": {
+          "report": "artifacts/verification/launcher-040-candidate-a-001/result.json",
+          "result": {
+            "status": "passed",
+            "actual_exe_entry": false,
+            "candidate_assets": true,
+            "production_launcher_host": false,
+            "production_launcher_preload": true,
+            "production_renderer": true,
+            "synthetic_registry": true,
+            "synthetic_model_checker": true,
+            "synthetic_encryption": true,
+            "model_network_calls": 0,
+            "screenshots": [
+              "01-empty.png",
+              "02-merchants.png",
+              "03-models.png",
+              "04-checked.png"
+            ],
+            "checks": {
+              "empty": true,
+              "merchants": true,
+              "multiple_profiles_and_routes": true,
+              "cancel": true,
+              "synthetic_check": true,
+              "stale_check_rejected": true
+            }
+          }
+        },
+        "workbench_fixture": {
+          "report": "artifacts/verification/workbench-040-candidate-a-001/report.json",
+          "result": {
+            "status": "passed",
+            "actual_window": true,
+            "actual_exe_entry": false,
+            "production_main": false,
+            "fixture_host": true,
+            "synthetic_launch_and_update_info": true,
+            "production_service_client": true,
+            "real_service_rpc": true,
+            "synthetic_python_integration": true,
+            "production_renderer_and_preload": true,
+            "candidate_assets": true,
+            "real_ai_calls": 0,
+            "real_customer_sends": 0,
+            "screenshots": [
+              "01-conversation.png",
+              "02-draft.png",
+              "03-receipt.png",
+              "04-suggestion-requirements.png",
+              "05-model-summary.png"
+            ],
+            "checks": {
+              "selection": true,
+              "edit_and_save": true,
+              "synthetic_send_accepted": true,
+              "suggestion_summary_requirements": true,
+              "model_summary": true,
+              "normal_shutdown": true
+            },
+            "renderer_errors": []
+          }
+        }
+      },
+      "screenshots_viewed": [
+        "artifacts/verification/launcher-entry-040-candidate-a-001/01-empty-launcher.png",
+        "artifacts/verification/launcher-entry-040-candidate-a-001/02-empty-models.png",
+        "artifacts/verification/launcher-040-candidate-a-001/01-empty.png",
+        "artifacts/verification/launcher-040-candidate-a-001/02-merchants.png",
+        "artifacts/verification/launcher-040-candidate-a-001/03-models.png",
+        "artifacts/verification/launcher-040-candidate-a-001/04-checked.png",
+        "artifacts/verification/workbench-040-candidate-a-001/01-conversation.png",
+        "artifacts/verification/workbench-040-candidate-a-001/02-draft.png",
+        "artifacts/verification/workbench-040-candidate-a-001/03-receipt.png",
+        "artifacts/verification/workbench-040-candidate-a-001/04-suggestion-requirements.png",
+        "artifacts/verification/workbench-040-candidate-a-001/05-model-summary.png"
+      ],
+      "scope": "production candidate EXE launcher plus candidate renderer/preload in isolated synthetic launcher/workbench hosts",
+      "screenshots_viewed_by": "candidate GUI verification agent aa73144c2666319f9",
+      "limitations": [
+        "Only production_entry is the actual candidate EXE production main.",
+        "The launcher fixture does not separately record normal shutdown; production entry and workbench fixture do."
+      ]
     }
   ]
 }

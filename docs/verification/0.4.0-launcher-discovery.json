@@ -1,6 +1,6 @@
 {
   "version": "0.4.0",
-  "status": "candidate_b_built_window_pending",
+  "status": "standard_legacy_record_visible_current_merchant_unresolved",
   "user_report": "The launcher does not show previously authorized merchants.",
   "confirmed_cause": "The launcher only read launcher-registry-v1, omitting existing format:1 merchant profiles.",
   "local_observation": {
@@ -45,5 +45,36 @@
   "limitations": [
     "An Accio redirected registry that is no longer referenced by the current environment or persisted index cannot be inferred by scanning; discovery is bounded to real KnownFolder, current LOCALAPPDATA and explicitly provided registry.",
     "Legacy registration does not restore previous process authorization or enable automatic sending."
-  ]
+  ],
+  "build_commit": "b79a395",
+  "production_exe_verification": {
+    "status": "passed",
+    "report": "artifacts/verification/launcher-entry-040-candidate-b-home-003/report.json",
+    "merchant_count_first": 1,
+    "merchant_count_after_restart": 1,
+    "verified_at": 0,
+    "legacy_index_and_storage_hashes_unchanged": true,
+    "existing_model_file_metadata_unchanged": true,
+    "model_file_contents_read": false,
+    "new_launcher_index_or_activation_credentials_created": false,
+    "normal_exit_and_restart": true,
+    "screenshots_viewed": [
+      "artifacts/verification/launcher-entry-040-candidate-b-home-003/01-home.png",
+      "artifacts/verification/launcher-entry-040-candidate-b-home-003/02-details.png"
+    ],
+    "prior_attempts": [
+      "artifacts/verification/launcher-entry-040-candidate-b-legacy-001/report.json",
+      "artifacts/verification/launcher-entry-040-candidate-b-home-002/report.json"
+    ],
+    "merchant_status": "reauthorize"
+  },
+  "synthetic_refresh_verification": {
+    "status": "passed",
+    "report": "artifacts/verification/launcher-040-candidate-b-legacy-001/result.json",
+    "screenshots_viewed": 5,
+    "old_entries_remain_unauthorized": true,
+    "new_legacy_entry_visible_while_window_open": true
+  },
+  "latest_user_feedback": "User reports that the merchant currently in use is still missing. The one visible standard-directory legacy record is not evidence that the active merchant has been discovered.",
+  "scope_of_verified_result": "Only the existing standard-directory metadata record is confirmed visible in candidate B; current merchant routing and authorization remain unresolved."
 }

@@ -1,6 +1,6 @@
 {
   "version": "0.4.0",
-  "status": "verified_locally_public_release_blocked_authentication",
+  "status": "superseded_by_candidate_b_after_user_report",
   "source_commit": "97fe7c2a794b2ac714219da533831e5fc45a45d4",
   "output": "relase/release-0.4.0-candidate-a",
   "delivery": {
@@ -143,5 +143,7 @@
     "draft_created": false,
     "published": false,
     "assets_uploaded": false
-  }
+  },
+  "superseded_reason": "Original local checks did not cover prior format:1 merchant discovery; user reported the empty list and candidate B fixes it.",
+  "replacement_candidate_record": "docs/verification/0.4.0-candidate.json"
 }

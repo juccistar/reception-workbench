@@ -14,11 +14,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const options = new Map();
 for (let i = 2; i < process.argv.length; i += 2) {
   const key = process.argv[i], value = process.argv[i + 1];
-  assert(['--label', '--executable', '--expect-legacy'].includes(key) && value && !value.startsWith('--') && !options.has(key), 'Use --label, optional --executable, and optional --expect-legacy 1');
+  assert(['--label', '--executable', '--expect-legacy', '--read-only-home'].includes(key) && value && !value.startsWith('--') && !options.has(key), 'Invalid arguments');
   options.set(key, value);
 }
 assert(!options.has('--expect-legacy') || options.get('--expect-legacy') === '1', 'Expected --expect-legacy 1');
 const expectLegacy = options.has('--expect-legacy');
+assert(!options.has('--read-only-home') || (options.get('--read-only-home') === '1' && expectLegacy), 'Read-only home requires --expect-legacy 1');
+const readOnlyHome = options.has('--read-only-home');
 const label = options.get('--label');
 assert(/^[a-z0-9][a-z0-9-]{0,60}$/.test(label || ''), 'Pass a new --label');
 const output = path.join(root, 'artifacts/verification', `launcher-entry-040-${label}`);
@@ -48,6 +50,17 @@ async function fileState(file) {
     return { exists: true, sha256: createHash('sha256').update(data).digest('hex') };
   } catch (error) { if (error.code === 'ENOENT') return { exists: false }; throw error; }
 }
+async function metadataState(file) {
+  await checkParents(path.dirname(file));
+  try {
+    const stat = await lstat(file);
+    assert(stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size <= 1024 * 1024, 'Unsafe model metadata');
+    return { exists: true, dev: stat.dev, ino: stat.ino, size: stat.size, nlink: stat.nlink, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs };
+  } catch (error) { if (error.code === 'ENOENT') return { exists: false }; throw error; }
+}
+async function homeState() {
+  return { settings: await metadataState(targets.settings), initialized: await metadataState(targets.initialized), registry: (await assertAbsent(targets.registry), { exists: false }) };
+}
 async function assertAbsent(file) {
   try { await lstat(file); throw new Error('Blocked: existing global model or launcher state; no content was read.'); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -72,8 +85,13 @@ try {
   const registryDirectory = path.join(path.dirname(modelDirectory), 'launcher');
   await checkParents(modelDirectory); await checkParents(registryDirectory);
   targets = { settings: path.join(modelDirectory, 'settings.json'), initialized: path.join(modelDirectory, '.initialized'), registry: path.join(registryDirectory, 'merchants.json') };
-  for (const file of Object.values(targets)) await assertAbsent(file);
-  before = Object.fromEntries(Object.keys(targets).map(key => [key, { exists: false }]));
+  if (readOnlyHome) {
+    before = await homeState();
+    report.limitations.push('Model page was not opened; existing model files were checked by lstat metadata only, without reading or hashing contents.');
+  } else {
+    for (const file of Object.values(targets)) await assertAbsent(file);
+    before = Object.fromEntries(Object.keys(targets).map(key => [key, { exists: false }]));
+  }
   report.files.before = before;
   if (expectLegacy) {
     const local = path.dirname(path.dirname(modelDirectory));
@@ -129,7 +147,8 @@ try {
     return value;
   };
   for (const run of ['first', 'restart']) {
-    for (const file of Object.values(targets)) await assertAbsent(file);
+    if (readOnlyHome) assert.deepEqual(await homeState(), before, 'Home metadata changed before launch');
+    else for (const file of Object.values(targets)) await assertAbsent(file);
     if (expectLegacy) {
       await assertAbsent(path.join(path.dirname(modelDirectory), 'launcher-activation'));
       assert.deepEqual(await legacySnapshot(legacyFiles), legacyBefore, 'Legacy metadata changed before launch');
@@ -143,7 +162,10 @@ try {
     // Wait for real launcher IPC, including the asynchronous KnownFolder resolver.
     const merchants = await page.evaluate(() => window.launcher.merchants());
     if (expectLegacy) {
-      assert(merchants.length > 0 && merchants.every(m => m.verified_at === 0 && m.status === 'reauthorize'), 'Expected historical entries requiring authorization');
+      assert((readOnlyHome ? merchants.length === 1 : merchants.length > 0) && merchants.every(m => m.verified_at === 0 && m.status === 'reauthorize'), 'Expected historical entries requiring authorization');
+      report.checks[`${run}_merchant_count`] = merchants.length;
+      report.checks[`${run}_merchant_status`] = 'reauthorize';
+      report.checks[`${run}_verified_at`] = 0;
       assert.equal(await page.getByRole('radio').count(), merchants.length);
     } else assert.deepEqual(merchants, []);
     await inspect();
@@ -151,12 +173,21 @@ try {
     assert.deepEqual(await page.evaluate(() => ({ reception: typeof window.reception, launcher: typeof window.launcher })), { reception: 'undefined', launcher: 'object' });
     if (run === 'first') {
       report.production_main = true; report.actual_exe_entry = candidate;
-      await page.screenshot({ path: path.join(output, '01-empty-launcher.png'), animations: 'disabled' }); report.screenshots.push('01-empty-launcher.png');
-      await page.getByRole('button', { name: '模型配置', exact: true }).click();
-      await page.getByText('还没有 API 配置，可先添加后选择用途。').waitFor();
-      assert.equal(await page.getByLabel('接待 API').inputValue(), ''); assert.equal(await page.getByLabel('翻译 API').inputValue(), '');
-      await inspect();
-      await page.screenshot({ path: path.join(output, '02-empty-models.png'), animations: 'disabled' }); report.screenshots.push('02-empty-models.png');
+      if (readOnlyHome) {
+        await page.bringToFront();
+        await page.screenshot({ path: path.join(output, '01-home.png'), animations: 'disabled' }); report.screenshots.push('01-home.png');
+        await page.getByRole('button', { name: '商家详情', exact: true }).click();
+        await page.getByRole('dialog', { name: '商家详情' }).waitFor();
+        await inspect();
+        await page.screenshot({ path: path.join(output, '02-details.png'), animations: 'disabled' }); report.screenshots.push('02-details.png');
+      } else {
+        await page.screenshot({ path: path.join(output, '01-empty-launcher.png'), animations: 'disabled' }); report.screenshots.push('01-empty-launcher.png');
+        await page.getByRole('button', { name: '模型配置', exact: true }).click();
+        await page.getByText('还没有 API 配置，可先添加后选择用途。').waitFor();
+        assert.equal(await page.getByLabel('接待 API').inputValue(), ''); assert.equal(await page.getByLabel('翻译 API').inputValue(), '');
+        await inspect();
+        await page.screenshot({ path: path.join(output, '02-empty-models.png'), animations: 'disabled' }); report.screenshots.push('02-empty-models.png');
+      }
     }
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
     await new Promise((resolve, reject) => {
@@ -164,16 +195,17 @@ try {
       const timer = setTimeout(() => reject(new Error('App did not exit normally')), 15000);
       child.once('exit', (code, signal) => { clearTimeout(timer); code === 0 && !signal ? resolve() : reject(new Error(`App exited ${code}/${signal}`)); });
     });
+    report.checks[`${run}_normal_exit`] = true;
     app = undefined;
   }
-  report.checks = { empty_launcher: !expectLegacy, legacy_launcher: expectLegacy, empty_models: true, no_reception_bridge: true, no_active_business_child: true, no_whatsapp_sdk_in_module_cache: true, normal_exit_and_restart: true, isolated_electron_user_data: true };
+  Object.assign(report.checks, { empty_launcher: !expectLegacy, legacy_launcher: expectLegacy, empty_models: !readOnlyHome, model_page_not_opened: readOnlyHome, no_reception_bridge: true, no_active_business_child: true, no_whatsapp_sdk_in_module_cache: true, normal_exit_and_restart: true, isolated_electron_user_data: true });
   report.no_model_calls = true; report.no_business_open = true; report.status = 'passed';
 } catch (error) { report.error = String(error?.stack || error); process.exitCode = 1; }
 finally {
   if (app) await app.close().catch(() => {});
   if (targets && before) {
     try {
-      report.files.after = Object.fromEntries(await Promise.all(Object.entries(targets).map(async ([key, file]) => [key, await fileState(file)])));
+      report.files.after = readOnlyHome ? await homeState() : Object.fromEntries(await Promise.all(Object.entries(targets).map(async ([key, file]) => [key, await fileState(file)])));
       if (JSON.stringify(before) !== JSON.stringify(report.files.after)) { report.status = 'failed'; report.error = [report.error, 'Global target files changed during verification.'].filter(Boolean).join('\n'); process.exitCode = 1; }
     } catch (error) { report.status = 'failed'; report.error = [report.error, `Unable to verify global files: ${error.message}`].filter(Boolean).join('\n'); process.exitCode = 1; }
   }
