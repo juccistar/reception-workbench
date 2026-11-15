@@ -14,13 +14,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const options = new Map();
 for (let i = 2; i < process.argv.length; i += 2) {
   const key = process.argv[i], value = process.argv[i + 1];
-  assert(['--label', '--executable', '--expect-legacy', '--read-only-home'].includes(key) && value && !value.startsWith('--') && !options.has(key), 'Invalid arguments');
+  assert(['--label', '--executable', '--expect-legacy', '--read-only-home', '--redirected-home', '--expect-seller-tail'].includes(key) && value && !value.startsWith('--') && !options.has(key), 'Invalid arguments');
   options.set(key, value);
 }
 assert(!options.has('--expect-legacy') || options.get('--expect-legacy') === '1', 'Expected --expect-legacy 1');
 const expectLegacy = options.has('--expect-legacy');
 assert(!options.has('--read-only-home') || (options.get('--read-only-home') === '1' && expectLegacy), 'Read-only home requires --expect-legacy 1');
 const readOnlyHome = options.has('--read-only-home');
+const redirectedHome = options.get('--redirected-home');
+const sellerTail = options.get('--expect-seller-tail');
+assert(!redirectedHome && !sellerTail || (readOnlyHome && expectLegacy && redirectedHome && path.isAbsolute(redirectedHome) && !/^(?:\\\\|\/\/)/.test(redirectedHome) && /^[0-9]{4}$/.test(sellerTail || '')), 'Redirected home and seller tail require read-only legacy mode');
 const label = options.get('--label');
 assert(/^[a-z0-9][a-z0-9-]{0,60}$/.test(label || ''), 'Pass a new --label');
 const output = path.join(root, 'artifacts/verification', `launcher-entry-040-${label}`);
@@ -87,6 +90,7 @@ try {
   targets = { settings: path.join(modelDirectory, 'settings.json'), initialized: path.join(modelDirectory, '.initialized'), registry: path.join(registryDirectory, 'merchants.json') };
   if (readOnlyHome) {
     before = await homeState();
+    if (redirectedHome) assert(before.settings.exists && !before.settings.unsafe, 'Existing model settings file required');
     report.limitations.push('Model page was not opened; existing model files were checked by lstat metadata only, without reading or hashing contents.');
   } else {
     for (const file of Object.values(targets)) await assertAbsent(file);
@@ -95,21 +99,27 @@ try {
   report.files.before = before;
   if (expectLegacy) {
     const local = path.dirname(path.dirname(modelDirectory));
-    assert(process.env.LOCALAPPDATA && path.resolve(process.env.LOCALAPPDATA).toLowerCase() === local.toLowerCase(), 'Legacy mode requires standard LocalAppData');
+    if (!redirectedHome) assert(process.env.LOCALAPPDATA && path.resolve(process.env.LOCALAPPDATA).toLowerCase() === local.toLowerCase(), 'Legacy mode requires standard LocalAppData');
     await assertAbsent(path.join(path.dirname(modelDirectory), 'launcher-activation'));
-    const legacyDir = path.join(local, 'AlibabaReceptionWorkbenchHost');
-    const legacyIndex = path.join(legacyDir, 'merchants.json');
-    const bytes = await readSafe(legacyIndex, 1024 * 1024);
-    const data = JSON.parse(bytes.toString('utf8'));
-    assert(data?.format === 1 && data.profiles && typeof data.profiles === 'object' && !Array.isArray(data.profiles) && Object.keys(data.profiles).length <= 512, 'Invalid legacy index');
-    legacyFiles = [{ file: legacyIndex, limit: 1024 * 1024 }];
-    for (const seller of Object.keys(data.profiles)) {
-      assert(/^[1-9][0-9]{0,127}$/.test(seller), 'Invalid legacy profile');
-      legacyFiles.push({ file: path.join(legacyDir, 'profiles', createHash('sha256').update(seller).digest('hex'), 'state', 'storage.json'), limit: 65536 });
+    const directories = [...new Set([path.join(local, 'AlibabaReceptionWorkbenchHost'), ...(redirectedHome ? [path.join(path.resolve(redirectedHome), 'AppData', 'Local', 'AlibabaReceptionWorkbenchHost')] : [])])];
+    legacyFiles = [];
+    for (const legacyDir of directories) {
+      const legacyIndex = path.join(legacyDir, 'merchants.json');
+      let bytes;
+      try { bytes = await readSafe(legacyIndex, 1024 * 1024); }
+      catch (error) { if (redirectedHome && legacyDir === directories[0] && error.code === 'ENOENT') continue; throw error; }
+      const data = JSON.parse(bytes.toString('utf8'));
+      assert(data?.format === 1 && data.profiles && typeof data.profiles === 'object' && !Array.isArray(data.profiles) && Object.keys(data.profiles).length <= 512, 'Invalid legacy index');
+      const start = legacyFiles.length;
+      legacyFiles.push({ file: legacyIndex, limit: 1024 * 1024 });
+      for (const seller of Object.keys(data.profiles)) {
+        assert(/^[1-9][0-9]{0,127}$/.test(seller), 'Invalid legacy profile');
+        legacyFiles.push({ file: path.join(legacyDir, 'profiles', createHash('sha256').update(seller).digest('hex'), 'state', 'storage.json'), limit: 65536 });
+      }
+      assert(legacyFiles.length > start + 1, 'No legacy profiles');
+      assert.equal(createHash('sha256').update(await readSafe(legacyIndex, 1024 * 1024)).digest('hex'), createHash('sha256').update(bytes).digest('hex'), 'Legacy index changed during snapshot');
     }
-    assert(legacyFiles.length > 1, 'No legacy profiles');
     legacyBefore = await legacySnapshot(legacyFiles);
-    assert.equal(legacyBefore[0], createHash('sha256').update(bytes).digest('hex'), 'Legacy index changed during snapshot');
     report.files.legacy_before = legacyBefore;
   }
   const candidate = options.has('--executable');
@@ -124,6 +134,12 @@ try {
   if (!candidate) assert((await lstat(entry)).isFile(), 'Production main build is missing');
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (/accio|phoenix|reception|credential|secret|token|password|key/i.test(key) || /^(ELECTRON_RUN_AS_NODE|NODE_OPTIONS|NODE_PATH|PYTHONPATH|PYTHONHOME)$/i.test(key)) delete env[key];
+  if (redirectedHome) {
+    const home = path.resolve(redirectedHome);
+    await checkParents(home);
+    Object.assign(env, { USERPROFILE: home, LOCALAPPDATA: path.join(home, 'AppData', 'Local'), APPDATA: path.join(home, 'AppData', 'Roaming') });
+    report.limitations.push('Redirected environment simulates Accio; no real Accio host connection or model readiness is tested.');
+  }
   const userData = path.join(temp, 'electron-user-data');
   await mkdir(userData);
   const launch = () => electron.launch({ executablePath: executable, args: [...(candidate ? [] : [root]), `--user-data-dir=${userData}`], cwd: root, env, timeout: 45000 });
@@ -162,7 +178,12 @@ try {
     // Wait for real launcher IPC, including the asynchronous KnownFolder resolver.
     const merchants = await page.evaluate(() => window.launcher.merchants());
     if (expectLegacy) {
-      assert((readOnlyHome ? merchants.length === 1 : merchants.length > 0) && merchants.every(m => m.verified_at === 0 && m.status === 'reauthorize'), 'Expected historical entries requiring authorization');
+      assert(merchants.length > 0 && merchants.every(m => m.verified_at === 0 && m.status === 'reauthorize'), 'Expected historical entries requiring authorization');
+      if (sellerTail) {
+        assert(merchants.some(m => m.account_tail === sellerTail && m.verified_at === 0 && m.status === 'reauthorize'), 'Expected seller is missing');
+        await page.getByRole('radio', { name: new RegExp(`商家 ${sellerTail}`) }).first().click();
+        report.checks[`${run}_expected_seller_visible`] = true;
+      }
       report.checks[`${run}_merchant_count`] = merchants.length;
       report.checks[`${run}_merchant_status`] = 'reauthorize';
       report.checks[`${run}_verified_at`] = 0;

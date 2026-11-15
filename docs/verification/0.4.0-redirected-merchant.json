@@ -1,6 +1,6 @@
 {
   "version": "0.4.0",
-  "status": "candidate_c_built_verification_pending",
+  "status": "candidate_c_verified_in_simulation_user_authorized_restart_pending",
   "user_report": "The currently used merchant is absent from the launcher and the AI readiness panel reports the reception model configuration is unavailable or changed.",
   "screenshot_observations": {
     "seller_tail": "8987",
@@ -74,14 +74,33 @@
     "scope": "Normal and simulated redirected child environment; not a real Accio-hosted merchant session."
   },
   "remaining_acceptance": [
-    "Build and package candidate C, then verify native import flow using isolated fixtures.",
-    "User must relaunch the merchant from its authorized Accio session with the corrected build before real AI readiness can be checked.",
-    "Actual selected model, key validity and capability status have not been read or tested."
+    "User must reopen the merchant in a real authorized Accio session using candidate C.",
+    "Actual API configuration, capability check and AI readiness must be confirmed in that corrected process.",
+    "Independent external Chrome WhatsApp remains separate planned work."
   ],
   "candidate": "relase/release-0.4.0-candidate-c",
   "synthetic_dpapi_probe": {
     "status": "passed",
     "report": "artifacts/verification/dpapi-isolation-040/report.json",
     "real_model_keys_read": false
-  }
+  },
+  "build_commit": "a3fdc69",
+  "candidate_windows": {
+    "status": "passed",
+    "production_exe_report": "artifacts/verification/launcher-entry-040-candidate-c-redirected-home-001/report.json",
+    "fixture_report": "artifacts/verification/launcher-040-candidate-c-import-001/result.json",
+    "screenshots_viewed": 10,
+    "tail_8987_visible_before_and_after_restart": true,
+    "total_visible_merchants": 2,
+    "old_registration_and_storage_hashes_unchanged": true,
+    "existing_model_file_metadata_unchanged": true,
+    "real_accio_session_tested": false,
+    "real_model_api_tested": false
+  },
+  "real_user_next_steps": [
+    "Save editing and close the previous merchant and launcher windows.",
+    "Use candidate C launcher and its native picker to register the explicit Accio A merchant registry directory.",
+    "Review the global reception API and run its capability check through the user-confirmed UI.",
+    "Use the new C authorization command inside the target Accio merchant session; check AI readiness before explicitly enabling reception."
+  ]
 }

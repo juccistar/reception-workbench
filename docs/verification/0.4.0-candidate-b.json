@@ -1,6 +1,6 @@
 {
   "version": "0.4.0",
-  "status": "local_checks_passed_current_merchant_discovery_unresolved",
+  "status": "superseded_by_candidate_c_shared_directory_fix",
   "source_base_commit": "81c9dc1",
   "output": "relase/release-0.4.0-candidate-b",
   "delivery": {
@@ -151,5 +151,6 @@
     "Prior A workbench interaction evidence references identical business frontend assets; B was not run with an authenticated merchant business service.",
     "Windows Authenticode is NotSigned; the fixed Ed25519 update signature passed.",
     "User reports the active merchant is still absent; default-directory legacy discovery alone does not satisfy the current merchant discovery requirement."
-  ]
+  ],
+  "replacement_candidate_record": "docs/verification/0.4.0-candidate.json"
 }

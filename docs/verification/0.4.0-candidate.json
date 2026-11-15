@@ -1,6 +1,6 @@
 {
   "version": "0.4.0",
-  "status": "built_verification_pending",
+  "status": "verified_locally_real_merchant_ai_readiness_pending",
   "source_base_commit": "c1222a1",
   "output": "relase/release-0.4.0-candidate-c",
   "delivery": {
@@ -19,5 +19,133 @@
   "prior_candidate_record": "docs/verification/0.4.0-candidate-b.json",
   "immediate_local_commit": true,
   "installed": false,
-  "default_entry_promoted": false
+  "default_entry_promoted": false,
+  "build_commit": "a3fdc69",
+  "verification": {
+    "integrity": {
+      "report": "artifacts/verification/package-040-candidate-c/integrity.json",
+      "result": {
+        "passed": true,
+        "version": "0.4.0",
+        "files": 173,
+        "asar_entries": 16,
+        "archive_sha256": "f954cf1a380f64b62acd283ca96206941b283f40159c99b986244f893bce800e",
+        "customer_databases": 0,
+        "development_dependencies": 0,
+        "signed": false
+      }
+    },
+    "update": {
+      "report": "artifacts/verification/package-040-candidate-c/update.json",
+      "result": {
+        "status": "passed",
+        "version": "0.4.0",
+        "installer_bytes": 144930812,
+        "installer_sha256": "4fb3d8ac123a64028ec678161a13ea89e7597ab8bc08c71e0530d1b12aedba5b",
+        "installer_sha512": "WyYLAuOs+yWli1GyFSMAR6F1rp4dD1SfFC6dqsTnuBxQtU6lMZdsG3IfBn76vZRXr3/TWi80Zv7hvyV6ceolsg==",
+        "release_signature": "ed25519",
+        "windows_signed": false,
+        "feed_files": 3,
+        "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+        "python_inputs": 103,
+        "source_manifest": "artifacts/build/package-input-1794749985551/source-manifest.json",
+        "compiled_host_matches_stage": true,
+        "installed_marker_baked_in": false,
+        "merchant_launch_inputs": 7,
+        "merchant_launch_inputs_match_source": true,
+        "update_source_preconfigured": true,
+        "update_source_type": "github",
+        "update_source_url": "https://github.com/juccistar/reception-workbench-releases/",
+        "actual_installer_executed": false
+      }
+    },
+    "zip": {
+      "report": "artifacts/verification/package-040-candidate-c/zip.json",
+      "result": {
+        "passed": true,
+        "version": "0.4.0",
+        "entries": 174,
+        "manifest_files": 173,
+        "all_crcs_verified": true,
+        "all_file_hashes_verified": true,
+        "archive_bytes": 188768444,
+        "archive_sha256": "f954cf1a380f64b62acd283ca96206941b283f40159c99b986244f893bce800e"
+      }
+    },
+    "source": {
+      "report": "artifacts/verification/package-040-candidate-c/source.json",
+      "result": {
+        "status": "passed",
+        "version": "0.4.0",
+        "delivery": "relase/release-0.4.0-candidate-c/delivery.json",
+        "staging": "artifacts/build/package-input-1794749985551",
+        "python_inputs": 103,
+        "frozen_backend_files": 83,
+        "compiled_app_files": 11,
+        "external_launch_modules": 7,
+        "asar_sha256": "75771e5acbb8cf9a6a0fc38aed1ed07f6d82370df980fed1539ec2e903403e48",
+        "source_manifest_sha256": "49d4cb88c4be41b6d9493a78a9bec7f3cab28dff962c7ede7514e55bad4a0195",
+        "production_workspace_accessed": false
+      }
+    },
+    "frozen_models": {
+      "report": "artifacts/verification/packaged-models-040-candidate-c-001/report.json",
+      "status": "passed",
+      "provider": "synthetic_loopback_http",
+      "real_model_calls": 0,
+      "merchant_database_opened": false,
+      "checks": [
+        {
+          "protocol": "chat-completions",
+          "purpose": "reception",
+          "requests": 7,
+          "image_attachments": 7,
+          "status": "passed"
+        },
+        {
+          "protocol": "chat-completions",
+          "purpose": "translation",
+          "requests": 2,
+          "image_attachments": 0,
+          "status": "passed"
+        },
+        {
+          "protocol": "anthropic",
+          "purpose": "reception",
+          "requests": 7,
+          "image_attachments": 7,
+          "status": "passed"
+        },
+        {
+          "protocol": "anthropic",
+          "purpose": "translation",
+          "requests": 2,
+          "image_attachments": 0,
+          "status": "passed"
+        }
+      ],
+      "total_requests": 18,
+      "total_image_attachments": 14
+    },
+    "windows": {
+      "status": "passed",
+      "record": "docs/verification/0.4.0-windows.json",
+      "screenshots_viewed": 10,
+      "target_tail": "8987",
+      "simulated_redirected_environment": true,
+      "real_merchant_ai_readiness": false
+    }
+  },
+  "public_release": {
+    "status": "paused_scope_and_real_user_acceptance_pending",
+    "draft_created": false,
+    "published": false,
+    "installed": false
+  },
+  "limitations": [
+    "This is not a real Accio-authorized merchant service connection or AI readiness test.",
+    "Existing model settings were compared using filesystem metadata only; contents and keys were not read.",
+    "Native folder selection and model capability checking in the isolated UI fixture are synthetic.",
+    "Candidate C public QR was not rerun; B runtime archive and business frontend are byte-identical reference evidence."
+  ]
 }

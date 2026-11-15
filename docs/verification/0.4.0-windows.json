@@ -141,47 +141,11 @@
     "scope": "production launcher entry plus isolated launcher/workbench fixtures"
   },
   "candidate": {
-    "candidate": "b",
+    "candidate": "c",
     "status": "passed",
     "reports": {
-      "launcher_fixture": {
-        "report": "artifacts/verification/launcher-040-candidate-b-legacy-001/result.json",
-        "result": {
-          "status": "passed",
-          "actual_exe_entry": false,
-          "candidate_assets": true,
-          "production_launcher_host": false,
-          "production_launcher_preload": true,
-          "production_renderer": true,
-          "synthetic_registry": true,
-          "synthetic_model_checker": true,
-          "synthetic_encryption": true,
-          "model_network_calls": 0,
-          "screenshots": [
-            "01-empty.png",
-            "02-merchants.png",
-            "05-legacy-refresh.png",
-            "03-models.png",
-            "04-checked.png"
-          ],
-          "checks": {
-            "empty": true,
-            "merchants": true,
-            "legacy_refresh_and_authorization": true,
-            "multiple_profiles_and_routes": true,
-            "cancel": true,
-            "synthetic_check": true,
-            "stale_check_rejected": true
-          }
-        }
-      },
-      "production_entry_initial_preflight": {
-        "report": "artifacts/verification/launcher-entry-040-candidate-b-legacy-001/report.json",
-        "status": "blocked_before_launch",
-        "reason": "Global model state exists; no content was read and EXE was not launched."
-      },
       "production_entry": {
-        "report": "artifacts/verification/launcher-entry-040-candidate-b-home-003/report.json",
+        "report": "artifacts/verification/launcher-entry-040-candidate-c-redirected-home-001/report.json",
         "result": {
           "status": "passed",
           "production_main": true,
@@ -193,11 +157,13 @@
             "02-details.png"
           ],
           "checks": {
-            "first_merchant_count": 1,
+            "first_expected_seller_visible": true,
+            "first_merchant_count": 2,
             "first_merchant_status": "reauthorize",
             "first_verified_at": 0,
             "first_normal_exit": true,
-            "restart_merchant_count": 1,
+            "restart_expected_seller_visible": true,
+            "restart_merchant_count": 2,
             "restart_merchant_status": "reauthorize",
             "restart_verified_at": 0,
             "restart_normal_exit": true,
@@ -212,10 +178,10 @@
             "isolated_electron_user_data": true
           },
           "timings_ms": {
-            "first": 5815,
-            "first_ready": 7488,
-            "restart": 5757,
-            "restart_ready": 7522
+            "first": 8174,
+            "first_ready": 8224,
+            "restart": 5221,
+            "restart_ready": 5257
           },
           "files": {
             "before": {
@@ -243,7 +209,9 @@
             },
             "legacy_before": [
               "810bdcd4902d4d6cb6e9788536f16000e795b6dd90a0f3b79d26b226ce250f79",
-              "1dabef52b31cc64db65c0fb5d59d572392fa54c22a2b19665ef71038252245c3"
+              "1dabef52b31cc64db65c0fb5d59d572392fa54c22a2b19665ef71038252245c3",
+              "aa26d8b34034ad092ca9e1b1f2bf86cf48d16366ac6aae95af32c44161378e88",
+              "5f1b7db54446beaf2e3759b5f97622ba7b6a409c065fc9b2a3ed5979d52405a0"
             ],
             "after": {
               "settings": {
@@ -270,46 +238,78 @@
             },
             "legacy_after": [
               "810bdcd4902d4d6cb6e9788536f16000e795b6dd90a0f3b79d26b226ce250f79",
-              "1dabef52b31cc64db65c0fb5d59d572392fa54c22a2b19665ef71038252245c3"
+              "1dabef52b31cc64db65c0fb5d59d572392fa54c22a2b19665ef71038252245c3",
+              "aa26d8b34034ad092ca9e1b1f2bf86cf48d16366ac6aae95af32c44161378e88",
+              "5f1b7db54446beaf2e3759b5f97622ba7b6a409c065fc9b2a3ed5979d52405a0"
             ]
           },
           "limitations": [
             "Timings are launch-to-window observations, not OS cold-start or performance measurements.",
             "No real authorization, customer session, or model quality is tested.",
             "Child process and module checks are snapshots; no model-check or business-opening action is invoked.",
-            "Model page was not opened; existing model files were checked by lstat metadata only, without reading or hashing contents."
+            "Model page was not opened; existing model files were checked by lstat metadata only, without reading or hashing contents.",
+            "Redirected environment simulates Accio; no real Accio host connection or model readiness is tested."
           ]
         }
       },
-      "production_entry_screenshot_retry": {
-        "report": "artifacts/verification/launcher-entry-040-candidate-b-home-002/report.json",
-        "status": "failed_screenshot_timeout",
-        "fix": "Bring the verification window to front; candidate B unchanged."
+      "launcher_fixture": {
+        "report": "artifacts/verification/launcher-040-candidate-c-import-001/result.json",
+        "result": {
+          "status": "passed",
+          "actual_exe_entry": false,
+          "candidate_assets": true,
+          "production_launcher_host": false,
+          "production_launcher_preload": true,
+          "production_renderer": true,
+          "synthetic_registry": true,
+          "synthetic_model_checker": true,
+          "synthetic_encryption": true,
+          "model_network_calls": 0,
+          "synthetic_native_folder_picker": true,
+          "screenshots": [
+            "01-empty.png",
+            "02-merchants.png",
+            "05-legacy-refresh.png",
+            "06-isolated-merchant-import.png",
+            "07-narrow-import-footer.png",
+            "03-models.png",
+            "04-checked.png",
+            "08-import-after-restart.png"
+          ],
+          "checks": {
+            "empty": true,
+            "merchants": true,
+            "legacy_refresh_and_authorization": true,
+            "imported_isolated_registry": true,
+            "narrow_footer": true,
+            "multiple_profiles_and_routes": true,
+            "cancel": true,
+            "synthetic_check": true,
+            "stale_check_rejected": true,
+            "import_survives_restart": true,
+            "normal_shutdown": true
+          }
+        }
       }
     },
     "screenshots_viewed": [
-      "artifacts/verification/launcher-040-candidate-b-legacy-001/01-empty.png",
-      "artifacts/verification/launcher-040-candidate-b-legacy-001/02-merchants.png",
-      "artifacts/verification/launcher-040-candidate-b-legacy-001/05-legacy-refresh.png",
-      "artifacts/verification/launcher-040-candidate-b-legacy-001/03-models.png",
-      "artifacts/verification/launcher-040-candidate-b-legacy-001/04-checked.png",
-      "artifacts/verification/launcher-entry-040-candidate-b-home-003/01-home.png",
-      "artifacts/verification/launcher-entry-040-candidate-b-home-003/02-details.png"
+      "artifacts/verification/launcher-entry-040-candidate-c-redirected-home-001/01-home.png",
+      "artifacts/verification/launcher-entry-040-candidate-c-redirected-home-001/02-details.png",
+      "artifacts/verification/launcher-040-candidate-c-import-001/01-empty.png",
+      "artifacts/verification/launcher-040-candidate-c-import-001/02-merchants.png",
+      "artifacts/verification/launcher-040-candidate-c-import-001/05-legacy-refresh.png",
+      "artifacts/verification/launcher-040-candidate-c-import-001/06-isolated-merchant-import.png",
+      "artifacts/verification/launcher-040-candidate-c-import-001/07-narrow-import-footer.png",
+      "artifacts/verification/launcher-040-candidate-c-import-001/03-models.png",
+      "artifacts/verification/launcher-040-candidate-c-import-001/04-checked.png",
+      "artifacts/verification/launcher-040-candidate-c-import-001/08-import-after-restart.png"
     ],
-    "scope": "Candidate B production EXE read-only home and details using existing legacy metadata, plus candidate renderer/preload in isolated synthetic launcher/model fixture.",
-    "unchanged_workbench_assets": {
-      "comparison": "candidate B integrity verification agent",
-      "renderer_index_html": true,
-      "preload_index_js": true,
-      "workbench_js_css_files": 3,
-      "all_compared_bytes_equal": true,
-      "prior_record": "artifacts/verification/workbench-040-candidate-a-001/report.json",
-      "scope_limit": "Prior A workbench interaction evidence is a reference for identical frontend assets, not a B full-host end-to-end run."
-    },
+    "scope": "Actual C EXE under simulated Accio A environment variables and isolated C renderer/preload import/model fixture.",
     "limitations": [
-      "The real merchant authorization and business connection were not performed.",
-      "Existing global model settings were observed by lstat metadata only; the model page was not opened and file contents were not read.",
-      "Prior A workbench interaction evidence references identical business frontend assets; B was not run with an authenticated merchant business service."
+      "This is not a real Accio-authorized merchant service connection or AI readiness test.",
+      "Existing model settings were compared using filesystem metadata only; contents and keys were not read.",
+      "Native folder selection and model capability checking in the isolated UI fixture are synthetic.",
+      "Candidate C public QR was not rerun; B runtime archive and business frontend are byte-identical reference evidence."
     ]
   },
   "public_whatsapp": {
@@ -858,6 +858,186 @@
         "Only production_entry is the actual candidate EXE production main.",
         "The launcher fixture does not separately record normal shutdown; production entry and workbench fixture do."
       ]
+    },
+    {
+      "candidate": "b",
+      "status": "passed",
+      "reports": {
+        "launcher_fixture": {
+          "report": "artifacts/verification/launcher-040-candidate-b-legacy-001/result.json",
+          "result": {
+            "status": "passed",
+            "actual_exe_entry": false,
+            "candidate_assets": true,
+            "production_launcher_host": false,
+            "production_launcher_preload": true,
+            "production_renderer": true,
+            "synthetic_registry": true,
+            "synthetic_model_checker": true,
+            "synthetic_encryption": true,
+            "model_network_calls": 0,
+            "screenshots": [
+              "01-empty.png",
+              "02-merchants.png",
+              "05-legacy-refresh.png",
+              "03-models.png",
+              "04-checked.png"
+            ],
+            "checks": {
+              "empty": true,
+              "merchants": true,
+              "legacy_refresh_and_authorization": true,
+              "multiple_profiles_and_routes": true,
+              "cancel": true,
+              "synthetic_check": true,
+              "stale_check_rejected": true
+            }
+          }
+        },
+        "production_entry_initial_preflight": {
+          "report": "artifacts/verification/launcher-entry-040-candidate-b-legacy-001/report.json",
+          "status": "blocked_before_launch",
+          "reason": "Global model state exists; no content was read and EXE was not launched."
+        },
+        "production_entry": {
+          "report": "artifacts/verification/launcher-entry-040-candidate-b-home-003/report.json",
+          "result": {
+            "status": "passed",
+            "production_main": true,
+            "actual_exe_entry": true,
+            "no_model_calls": true,
+            "no_business_open": true,
+            "screenshots": [
+              "01-home.png",
+              "02-details.png"
+            ],
+            "checks": {
+              "first_merchant_count": 1,
+              "first_merchant_status": "reauthorize",
+              "first_verified_at": 0,
+              "first_normal_exit": true,
+              "restart_merchant_count": 1,
+              "restart_merchant_status": "reauthorize",
+              "restart_verified_at": 0,
+              "restart_normal_exit": true,
+              "empty_launcher": false,
+              "legacy_launcher": true,
+              "empty_models": false,
+              "model_page_not_opened": true,
+              "no_reception_bridge": true,
+              "no_active_business_child": true,
+              "no_whatsapp_sdk_in_module_cache": true,
+              "normal_exit_and_restart": true,
+              "isolated_electron_user_data": true
+            },
+            "timings_ms": {
+              "first": 5815,
+              "first_ready": 7488,
+              "restart": 5757,
+              "restart_ready": 7522
+            },
+            "files": {
+              "before": {
+                "settings": {
+                  "exists": true,
+                  "dev": 2698071375,
+                  "ino": 19140298416711050,
+                  "size": 1351,
+                  "nlink": 1,
+                  "mtimeMs": 1794747188225.235,
+                  "ctimeMs": 1794747188230.2214
+                },
+                "initialized": {
+                  "exists": true,
+                  "dev": 2698071375,
+                  "ino": 12666373952290268,
+                  "size": 17,
+                  "nlink": 1,
+                  "mtimeMs": 1794746096027.3965,
+                  "ctimeMs": 1794746096027.3965
+                },
+                "registry": {
+                  "exists": false
+                }
+              },
+              "legacy_before": [
+                "810bdcd4902d4d6cb6e9788536f16000e795b6dd90a0f3b79d26b226ce250f79",
+                "1dabef52b31cc64db65c0fb5d59d572392fa54c22a2b19665ef71038252245c3"
+              ],
+              "after": {
+                "settings": {
+                  "exists": true,
+                  "dev": 2698071375,
+                  "ino": 19140298416711050,
+                  "size": 1351,
+                  "nlink": 1,
+                  "mtimeMs": 1794747188225.235,
+                  "ctimeMs": 1794747188230.2214
+                },
+                "initialized": {
+                  "exists": true,
+                  "dev": 2698071375,
+                  "ino": 12666373952290268,
+                  "size": 17,
+                  "nlink": 1,
+                  "mtimeMs": 1794746096027.3965,
+                  "ctimeMs": 1794746096027.3965
+                },
+                "registry": {
+                  "exists": false
+                }
+              },
+              "legacy_after": [
+                "810bdcd4902d4d6cb6e9788536f16000e795b6dd90a0f3b79d26b226ce250f79",
+                "1dabef52b31cc64db65c0fb5d59d572392fa54c22a2b19665ef71038252245c3"
+              ]
+            },
+            "limitations": [
+              "Timings are launch-to-window observations, not OS cold-start or performance measurements.",
+              "No real authorization, customer session, or model quality is tested.",
+              "Child process and module checks are snapshots; no model-check or business-opening action is invoked.",
+              "Model page was not opened; existing model files were checked by lstat metadata only, without reading or hashing contents."
+            ]
+          }
+        },
+        "production_entry_screenshot_retry": {
+          "report": "artifacts/verification/launcher-entry-040-candidate-b-home-002/report.json",
+          "status": "failed_screenshot_timeout",
+          "fix": "Bring the verification window to front; candidate B unchanged."
+        }
+      },
+      "screenshots_viewed": [
+        "artifacts/verification/launcher-040-candidate-b-legacy-001/01-empty.png",
+        "artifacts/verification/launcher-040-candidate-b-legacy-001/02-merchants.png",
+        "artifacts/verification/launcher-040-candidate-b-legacy-001/05-legacy-refresh.png",
+        "artifacts/verification/launcher-040-candidate-b-legacy-001/03-models.png",
+        "artifacts/verification/launcher-040-candidate-b-legacy-001/04-checked.png",
+        "artifacts/verification/launcher-entry-040-candidate-b-home-003/01-home.png",
+        "artifacts/verification/launcher-entry-040-candidate-b-home-003/02-details.png"
+      ],
+      "scope": "Candidate B production EXE read-only home and details using existing legacy metadata, plus candidate renderer/preload in isolated synthetic launcher/model fixture.",
+      "unchanged_workbench_assets": {
+        "comparison": "candidate B integrity verification agent",
+        "renderer_index_html": true,
+        "preload_index_js": true,
+        "workbench_js_css_files": 3,
+        "all_compared_bytes_equal": true,
+        "prior_record": "artifacts/verification/workbench-040-candidate-a-001/report.json",
+        "scope_limit": "Prior A workbench interaction evidence is a reference for identical frontend assets, not a B full-host end-to-end run."
+      },
+      "limitations": [
+        "The real merchant authorization and business connection were not performed.",
+        "Existing global model settings were observed by lstat metadata only; the model page was not opened and file contents were not read.",
+        "Prior A workbench interaction evidence references identical business frontend assets; B was not run with an authenticated merchant business service."
+      ]
     }
-  ]
+  ],
+  "current_candidate_whatsapp_reference": {
+    "candidate": "c",
+    "reference_candidate": "b",
+    "fixed_runtime_archive_bytes_equal": true,
+    "workbench_renderer_and_preload_bytes_equal": true,
+    "candidate_c_live_public_qr_rerun": false,
+    "reference": "public_whatsapp"
+  }
 }

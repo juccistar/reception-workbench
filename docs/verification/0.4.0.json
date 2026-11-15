@@ -1,7 +1,7 @@
 {
   "version": "0.4.0",
   "date": "2026-11-15",
-  "status": "candidate_c_built_verification_pending",
+  "status": "candidate_c_verified_real_merchant_ai_readiness_pending",
   "base_commit": "c6be2c575a4d235ac2f1b42fa1ad035064c16740",
   "branch": "feat/launcher-multimodal-0.4.0",
   "plan": "docs/0.4.0开发方案.md",
@@ -127,7 +127,8 @@
       "output": "artifacts/app",
       "included_in_candidate_build": true,
       "immediate_local_commit": true,
-      "change": "Correct shared directory under redirected Accio environment and add native directory import."
+      "change": "Correct shared directory under redirected Accio environment and add native directory import.",
+      "commit": "a3fdc69"
     },
     "source_window": {
       "status": "passed",
@@ -136,26 +137,31 @@
       "production_entry": true,
       "business_workbench": "isolated_synthetic_fixture",
       "baseline_commit": "97fe7c2a794b2ac714219da533831e5fc45a45d4",
-      "latest_launcher_patch_verified_via": "candidate_b_production_exe"
+      "latest_launcher_patch_verified_via": "candidate_c_production_exe_simulated_redirected_environment"
     },
     "candidate_build": {
       "status": "passed",
       "record": "docs/verification/0.4.0-candidate.json",
       "output": "relase/release-0.4.0-candidate-c",
       "immediate_local_commit": true,
-      "log": "artifacts/verification/build-040-candidate-c/package.log"
+      "log": "artifacts/verification/build-040-candidate-c/package.log",
+      "commit": "a3fdc69"
     },
     "candidate_window": {
-      "status": "pending",
-      "candidate": "c"
+      "candidate": "c",
+      "status": "passed",
+      "record": "docs/verification/0.4.0-windows.json",
+      "screenshots_viewed": 10,
+      "real_accio_session": false,
+      "real_merchant_ai_readiness": false
     },
     "update_signature": {
       "status": "passed",
-      "candidate": "b",
+      "candidate": "c",
       "algorithm": "ed25519",
       "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
       "windows_authenticode": "NotSigned",
-      "report": "artifacts/verification/package-040-candidate-b/update.json"
+      "report": "artifacts/verification/package-040-candidate-c/update.json"
     },
     "anonymous_release_downloads": null,
     "real_provider_quality": "not_verified",
@@ -201,13 +207,12 @@
     ],
     "candidate_integrity": {
       "status": "passed",
-      "candidate": "b",
+      "candidate": "c",
       "record": "docs/verification/0.4.0-candidate.json"
     },
     "frozen_model_protocols": {
-      "report": "artifacts/verification/packaged-models-040-candidate-b-001/report.json",
+      "report": "artifacts/verification/packaged-models-040-candidate-c-001/report.json",
       "status": "passed",
-      "frozen_backend": true,
       "provider": "synthetic_loopback_http",
       "real_model_calls": 0,
       "merchant_database_opened": false,
@@ -259,13 +264,11 @@
       "command": "node node_modules/typescript/bin/tsc --noEmit -p apps/desktop/tsconfig.json"
     },
     "launcher_existing_merchants": {
-      "status": "standard_legacy_record_visible_current_merchant_unresolved",
-      "record": "docs/verification/0.4.0-launcher-discovery.json",
-      "observed_legacy_merchants": 1,
-      "visible_after_restart": 1,
-      "real_data_modified": false,
-      "actual_authorization_not_performed": true,
-      "scope_limit": "The standard-directory merchant is visible after restart, but the user reports their currently used merchant remains missing."
+      "status": "target_isolated_metadata_identified_candidate_c_simulation_passed_real_restart_pending",
+      "record": "docs/verification/0.4.0-redirected-merchant.json",
+      "target_tail": "8987",
+      "previous_standard_record_tail": "2126",
+      "business_data_modified": false
     },
     "candidate_build_history": [
       {
@@ -302,11 +305,10 @@
       }
     ],
     "redirected_merchant_and_models": {
-      "status": "source_fixed_targeted_passed_candidate_pending",
+      "status": "candidate_c_simulated_environment_passed_real_restart_pending",
       "record": "docs/verification/0.4.0-redirected-merchant.json",
-      "actual_isolated_seller_tail": "8987",
-      "shared_directory_defect_reproduced_and_fixed_in_simulation": true,
-      "model_key_or_capability_state_confirmed": false
+      "target_seller_tail": "8987",
+      "actual_key_and_capabilities_checked": false
     }
   },
   "release": {
@@ -317,7 +319,8 @@
     "published": false,
     "installed": false,
     "blockers": [
-      "The currently used merchant is still not visible according to the latest user feedback; publication is paused.",
+      "The real merchant session must be restarted using C and its actual API capability/readiness confirmed; no paid model call or account action was performed.",
+      "The requested independent real Chrome WhatsApp architecture is not implemented.",
       "The publishing process has not observed a GitHub CLI login."
     ],
     "public_readiness": {
