@@ -29,6 +29,18 @@ node --test scripts/tests/release-paths.test.mjs
 
 每次完成新版本构建后，按仓库用户规则立即检查变更范围、敏感文件和`git diff --check`，将源码、测试、文档与可入库验证记录本地提交；不强制加入产物、业务数据或凭据。提交不授权推送、发布、安装或迁移。
 
+0.4.0 的定向整合回归使用 `node scripts/verify-backend-040.mjs --label <新标签>`，只运行本版040文件和列明的受影响旧用例，逐文件保存日志，不是全量测试。先完成 `npm run build` 及构建后本地提交，再依次运行以下窗口检查，全部截图须逐张查看：
+
+```powershell
+node scripts/smoke-launcher-entry-040.mjs --label <新标签>
+node scripts/smoke-launcher-040.mjs --label <新标签>
+node scripts/smoke-workbench-040.mjs --label <新标签>
+```
+
+`smoke-launcher-entry-040`使用正式主进程；发现已有全局模型配置或商家索引时停止，不覆盖真实配置。另两组使用正式renderer/preload与独立合成宿主，工作台通过真实ServiceClient执行隔离Python业务，不能当作真实商家验收。候选入口使用`--executable <候选EXE>`；另两组使用`--assets <候选resources/app.asar>`核对包内界面资源，但仍不是候选正式主进程。
+
+候选冻结后台可用`node scripts/smoke-packaged-models-040.mjs --label <新标签> --executable <候选resources/backend/reception-backend.exe>`检查两种协议的真实请求编码；它只连接临时回环HTTP替身，不调用付费模型、不打开商家库。公共WhatsApp扫码仍用下述native脚本指定候选宿主和SDK，正常及受控故障各观察超过60秒并覆盖刷新，不登录实号。构建、闭包、窗口、签名与匿名完整下载结果分别记录。
+
 以下窗口脚本和验收是对应旧版本的历史记录，依赖当时的Demo入口或夹具，不能据此认定当前生产入口仍提供Demo或0.4.0已经验收。
 
 0.3.21窗口检查使用`node scripts/smoke-auto-replies-0321.mjs --label <未使用标签>`，可加`--executable`指定最终候选EXE。脚本用临时Demo数据和预置合成AI回复，自动发送的原生确认仅在隔离夹具中返回允许，实际经业务IPC完成自动两条、三条独立受理、单条建议采用、整段润色、Ctrl+Enter及新输入保留；同步、核查和停止的中间状态截图明确采用投影夹具，不冒充真实平台发送。当前自动进度与折叠历史分别检查，截图须逐张查看。`smoke-whatsapp-native.mjs`使用当前编译的WhatsAppSessionHost提交新的合成登录代次，验证93字符宿主根与27字符分区，公共扫码稳定超过60秒并刷新；原生产资料不访问，意外认证立即停止且禁用历史读取。窗口脚本串行执行。

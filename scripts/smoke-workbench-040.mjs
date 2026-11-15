@@ -17,7 +17,7 @@ const label = options.get('--label');
 assert(/^[a-z0-9][a-z0-9-]{0,60}$/.test(label || ''), 'Pass a new --label');
 const output = path.join(root, 'artifacts/verification', `workbench-040-${label}`);
 await mkdir(output);
-const report = { status: 'failed', actual_window: false, actual_exe_entry: false, production_main: false, fixture_host: true, production_service_client: true, real_service_rpc: true, synthetic_python_integration: true, production_renderer_and_preload: true, candidate_assets: options.has('--assets'), real_ai_calls: 0, real_customer_sends: 0, screenshots: [], checks: {}, renderer_errors: [] };
+const report = { status: 'failed', actual_window: false, actual_exe_entry: false, production_main: false, fixture_host: true, synthetic_launch_and_update_info: true, production_service_client: true, real_service_rpc: true, synthetic_python_integration: true, production_renderer_and_preload: true, candidate_assets: options.has('--assets'), real_ai_calls: 0, real_customer_sends: 0, screenshots: [], checks: {}, renderer_errors: [] };
 let app, temp;
 try {
   temp = await mkdtemp(path.join(os.tmpdir(), 'arw-workbench-040-'));
@@ -25,7 +25,7 @@ try {
   const python = process.env.RECEPTION_PYTHON || path.join(root, 'services/reception/.venv/Scripts/python.exe');
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (/^(ACCIO|PHOENIX|RECEPTION|HARNESS)_/i.test(key) || /^(ELECTRON_RUN_AS_NODE|PYTHONPATH|PYTHONHOME|GH_TOKEN|GITHUB_TOKEN)$/i.test(key) || /credential|secret|token|password|api.?key/i.test(key)) delete env[key];
-  Object.assign(env, { HARNESS_ROOT: root, HARNESS_TEMP: temp, HARNESS_ASSETS: assets, HARNESS_PYTHON: path.resolve(python), LOCALAPPDATA: path.join(temp, 'local'), APPDATA: path.join(temp, 'roaming'), HOME: path.join(temp, 'home'), USERPROFILE: path.join(temp, 'home') });
+  Object.assign(env, { HARNESS_ROOT: root, HARNESS_TEMP: temp, HARNESS_ASSETS: assets, HARNESS_PYTHON: path.resolve(python), LOCALAPPDATA: path.join(temp, 'local'), APPDATA: path.join(temp, 'roaming') });
   const host = path.join(temp, 'workbench-host.cjs');
   await build({ entryPoints: [path.join(root, 'scripts/fixtures/workbench-host-040.ts')], outfile: host, bundle: true, platform: 'node', format: 'cjs', target: 'node22', external: ['electron'] });
   app = await electron.launch({ executablePath: path.join(root, 'node_modules/electron/dist/electron.exe'), args: [host], cwd: root, env, timeout: 45000 });

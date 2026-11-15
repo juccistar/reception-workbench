@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { isWorkbenchPage } from '../../apps/desktop/src/main/trusted-page';
 import { ModelSettingsStore } from '../../apps/desktop/src/main/model-settings-store';
 import { LauncherRegistry } from '../../apps/desktop/src/main/launcher-registry';
 
@@ -27,8 +27,8 @@ async function start() {
   const file = path.join(assets, 'renderer', 'launcher.html');
   const win = new BrowserWindow({ width: 656, height: 559, show: true, webPreferences: { preload: path.join(assets, 'launcher-preload', 'index.js'), contextIsolation: true, sandbox: true, nodeIntegration: false } });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  win.webContents.on('will-navigate', (event, url) => { if (url !== pathToFileURL(file).href) event.preventDefault(); });
-  const bind = (name: string, fn: (...args: any[]) => any) => ipcMain.handle(name, (event, ...args) => { if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || event.senderFrame.url !== pathToFileURL(file).href) throw new Error('invalid sender'); return fn(...args); });
+  win.webContents.on('will-navigate', (event, url) => { if (!isWorkbenchPage(url, file)) event.preventDefault(); });
+  const bind = (name: string, fn: (...args: any[]) => any) => ipcMain.handle(name, (event, ...args) => { if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || !isWorkbenchPage(event.senderFrame.url, file)) throw new Error('invalid sender'); return fn(...args); });
   bind('launcher:merchants', async () => (await registry.list()).map(m => ({ id: m.record_id, name: m.name, account_tail: m.seller_id.slice(-4), status: 'reauthorize', data_root: m.data_root, verified_at: m.verified_at })));
   bind('launcher:open', () => { throw new Error('合成宿主不打开商家'); });
   bind('launcher:authorization', () => '合成授权说明');

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { ModelCheckHost } from './model-check-host';
 import { MODEL_CAPABILITIES, type ModelCapability, type ModelCapabilityState } from '../shared/model-settings';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isWorkbenchPage } from './trusted-page';
 import { createLauncherRegistry } from './launcher-registry';
 import { createWindowsLauncherActivation } from './launcher-activation';
 import { createModelSettingsStore } from './model-settings-store';
@@ -16,7 +16,7 @@ export async function runLauncher(): Promise<void> {
   await app.whenReady();
   const file = path.join(__dirname, '../renderer/launcher.html');
   const window = new BrowserWindow({ width: 656, height: 559, minWidth: 440, minHeight: 400, title: '接待工作台', backgroundColor: '#ffffff', show: false, autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, '../launcher-preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
-  const valid = (event: IpcMainInvokeEvent) => { if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame.url !== pathToFileURL(file).href) throw new Error('无效的操作来源。'); };
+  const valid = (event: IpcMainInvokeEvent) => { if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !isWorkbenchPage(event.senderFrame.url, file)) throw new Error('无效的操作来源。'); };
   const info = () => buildAccioLaunchInfo({ version: programVersion, distribution: app.isPackaged ? 'installed' : 'development', executable: process.execPath, developmentEntry: app.isPackaged ? undefined : path.resolve(process.argv[1]) });
   let registryPromise: ReturnType<typeof createLauncherRegistry> | undefined;
   let storePromise: ReturnType<typeof createModelSettingsStore> | undefined;
@@ -81,7 +81,7 @@ export async function runLauncher(): Promise<void> {
     } finally { if (checks.get(key) === task) checks.delete(key); }
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  window.webContents.on('will-navigate', (event, url) => { if (url !== pathToFileURL(file).href) event.preventDefault(); });
+  window.webContents.on('will-navigate', (event, url) => { if (!isWorkbenchPage(url, file)) event.preventDefault(); });
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   Menu.setApplicationMenu(null);
   window.once('ready-to-show', () => window.show());

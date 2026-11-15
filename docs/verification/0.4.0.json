@@ -1,7 +1,7 @@
 {
   "version": "0.4.0",
   "date": "2026-11-15",
-  "status": "source_built_window_verification_pending",
+  "status": "source_rebuilt_final_windows_pending",
   "base_commit": "c6be2c575a4d235ac2f1b42fa1ad035064c16740",
   "branch": "feat/launcher-multimodal-0.4.0",
   "plan": "docs/0.4.0开发方案.md",
@@ -41,8 +41,8 @@
     },
     "targeted_desktop_host": {
       "status": "passed",
-      "files": 16,
-      "tests": 89,
+      "files": 18,
+      "tests": 92,
       "targets": [
         "chat-host",
         "media-host",
@@ -59,7 +59,9 @@
         "model-summary",
         "translation-activation-host",
         "storage-host",
-        "data-storage"
+        "data-storage",
+        "launcher-host-trust",
+        "trusted-page"
       ]
     },
     "targeted_tools": {
@@ -84,16 +86,35 @@
       "status": "passed",
       "command": "node scripts/build.mjs",
       "output": "artifacts/app",
+      "change": "launcher IPC accepts the same Windows file after drive-letter normalization",
       "immediate_local_commit": true
     },
-    "source_window": null,
+    "source_window": {
+      "status": "failed_pending_rebuild",
+      "reason": "Windows drive-letter normalization rejected valid launcher IPC; isolated fixture drivers also require repair.",
+      "initial_reports": [
+        "artifacts/verification/launcher-entry-040-source-final-001/report.json",
+        "artifacts/verification/launcher-entry-040-source-final-002/report.json",
+        "artifacts/verification/launcher-040-source-final-001/result.json",
+        "artifacts/verification/workbench-040-source-window-agent-001/report.json"
+      ]
+    },
     "candidate_build": null,
     "candidate_window": null,
     "update_signature": null,
     "anonymous_release_downloads": null,
     "real_provider_quality": "not_verified",
     "real_account_send_receive": "not_verified",
-    "accio_authorization_reuse_after_complete_exit_or_reboot": "not_verified"
+    "accio_authorization_reuse_after_complete_exit_or_reboot": "not_verified",
+    "source_build_history": [
+      {
+        "status": "passed",
+        "command": "node scripts/build.mjs",
+        "output": "artifacts/app",
+        "immediate_local_commit": true,
+        "commit": "dbc5e2818336237e46470b10ac39b93a43e2b3f2"
+      }
+    ]
   },
   "release": {
     "repository": "juccistar/reception-workbench-releases",

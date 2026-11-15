@@ -74,7 +74,7 @@ try {
   await mkdir(userData);
   const launch = () => electron.launch({ executablePath: executable, args: [...(candidate ? [] : [root]), `--user-data-dir=${userData}`], cwd: root, env, timeout: 45000 });
   const inspect = async () => {
-    const value = await app.evaluate(({ app }) => ({ version: app.getVersion(), userData: app.getPath('userData'), packaged: app.isPackaged, exe: process.execPath, modules: Object.keys(require.cache).filter(x => /(?:whatsapp-web\.js|puppeteer|whatsapp-runtime\.asar)/i.test(x)), children: process._getActiveHandles().filter(x => x && x.constructor && x.constructor.name === 'ChildProcess').length }));
+    const value = await app.evaluate(({ app }) => ({ version: app.getVersion(), userData: app.getPath('userData'), packaged: app.isPackaged, exe: process.execPath, modules: Object.keys(process.getBuiltinModule('module')._cache).filter(x => /(?:whatsapp-web\.js|puppeteer|whatsapp-runtime\.asar)/i.test(x)), children: process._getActiveHandles().filter(x => x && x.constructor && x.constructor.name === 'ChildProcess').length }));
     assert.equal(value.version, '0.4.0'); assert.equal(value.packaged, candidate);
     assert.equal(path.resolve(value.exe).toLowerCase(), path.resolve(executable).toLowerCase());
     assert.equal(path.resolve(value.userData).toLowerCase(), path.resolve(userData).toLowerCase(), 'Electron cache was not isolated');
