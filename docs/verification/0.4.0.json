@@ -1,7 +1,7 @@
 {
   "version": "0.4.0",
   "date": "2026-11-15",
-  "status": "candidate_built_verification_pending",
+  "status": "candidate_verified_public_release_blocked_authentication",
   "base_commit": "c6be2c575a4d235ac2f1b42fa1ad035064c16740",
   "branch": "feat/launcher-multimodal-0.4.0",
   "plan": "docs/0.4.0开发方案.md",
@@ -21,14 +21,14 @@
   },
   "implementation": {
     "identity_and_grant_invalidation": "implemented_targeted_tests_passed",
-    "launcher_and_production_demo_removal": "implemented_window_and_frozen_closure_pending",
+    "launcher_and_production_demo_removal": "implemented_window_and_frozen_closure_passed",
     "global_model_configuration": "implemented_targeted_tests_passed",
     "multimodal_provider_and_task_routing": "implemented_targeted_tests_passed",
     "whatsapp_media_ingestion": "implemented_targeted_tests_passed",
     "startup_output_and_lazy_loading": "implemented_targeted_tests_passed",
     "query_projection_and_event_refresh": "implemented_targeted_tests_and_query_measurement_passed",
     "media_transfer_and_memory_ownership": "implemented_targeted_tests_passed",
-    "legacy_runtime_cleanup": "implemented_frozen_closure_pending"
+    "legacy_runtime_cleanup": "implemented_frozen_closure_passed"
   },
   "verification": {
     "targeted_backend": {
@@ -41,8 +41,8 @@
     },
     "targeted_desktop_host": {
       "status": "passed",
-      "files": 18,
-      "tests": 92,
+      "files": 20,
+      "tests": 121,
       "targets": [
         "chat-host",
         "media-host",
@@ -61,8 +61,28 @@
         "storage-host",
         "data-storage",
         "launcher-host-trust",
-        "trusted-page"
-      ]
+        "trusted-page",
+        "whatsapp-connection",
+        "whatsapp-native-hook"
+      ],
+      "final_fixture_regression": {
+        "status": "passed",
+        "files": 3,
+        "tests": 34,
+        "targets": [
+          "whatsapp-connection.test.ts",
+          "whatsapp-native-hook.test.ts",
+          "whatsapp-host-lifecycle.test.ts"
+        ],
+        "additional_unique_tests": 29,
+        "repeated_tests_not_added_to_total": 5,
+        "log": "artifacts/verification/wa-connection-fixture-20261115/targeted-3.log",
+        "earlier_failure_logs": [
+          "artifacts/verification/wa-connection-fixture-20261115/targeted-1.log",
+          "artifacts/verification/wa-connection-fixture-20261115/diagnostic-2.log"
+        ],
+        "reason": "Legacy wrappers discarded the SDK parameter and their module mocks did not intercept delayed CommonJS loading. Production code was unchanged."
+      }
     },
     "targeted_tools": {
       "status": "passed",
@@ -101,10 +121,22 @@
       "status": "passed",
       "record": "docs/verification/0.4.0-candidate.json",
       "output": "relase/release-0.4.0-candidate-a",
-      "immediate_local_commit": true
+      "immediate_local_commit": true,
+      "commit": "228983295ef885cc6895aa0b5c52a29be82a944a"
     },
-    "candidate_window": null,
-    "update_signature": null,
+    "candidate_window": {
+      "status": "passed",
+      "record": "docs/verification/0.4.0-windows.json",
+      "ui_screenshots_viewed": 11,
+      "public_page_screenshots_viewed": 2
+    },
+    "update_signature": {
+      "status": "passed",
+      "algorithm": "ed25519",
+      "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+      "windows_authenticode": "NotSigned",
+      "report": "artifacts/verification/package-040-candidate-a/update.json"
+    },
     "anonymous_release_downloads": null,
     "real_provider_quality": "not_verified",
     "real_account_send_receive": "not_verified",
@@ -129,14 +161,85 @@
           "artifacts/verification/workbench-040-source-window-agent-001/report.json"
         ]
       }
-    ]
+    ],
+    "candidate_integrity": {
+      "status": "passed",
+      "record": "docs/verification/0.4.0-candidate.json"
+    },
+    "frozen_model_protocols": {
+      "report": "artifacts/verification/packaged-models-040-candidate-a-001/report.json",
+      "status": "passed",
+      "frozen_backend": true,
+      "provider": "synthetic_loopback_http",
+      "real_model_calls": 0,
+      "merchant_database_opened": false,
+      "checks": [
+        {
+          "protocol": "chat-completions",
+          "purpose": "reception",
+          "requests": 7,
+          "image_attachments": 7,
+          "status": "passed"
+        },
+        {
+          "protocol": "chat-completions",
+          "purpose": "translation",
+          "requests": 2,
+          "image_attachments": 0,
+          "status": "passed"
+        },
+        {
+          "protocol": "anthropic",
+          "purpose": "reception",
+          "requests": 7,
+          "image_attachments": 7,
+          "status": "passed"
+        },
+        {
+          "protocol": "anthropic",
+          "purpose": "translation",
+          "requests": 2,
+          "image_attachments": 0,
+          "status": "passed"
+        }
+      ],
+      "total_requests": 18,
+      "total_image_attachments": 14
+    },
+    "public_whatsapp": {
+      "status": "passed",
+      "record": "docs/verification/0.4.0-windows.json",
+      "normal_observation_ms": 60587,
+      "controlled_fault_observation_ms": 60548,
+      "both_qr_refresh_observed": true,
+      "screenshots_viewed": 2,
+      "candidate_host_unchanged": true,
+      "initial_fixture_failures_retained": true
+    },
+    "typecheck_after_final_fixture_fix": {
+      "status": "passed",
+      "command": "node node_modules/typescript/bin/tsc --noEmit -p apps/desktop/tsconfig.json"
+    }
   },
   "release": {
     "repository": "juccistar/reception-workbench-releases",
     "github_cli_available": true,
-    "github_cli_authentication_current_session": "not_logged_in_at_source_build",
+    "github_cli_authentication_current_session": "not_logged_in_after_final_local_checks",
     "draft_created": false,
     "published": false,
-    "installed": false
+    "installed": false,
+    "blockers": [
+      "GitHub CLI is not authenticated; no draft, upload, publication or anonymous 0.4.0 asset download was performed."
+    ],
+    "public_readiness": {
+      "report": "artifacts/verification/public-readiness-040-candidate-a.json",
+      "latest_tag": "v0.3.21",
+      "authentication_sent": false,
+      "full_asset_download": false
+    },
+    "assets_uploaded": false,
+    "default_entry_promoted": false,
+    "real_data_migrated": false,
+    "private_source_pushed": false
   }
 }

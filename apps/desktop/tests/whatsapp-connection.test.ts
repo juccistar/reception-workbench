@@ -2,14 +2,27 @@
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import Module from 'node:module';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WhatsAppHost } from '../src/main/whatsapp/host';
 import { connectionFailure, retryAfterDelay, whatsappUserAgent, WhatsAppConnectionError } from '../src/main/whatsapp/connection';
 
 const runtime = vi.hoisted(() => ({ contents: null as any, connect: vi.fn() }));
 vi.mock('electron', () => ({ app: { getName: () => '询盘接待助手', getVersion: () => '0.3.19' }, WebContentsView: class { webContents = runtime.contents; setBounds = vi.fn(); } }));
-vi.mock('puppeteer', () => ({ default: { connect: runtime.connect } }));
+// The host loads both SDKs with CommonJS require, outside Vitest's module mocks.
+// Intercept only those requests so no real SDK, browser, or login can be started.
+class SyntheticClient extends EventEmitter {
+  authStrategy = { beforeBrowserInitialized: vi.fn(async () => {}), afterBrowserInitialized: vi.fn(async () => {}) };
+}
+beforeEach(() => {
+  const load = (Module as any)._load;
+  vi.spyOn(Module as any, '_load').mockImplementation(function (this: unknown, request: string, ...args: any[]) {
+    if (request === 'whatsapp-web.js') return { Client: SyntheticClient };
+    if (request === 'puppeteer') return { default: { connect: runtime.connect } };
+    return load.call(this, request, ...args);
+  });
+});
 const directories: string[] = [];
 const hosts: any[] = [];
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
@@ -30,12 +43,12 @@ function setup(status: number | null = 200, inject?: (client: any, page: any) =>
   const host: any = new WhatsAppHost({ partition: 'persist:synthetic-0318', directory, diagnosticsDirectory: join(directory, 'diagnostics'), window: { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() } } as never, onEvent: event => events.push(event) }); hosts.push(host);
   const clients: any[] = [];
   const initialize = host.initialize.bind(host);
-  vi.spyOn(host, 'initialize').mockImplementation(async (client: any, generation: number) => {
+  vi.spyOn(host, 'initialize').mockImplementation(async (client: any, generation: number, puppeteer: any) => {
     client.inject = vi.fn(async () => { await inject?.(client, page); });
     client.initWebVersionCache = vi.fn(async () => {});
     client.getChats = vi.fn(async () => []);
     clients.push(client);
-    await initialize(client, generation);
+    await initialize(client, generation, puppeteer);
   });
   return { host, events, clients, contents, page, browser, debuggerApi, exposed, directory };
 }

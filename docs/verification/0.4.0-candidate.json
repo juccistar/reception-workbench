@@ -1,6 +1,6 @@
 {
   "version": "0.4.0",
-  "status": "built_verification_pending",
+  "status": "verified_locally_public_release_blocked_authentication",
   "source_commit": "97fe7c2a794b2ac714219da533831e5fc45a45d4",
   "output": "relase/release-0.4.0-candidate-a",
   "delivery": {
@@ -16,5 +16,132 @@
     "release_feed": "relase/release-0.4.0-candidate-a/release-feed"
   },
   "default_entry_promoted": false,
-  "installed": false
+  "installed": false,
+  "build_commit": "228983295ef885cc6895aa0b5c52a29be82a944a",
+  "verification": {
+    "integrity": {
+      "report": "artifacts/verification/package-040-candidate-a/integrity.json",
+      "result": {
+        "passed": true,
+        "version": "0.4.0",
+        "files": 173,
+        "asar_entries": 16,
+        "archive_sha256": "870c10535b7d72bf689902b8d5c6e5e246a6066f8da68a0a675ecd4df19beedc",
+        "customer_databases": 0,
+        "development_dependencies": 0,
+        "signed": false
+      }
+    },
+    "update": {
+      "report": "artifacts/verification/package-040-candidate-a/update.json",
+      "result": {
+        "status": "passed",
+        "version": "0.4.0",
+        "installer_bytes": 144927291,
+        "installer_sha256": "65c3444765f37c895a7e39b82ed3fc1f2d5f0fa16390a402f6dba3998249faab",
+        "installer_sha512": "i0GEIg270gIEHNRQMN/5oa4lVvFqc3gGgEyAd7l+MGgy+jTX6yeDi+MJSK7/o/7e/Meg2+2mmYqi2nx8qYDRzw==",
+        "release_signature": "ed25519",
+        "windows_signed": false,
+        "feed_files": 3,
+        "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+        "python_inputs": 103,
+        "source_manifest": "artifacts/build/package-input-1794742673517/source-manifest.json",
+        "compiled_host_matches_stage": true,
+        "installed_marker_baked_in": false,
+        "merchant_launch_inputs": 7,
+        "merchant_launch_inputs_match_source": true,
+        "update_source_preconfigured": true,
+        "update_source_type": "github",
+        "update_source_url": "https://github.com/juccistar/reception-workbench-releases/",
+        "actual_installer_executed": false
+      }
+    },
+    "zip": {
+      "report": "artifacts/verification/package-040-candidate-a/zip.json",
+      "result": {
+        "passed": true,
+        "version": "0.4.0",
+        "entries": 174,
+        "manifest_files": 173,
+        "all_crcs_verified": true,
+        "all_file_hashes_verified": true,
+        "archive_bytes": 188765065,
+        "archive_sha256": "870c10535b7d72bf689902b8d5c6e5e246a6066f8da68a0a675ecd4df19beedc"
+      }
+    },
+    "source": {
+      "report": "artifacts/verification/package-040-candidate-a/source.json",
+      "result": {
+        "status": "passed",
+        "version": "0.4.0",
+        "delivery": "relase/release-0.4.0-candidate-a/delivery.json",
+        "staging": "artifacts/build/package-input-1794742673517",
+        "python_inputs": 103,
+        "frozen_backend_files": 83,
+        "compiled_app_files": 11,
+        "external_launch_modules": 7,
+        "asar_sha256": "927c798ef544c5cfc50020d52c95f271387f2ae89b1821035383c0d9f875aea1",
+        "source_manifest_sha256": "49d4cb88c4be41b6d9493a78a9bec7f3cab28dff962c7ede7514e55bad4a0195",
+        "production_workspace_accessed": false
+      }
+    },
+    "frozen_models": {
+      "report": "artifacts/verification/packaged-models-040-candidate-a-001/report.json",
+      "status": "passed",
+      "frozen_backend": true,
+      "provider": "synthetic_loopback_http",
+      "real_model_calls": 0,
+      "merchant_database_opened": false,
+      "checks": [
+        {
+          "protocol": "chat-completions",
+          "purpose": "reception",
+          "requests": 7,
+          "image_attachments": 7,
+          "status": "passed"
+        },
+        {
+          "protocol": "chat-completions",
+          "purpose": "translation",
+          "requests": 2,
+          "image_attachments": 0,
+          "status": "passed"
+        },
+        {
+          "protocol": "anthropic",
+          "purpose": "reception",
+          "requests": 7,
+          "image_attachments": 7,
+          "status": "passed"
+        },
+        {
+          "protocol": "anthropic",
+          "purpose": "translation",
+          "requests": 2,
+          "image_attachments": 0,
+          "status": "passed"
+        }
+      ],
+      "total_requests": 18,
+      "total_image_attachments": 14
+    },
+    "windows": {
+      "status": "passed",
+      "record": "docs/verification/0.4.0-windows.json",
+      "ui_screenshots_viewed": 11,
+      "public_page_screenshots_viewed": 2
+    }
+  },
+  "limitations": [
+    "Windows Authenticode status is NotSigned; the fixed Ed25519 update signature passed independently.",
+    "Frozen model checks use synthetic loopback HTTP, not real provider quality or real account messaging.",
+    "Public WhatsApp uses the compiled candidate host in an isolated fixture; no authenticated merchant bootstrap or real-account login is tested."
+  ],
+  "public_release": {
+    "status": "blocked_authentication",
+    "repository": "juccistar/reception-workbench-releases",
+    "draft_created": false,
+    "published": false,
+    "assets_uploaded": false
+  }
 }

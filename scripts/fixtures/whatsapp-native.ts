@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import puppeteer from 'puppeteer';
 import { compiledWhatsAppHost } from './compiled-whatsapp-host';
+import { observeWhatsAppInitialize } from './whatsapp-initialize-hook';
 import type { WhatsAppHost as Host } from '../../apps/desktop/src/main/whatsapp/host';
 
 app.setPath('userData', process.env.RECEPTION_WA_FIXTURE_TEMP!);
@@ -146,15 +147,10 @@ app.whenReady().then(async () => {
     if (details.resourceType === 'mainFrame' && details.url.startsWith('https://web.whatsapp.com/')) report.public_http_status = details.statusCode;
     callback({});
   });
-  const initialize = internal.initialize.bind(host);
-  internal.initialize = async (client: any, generation: number) => {
-    const inject = client.inject.bind(client);
-    client.inject = async () => {
-      await inject(); report.sdk_inject_completed = true;
-      if (controlledFailure) throw new Error('SYNTHETIC_PRIVATE_SDK_POST_QR_FAILURE');
-    };
-    await initialize(client, generation);
-  };
+  observeWhatsAppInitialize(internal, () => {
+    report.sdk_inject_completed = true;
+    if (controlledFailure) throw new Error('SYNTHETIC_PRIVATE_SDK_POST_QR_FAILURE');
+  });
   deadline = setTimeout(() => void finish('PUBLIC_PAGE_TIMEOUT'), 270000);
   watcher = setInterval(() => {
     if (probing || finished) return;

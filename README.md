@@ -1,6 +1,6 @@
 # 客户接待工作台
 
-源码版本 **0.4.0**，正在完成最终整合与候选验收。当前公开发行基线为 [0.3.21](https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.21)；0.4.0 的构建、窗口和发行状态以 [发布说明](docs/0.4.0发布说明.md)及[验证记录](docs/verification/0.4.0.json)为准。
+源码与安装候选版本 **0.4.0**。当前公开发行基线为 [0.3.21](https://github.com/juccistar/reception-workbench-releases/releases/tag/v0.3.21)；0.4.0 的构建、窗口和发行状态以 [发布说明](docs/0.4.0发布说明.md)及[验证记录](docs/verification/0.4.0.json)为准。
 
 普通双击进入极简启动台，同一 Windows 用户统一管理多个 API，为接待和翻译分别选择配置。接待模型处理中文需求、会话摘要、自动回复、人工建议及润色，有相关图片时同轮提交文字与受控原图。支持 Chat Completions 和 Anthropic 协议；翻译可以使用独立文字模型。正式版不再提供 Demo，开发用合成数据和替身独立于发行包。
 
