@@ -28,6 +28,60 @@ describe('WhatsApp host connection boundaries', () => {
     client.emit('message_create', { id: { _serialized: 'late' }, fromMe: false, from: 'one@lid', body: 'b', timestamp: 1 });
     expect(events).toEqual([]);
   });
+  it('disposes a blob handle that arrives after the connection is replaced', async () => {
+    const host: any = Object.create(WhatsAppHost.prototype);
+    const pending = deferred<any>();
+    const handle = { evaluate: vi.fn(), dispose: vi.fn(async () => {}) };
+    const evaluateHandle = vi.fn(() => pending.promise);
+    Object.assign(host, { closing: false, generation: 1, status: 'ready', account: 'self', epoch: 'epoch', client: {
+      getMessageById: async () => ({ id: 'image', from: 'chat@lid', type: 'image', hasMedia: true }),
+      pupPage: { evaluateHandle },
+    } });
+    const operation = host.downloadImage('self', 'epoch', 'chat@lid', 'image', async () => {});
+    await vi.waitFor(() => expect(evaluateHandle).toHaveBeenCalledOnce());
+    host.generation++;
+    pending.resolve(handle);
+    await expect(operation).rejects.toThrow('source changed');
+    expect(handle.dispose).toHaveBeenCalledOnce();
+    expect(handle.evaluate).not.toHaveBeenCalled();
+  });
+  it('disposes the handle when the connection changes during a chunk read', async () => {
+    const host: any = Object.create(WhatsAppHost.prototype);
+    const pending = deferred<string>();
+    const handle = { evaluate: vi.fn().mockResolvedValueOnce({ size: 5, mime: 'image/png' }).mockReturnValueOnce(pending.promise), dispose: vi.fn(async () => {}) };
+    Object.assign(host, { closing: false, generation: 1, status: 'ready', account: 'self', epoch: 'epoch', client: {
+      getMessageById: async () => ({ id: 'image', from: 'chat@lid', type: 'image', hasMedia: true }),
+      pupPage: { evaluateHandle: async () => handle },
+    } });
+    const operation = host.downloadImage('self', 'epoch', 'chat@lid', 'image', async (_mime: string, _size: number, chunks: AsyncIterable<Buffer>) => { for await (const _chunk of chunks) {} });
+    await vi.waitFor(() => expect(handle.evaluate).toHaveBeenCalledTimes(2));
+    host.generation++;
+    pending.resolve(Buffer.from('image').toString('base64'));
+    await expect(operation).rejects.toThrow('source changed');
+    expect(handle.dispose).toHaveBeenCalledOnce();
+  });
+  it('disposes a late handle after the page hangs past the deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const host: any = Object.create(WhatsAppHost.prototype);
+      const pending = deferred<any>();
+      const handle = { evaluate: vi.fn(), dispose: vi.fn(async () => {}) };
+      const evaluateHandle = vi.fn(() => pending.promise);
+      Object.assign(host, { closing: false, generation: 1, status: 'ready', account: 'self', epoch: 'epoch', client: {
+        getMessageById: async () => ({ id: 'image', from: 'chat@lid', type: 'image', hasMedia: true }),
+        pupPage: { evaluateHandle },
+      } });
+      const operation = host.downloadImage('self', 'epoch', 'chat@lid', 'image', async () => {});
+      for (let i = 0; i < 10 && !evaluateHandle.mock.calls.length; i++) await Promise.resolve();
+      expect(evaluateHandle).toHaveBeenCalledOnce();
+      const rejection = expect(operation).rejects.toThrow('source changed');
+      await vi.advanceTimersByTimeAsync(60_000);
+      await rejection;
+      pending.resolve(handle);
+      await Promise.resolve();
+      expect(handle.dispose).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
   it('retires a failed connection, releases transport and permits another attempt', () => {
     const host: any = Object.create(WhatsAppHost.prototype);
     const client: any = new EventEmitter();

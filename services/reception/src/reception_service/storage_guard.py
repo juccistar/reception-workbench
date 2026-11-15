@@ -97,7 +97,7 @@ def validate_database(path, kind):
     except (sqlite3.Error, OSError) as exc:
         raise StorageError('Invalid database') from exc
 
-def preflight_workspace(data_root):
+def preflight_workspace(data_root, *, validated=None):
     root = Path(data_root)
     from .workspace_lock import reject_links
     reject_links(root)
@@ -112,8 +112,14 @@ def preflight_workspace(data_root):
             if not (seller / 'workspace.sqlite3').is_file():
                 raise StorageError('Seller workspace database missing')
             paths.append(seller / 'workspace.sqlite3')
+    def check(path, kind):
+        key = (path, kind)
+        if validated is None or key not in validated:
+            version = validate_database(path, kind)
+            if validated is not None:
+                validated[key] = version
     for path in paths:
-        validate_database(path, 'repository')
-    validate_database(root / 'demo/integrations-demo.sqlite3', 'ledger')
+        check(path, 'repository')
+    check(root / 'demo/integrations-demo.sqlite3', 'ledger')
     for mode in ('demo', 'live'):
-        validate_database(root / mode / 'adapters-live.sqlite3', 'ledger')
+        check(root / mode / 'adapters-live.sqlite3', 'ledger')

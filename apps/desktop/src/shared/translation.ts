@@ -34,6 +34,8 @@ export interface TranslationSettingsInput extends TranslationSettings {
 
 export interface TranslationHostBridge {
   getTranslationSettings(): Promise<TranslationInfo>;
+  setTranslationEnabled(enabled: boolean): Promise<TranslationInfo>;
+  importLegacyTranslation(): Promise<void>;
   saveTranslationSettings(value: TranslationSettingsInput): Promise<TranslationInfo>;
   checkTranslationProvider(): Promise<{ job_id: string }>;
   clearTranslationCache(): Promise<{ removed: number }>;

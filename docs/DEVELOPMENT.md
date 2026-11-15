@@ -13,26 +13,23 @@ py -3.12 -m venv services\reception\.venv
 
 后端运行时依赖以 `services/reception/pyproject.toml` 为准。脚本优先使用 `RECEPTION_PYTHON` 指向的 Python，否则使用此独立虚拟环境；确保它指向所需环境。
 
+按改动范围执行定向测试；只有用户明确指定时才运行全量测试。以下示例从仓库根目录执行：
+
 ```powershell
 npm run typecheck
-npm run build
-npm run test:backend
-npm run test:ui
-npm run test:tools
-```
-
-以上分别执行类型检查、桌面构建和后端/UI/工具测试；`npm test` 串行执行三组测试。小版本只运行与改动相关的定向测试，全量测试仅在用户明确指定时执行。`test:ui` 启动器会统一Windows盘符形式，避免Vite/Vitest因大小写产生重复运行时；直接调用Vitest时也须使用一致的工作目录。定向示例：
-
-```powershell
-$env:PYTHONPATH = 'services/reception/src'
-.\services\reception\.venv\Scripts\python.exe -B -m unittest discover -s services/reception/tests -p 'test_manual_receipts.py' -v
-npx vitest run --config apps/desktop/vitest.config.ts apps/desktop/tests/chat-service-client.test.ts
+npm run test:backend -- test_service_integration_040.py
+npm run test:backend -- test_manual_receipts.py -k test_missing_or_invalid_acceptance_evidence_stays_unknown
+npm run test:ui -- apps/desktop/tests/launcher-activation.test.ts apps/desktop/tests/translation-activation-host.test.ts
 node --test scripts/tests/release-paths.test.mjs
 ```
 
-`npm start` 启动演示工作台；若尚无桌面构建会先构建。真实连接须在目标商家允许使用工作台的 Accio Work 授权会话执行 `授权启动接待.cmd`，并在窗口核对商家和实际数据目录；启动本身不授权自动发送。按当前窗口检查 AI、选择范围并明确授权后，才可在授权范围操作。不要复制令牌；若宿主拒绝使用授权，停止并核实支持方式。普通人工聊天不依赖 AI 检查。
+`npm run test:backend -- <文件名> [-k <名称>]`经 `scripts/test-backend.mjs`运行：040及cached_media测试直接发现，旧测试由`services/reception/test_support/run_legacy_tests.py`显式装配合成服务兼容层；每个文件使用独立解释器。测试支持仅用于隔离合成回归，生产CLI只接受live，不提供`--mode demo`。`npm test`串行执行三组全量测试，不包含类型检查和构建；发布本身不是全量测试指令。`test:ui`启动器统一Windows盘符形式。
 
-共享翻译配置的窗口回归先构建，再运行 `node scripts/smoke-shared-translation.mjs --label <未使用标签> --legacy-migration`；可加 `--executable` 指向候选EXE。它用两个临时Demo数据根及独立共享目录检查旧格式密钥迁移、跨窗口同步、开关隔离、冲突和重开。`smoke-demo.mjs` 继续检查缓存和原有回复建议。两者显式设置 `RECEPTION_SHARED_SETTINGS_DIR`，不得让自动测试写真实Windows共享配置；截图须实际查看，Demo不替代真实平台验收。
+`npm start`默认打开启动台，尚无桌面构建时先构建；桌面源码修改后先运行`npm run build`，启动脚本不会检测已有产物是否过期。正式工作台须从目标商家Accio Work授权会话启动；登记索引不构成授权，关闭Accio或重启后独立复用授权尚未验证。启动台可切回已核验、仍运行的商家窗口。模型统一在启动台配置、按用途主动检查，检查调用真实API且可能计费；商家翻译启用由宿主原生确认并绑定实际数据根。普通人工发送不依赖模型检查。
+
+每次完成新版本构建后，按仓库用户规则立即检查变更范围、敏感文件和`git diff --check`，将源码、测试、文档与可入库验证记录本地提交；不强制加入产物、业务数据或凭据。提交不授权推送、发布、安装或迁移。
+
+以下窗口脚本和验收是对应旧版本的历史记录，依赖当时的Demo入口或夹具，不能据此认定当前生产入口仍提供Demo或0.4.0已经验收。
 
 0.3.21窗口检查使用`node scripts/smoke-auto-replies-0321.mjs --label <未使用标签>`，可加`--executable`指定最终候选EXE。脚本用临时Demo数据和预置合成AI回复，自动发送的原生确认仅在隔离夹具中返回允许，实际经业务IPC完成自动两条、三条独立受理、单条建议采用、整段润色、Ctrl+Enter及新输入保留；同步、核查和停止的中间状态截图明确采用投影夹具，不冒充真实平台发送。当前自动进度与折叠历史分别检查，截图须逐张查看。`smoke-whatsapp-native.mjs`使用当前编译的WhatsAppSessionHost提交新的合成登录代次，验证93字符宿主根与27字符分区，公共扫码稳定超过60秒并刷新；原生产资料不访问，意外认证立即停止且禁用历史读取。窗口脚本串行执行。
 
@@ -46,7 +43,7 @@ node --test scripts/tests/release-paths.test.mjs
 
 0.3.7相关定向验证已覆盖100项后端、113项桌面及宿主用例，typecheck和build通过；源码和最终EXE的隔离smoke-demo及smoke-reception-upgrade窗口均通过，截图已实际查看。严格发行清单、ZIP完整性、固定Ed25519更新签名和源码/构建输入匹配核验通过，结果见[验证记录](verification/0.3.7.json)。真实图文Accio本轮未进行付费实测，未执行NSIS安装或替换本机程序。
 
-当前源码及公开发行为0.3.21，最终A候选构建307018f；源码4770407和候选均构建完成后立即本地提交。200项后端、191项桌面/宿主和1项SDK资源工具定向用例、类型及提示词一致性检查通过。源码与最终EXE的自动两条/三条Demo回执、单正文建议/润色、Ctrl+Enter和新输入窗口流程均通过，各8张截图已查看；中间等待/核查/停止采用投影夹具。包内宿主及SDK使用93字符临时根和27字符新分区，正常扫码与受控SDK故障后原页保留各超过60秒并刷新，两张遮媒体截图已查看。最终A候选已正式发布，公开latest、四附件匿名完整下载、源码/冻结后台/SDK闭包和固定Ed25519更新签名均核对通过，Windows Authenticode为NotSigned。相关说明及完整验收范围见[0.3.21发布说明](0.3.21发布说明.md)和[记录](verification/0.3.21.json)；未安装替换本机程序、迁移真实数据或推送私有源码，实际模型真人聊天效果及WhatsApp实号收发未验收。
+0.3.21当时的源码及公开发行为0.3.21，最终A候选构建307018f；源码4770407和候选均构建完成后立即本地提交。200项后端、191项桌面/宿主和1项SDK资源工具定向用例、类型及提示词一致性检查通过。源码与最终EXE的自动两条/三条Demo回执、单正文建议/润色、Ctrl+Enter和新输入窗口流程均通过，各8张截图已查看；中间等待/核查/停止采用投影夹具。包内宿主及SDK使用93字符临时根和27字符新分区，正常扫码与受控SDK故障后原页保留各超过60秒并刷新，两张遮媒体截图已查看。最终A候选已正式发布，公开latest、四附件匿名完整下载、源码/冻结后台/SDK闭包和固定Ed25519更新签名均核对通过，Windows Authenticode为NotSigned。相关说明及完整验收范围见[0.3.21发布说明](0.3.21发布说明.md)和[记录](verification/0.3.21.json)；未安装替换本机程序、迁移真实数据或推送私有源码，实际模型真人聊天效果及WhatsApp实号收发未验收。
 
 以下为历史记录。0.3.20最终B候选构建225364c，相关说明及当时附件核验见[0.3.20发布说明](0.3.20发布说明.md)和[记录](verification/0.3.20.json)；发布时未执行安装替换。0.3.19历史记录：当时公开latest及四附件匿名完整下载已核对。0.3.19已增补需求补录、自然1至3条回复、两渠道逐条回执、人工分条编辑与当前条目润色；源码85a91ce及A候选3735711均构建后立即提交，后端200项、桌面142项定向用例及类型/提示词检查通过，源码和候选EXE各12张窗口图已逐张查看，最终A候选已正式发布，包内公共扫码正常及受控故障保留均超过60秒并刷新，两张遮媒体截图已查看，四附件匿名完整下载及固定更新签名已核对；旧需求保留、部分成功后只保留未发送内容及unknown不重发继续受保护。商品段落严格只删除指定前缀。以下f7f3c51和71c3fb7为此前WhatsApp诊断验收基线，新构建和发行状态见本版记录。WhatsApp分阶段脱敏诊断、SDK故障后保留可信原始页面及即时宿主状态继续保留，不加入旧数据清理。源码构建后立即提交f7f3c51；57项桌面、32项后端定向用例、1项SDK资源用例及类型检查通过，实际Demo窗口6张截图和两组公共页遮媒体截图已逐张查看。编译宿主无预热冷启动及受控SDK失败后均持续观察二维码超过60秒并覆盖刷新。结果见[本版说明](0.3.19发布说明.md)和[记录](verification/0.3.19.json)；本轮实际发行状态见验证记录，真实商家连接故障尚未复现，实号收发未验收。0.3.18最终A候选已完成EXE窗口、包内SDK公共扫码、固定更新签名及四附件匿名完整下载核验，未执行安装替换或真实数据迁移。内嵌WhatsApp连接修复、执行器健康与队列保护、图片覆盖展示删除及实际验证限制见[0.3.18说明](0.3.18发布说明.md)和[记录](verification/0.3.18.json)。0.3.16的需求增量、多事项归属、原图预览／复制及接待交互见[发布说明](0.3.16发布说明.md)和[验证记录](verification/0.3.16.json)，紧凑布局、建议处理框、五图和附件输入继续沿用。原需求、摘要、产品及采购基础见[0.3.13开发说明](0.3.13开发说明.md)。接待页中间显示宽聊天区、独立会话摘要及编辑器，右侧为中文需求和业务补充。有效新产品ID原子建立公共产品、需求绑定及一次采购任务；采购授权独立，unknown只核查原记录。数字平台ID的商品链接由程序派生，本地“定制-数字”编号不生成平台链接。独立商品主图使用list-information的trunk/images组件，由受限媒体池读取及缓存；按imageIndex排序、URL去重后最多缓存五张，展示预览受独立传输预算约束，原图和找货引用不变；内部保留请求证据，界面不常驻解释来源。链接及主图不进入接待指定上下文或指纹，客户图片仍独立；采购等待主图时不占接待AI槽。旧提醒及解析RPC退役，需核实内容进入会话摘要，真实回执与续答防重关联保留。新建默认检测2秒、合并1秒、最近50条及必要依据，已有配置不改。
 
@@ -60,7 +57,7 @@ node --test scripts/tests/release-paths.test.mjs
 
 0.3.9源码已实现默认关闭的内置资料目录、用途隔离、共用接待上下文、协助任务明确开始及安全读取诊断；源码窗口与相关定向验证通过，见[本版说明](0.3.9发布说明.md)和[验证记录](verification/0.3.9.json)。本版已完成候选核验并公开发布；231项后端与80项桌面/宿主定向用例通过，最终EXE窗口、签名、源码资源及四个附件的匿名完整下载已核对。安装替换和真实发送仍需分别验收。资料页窗口回归可在构建后运行 `node scripts/smoke-policy-library.mjs --label <未使用标签>`，使用临时Demo数据和独立共享配置；`--executable` 可指定候选EXE，截图需实际查看。
 
-workctl v0.1.65外部接口没有原生图片附件，当前以P05-B read_compat在同一业务任务中读取受限原图，p1/p2按双方消息时间顺序关联；不能将其描述为已实现原生附件直传。
+0.3.21时workctl v0.1.65外部接口没有原生图片附件，当时以P05-B read_compat读取受限原图；这一历史描述不代表0.4.0的验收结果。
 
 ## 候选打包
 

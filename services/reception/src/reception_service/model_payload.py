@@ -60,12 +60,19 @@ MODEL_REQUEST_CHARS = 140_000
 def model_json(context):
     """Budget the actual projection while preserving the full local evidence."""
     try:
-        encoded = json.dumps(project_model_payload(context), ensure_ascii=False, allow_nan=False)
+        encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False)
+        parts = []
+        size = 0
+        for part in encoder.iterencode(project_model_payload(context)):
+            size += len(part)
+            if size > MODEL_CONTEXT_CHARS:
+                raise ServiceError('context_too_long', '模型输入超出单次预算，未截断证据', stage='context')
+            parts.append(part)
+        return ''.join(parts)
+    except ServiceError:
+        raise
     except (TypeError, ValueError, RecursionError):
         raise ServiceError('invalid_context', '请求内容无法编码', stage='context') from None
-    if len(encoded) > MODEL_CONTEXT_CHARS:
-        raise ServiceError('context_too_long', '模型输入超出单次预算，未截断证据', stage='context')
-    return encoded
 
 
 def model_request(instructions, context, suffix=''):
@@ -107,9 +114,14 @@ def project_model_payload(context: dict, task_mode: str | None = None) -> dict:
         return deepcopy(context)
     mode = task_mode or context.get('task_mode') or 'automatic'
     if mode == 'whatsapp_reply':
-        # WhatsApp context is already a channel-specific, bounded projection.
-        # Preserve source references and optional international background.
-        return deepcopy(context)
+        # The resolver's private references and cached media metadata are never
+        # part of model input; only the explicitly attached manifest is exposed.
+        result = deepcopy(context)
+        result.pop('model_image_refs', None)
+        for row in result.get('whatsapp_messages', []):
+            if isinstance(row, dict) and isinstance(row.get('media'), dict):
+                row['media'] = {key: row['media'][key] for key in ('status',) if key in row['media']}
+        return result
     result = {'payload_version': PAYLOAD_VERSION, 'task_mode': mode}
     common = ('reply_target', 'knowledge', 'style', 'supplement', 'message_semantics', 'collection_rules')
     for key in common:

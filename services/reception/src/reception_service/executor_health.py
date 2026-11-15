@@ -41,7 +41,7 @@ class ExecutorHealth:
     def _budget(self, kind):
         if kind in SEND_JOBS:
             return 900
-        if kind in ('generate_draft', 'manual_suggestion', 'organize_requirements',
+        if kind in ('generate_draft', 'manual_suggestion',
                     'check_ai', 'product_lookup', 'source_product', 'whatsapp_reply'):
             return 900 + self._photo_budget()
         return 300
@@ -129,6 +129,8 @@ class ExecutorHealth:
         s._auto_send = False
         s._frozen_scope = None
         s._wa_enabled = False
+        s._procurement_authorized = False
+        s._procurement_epoch = getattr(s, '_procurement_epoch', 0) + 1
         s._epoch += 1
         for event in list(s._generation_events.copy().values()):
             event.set()

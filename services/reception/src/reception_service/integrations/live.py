@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import threading
+import time
 
 from ..model_payload import model_json, model_request
 
@@ -68,6 +69,14 @@ class LiveIntegration:
         self.native = NativeGateway(self.settings, Path(data_dir))
         self._visual_workspace_identity = None
         self._query_state = threading.local()
+        self._model_router = None
+        self._whatsapp_image_resolver = None
+
+    def configure_model_router(self, router):
+        self._model_router = router
+
+    def configure_whatsapp_image_resolver(self, resolver):
+        self._whatsapp_image_resolver = resolver
 
     @property
     def last_ai_diagnostics(self):
@@ -216,6 +225,7 @@ class LiveIntegration:
         from ..photos import with_direct_photo_reads
         validated = validate_analysis(answer, with_direct_photo_reads(context, image_reads))
         validated['verified_image_reads'] = image_reads
+        validated.update(deepcopy(self._query_state.model_result))
         if repaired_fence:
             validated['repairs'].append('json_fence')
         # Workspace discovery is based only on this facade's own successful
@@ -228,36 +238,107 @@ class LiveIntegration:
         return validated
 
     def _business_query(self, instructions, context, photo_inputs, *, on_call_start=None, cancel_event=None, photo_deadline=None):
+        owner = getattr(photo_inputs, 'owner', None)
+        try:
+            return self._business_query_owned(instructions, context, photo_inputs, on_call_start=on_call_start,
+                                              cancel_event=cancel_event, photo_deadline=photo_deadline)
+        finally:
+            if owner is not None:
+                owner.close_if_owned()
+
+    def _business_query_owned(self, instructions, context, photo_inputs, *, on_call_start=None, cancel_event=None, photo_deadline=None):
+        now = time.monotonic()
+        seconds = self.settings.get('image_prepare_seconds', 60)
+        seconds = min(seconds, 60) if type(seconds) is int and 1 <= seconds <= 600 else 60
+        started = min(now, getattr(photo_deadline, 'started', photo_deadline - seconds)) if photo_deadline is not None else now
+        chain_deadline = started + 180
+        photo_deadline = min(photo_deadline, started + 60) if photo_deadline is not None else started + 60
+        if now >= chain_deadline:
+            raise ServiceError('model_timeout', '模型请求超过时间预算', stage='model')
         self.last_ai_diagnostics = {}
         self._last_query_request = {}
         if cancel_event is not None and cancel_event.is_set():
             raise ServiceError('cancelled', '请求已取消', stage='analysis')
-        if photo_inputs:
-            from .business_images import query_business_images
-            result = query_business_images(self.native, self._agent_args()[1], self._visual_workspace_identity,
-                context, photo_inputs, instructions, on_call_start=on_call_start, cancel_event=cancel_event,
-                photo_deadline=photo_deadline, diagnostics=lambda value: setattr(self, 'last_ai_diagnostics', process_diagnostics(value)))
-            reads = result.pop('verified_image_reads')
-            return result, reads
-        if isinstance(context, dict) and context.get('task_mode') != 'polish' and (context.get('photo_context') or {}).get('direct_images'):
-            raise ServiceError('photo_input_unavailable', '图片原图未绑定当前请求，请重新生成', stage='context')
-        runner = DesktopQueryRunner(self.native.data_dir, process=self.native.process)
-        args = [self.native.cli, 'desktop', 'query', *self._agent_args(), '--input', '-', '--json', '--request-timeout', '180s']
-        prompt = model_request(instructions, context)
+        from ..model_media import prepare_model_images
+        if self._model_router is None:
+            raise ServiceError('model_not_ready', '接待模型尚未配置', stage='model_configuration')
+        from ..model_media import OwnedInput, estimate_input_reservation
+        from ..media_resources import ResourceLimitError
+        from ..model_router import ModelRouter
+        owner = getattr(photo_inputs, 'owner', None)
         try:
-            if on_call_start is not None:
-                on_call_start()
-            result = runner.run(args, input=prompt,
-                timeout=190, cancel_event=cancel_event, recover_own_results=self._own_result_recovery_enabled())
-            self._last_query_request = deepcopy(getattr(runner, 'last_request', {}))
-            return result, []
+            if owner is None:
+                owner = OwnedInput(estimate_input_reservation(context, photo_inputs, instructions))
+            else:
+                owner.reserve_more(estimate_input_reservation(context, None, instructions))
+        except ResourceLimitError as error:
+            if owner is not None:
+                owner.close_if_owned()
+            raise ServiceError('model_resource_over_limit' if error.code == 'resource_too_large' else 'model_resource_busy',
+                               '模型输入超出资源预算', stage='model') from None
+        try:
+            ownership = {'_owned_input': owner} if isinstance(self._model_router, ModelRouter) else {}
+            payload = deepcopy(context)
+            if isinstance(payload, dict) and payload.get('task_mode') == 'polish':
+                # Frozen-body polish excludes historical chat photos. Explicit
+                # conversation supplements remain applicable to this same request.
+                payload['photo_context'] = {}
+                supplement_ids = {ref.get('image_id') for ref in payload.get('supplement_image_refs', [])}
+                payload['image_manifest'] = [row for row in payload.get('image_manifest', [])
+                                             if row.get('origin') == 'business_supplement'
+                                             and row.get('image_id') in supplement_ids]
+                photo_inputs = [item for item in photo_inputs or []
+                                if (item.get('attachment') or {}).get('origin') == 'business_supplement']
+            settings = self.settings if isinstance(self.settings, dict) else {}
+            batch_mib = settings.get('image_batch_mib', 64)
+            if type(batch_mib) is not int or not 1 <= batch_mib <= 1024:
+                batch_mib = 64
+            if isinstance(payload, dict) and payload.get('task_mode') == 'whatsapp_reply':
+                from ..model_inputs import resolve_whatsapp_images
+                images, manifest = resolve_whatsapp_images(payload, getattr(self, '_whatsapp_image_resolver', None),
+                                                           cancel=cancel_event, deadline=photo_deadline)
+                payload.pop('model_image_refs', None)
+                payload['image_manifest'] = manifest
+                refs = []
+            else:
+                images, refs = prepare_model_images(payload, photo_inputs, cancel=cancel_event,
+                                                    deadline=photo_deadline, batch_mib=batch_mib)
+            if payload.get('task_mode') != 'whatsapp_reply':
+                # Derive the public manifest from the validated bytes, never from
+                # unencoded context entries that the model cannot actually see.
+                payload['image_manifest'] = [
+                    {**{'alias': image['alias'], 'image_id': image['image_id'], 'role': image['role']},
+                     **({'origin': 'business_supplement', 'attachment_id': image['source_id']}
+                        if ref.get('origin') == 'business_supplement' else {'message_id': image['source_id']})}
+                    for image, ref in zip(images, refs)
+                ]
+            payload['image_transport'] = 'inline' if images else 'none'
+            if images:
+                from .reception_prompts import IMAGE_NATIVE
+                instructions += '\n' + IMAGE_NATIVE
+            required = ['text', 'structure']
+            if images:
+                required.extend(['single_image' if len(images) == 1 else 'multi_image', 'combined'])
+            result = self._model_router.generate('reception', instructions, model_json(payload), images=images,
+                        required_capabilities=required, cancel=cancel_event, on_call_start=on_call_start,
+                        deadline=chain_deadline, **ownership)
+            if not isinstance(result, dict) or not isinstance(result.get('output'), dict):
+                raise ServiceError('answer_missing', 'AI 未返回可核实结果', stage='answer')
+            evidence = result.get('image_input_evidence')
+            if images:
+                expected = [{key: image[key] for key in ('alias', 'image_id', 'source_id', 'source_version', 'role', 'sha256')} for image in images]
+                if (not isinstance(evidence, dict) or evidence.get('status') != 'completed'
+                        or evidence.get('images') != expected):
+                    raise ServiceError('photo_input_unavailable', '图片请求缺少完整的发送证据', stage='analysis')
+            self._query_state.model_result = {key: deepcopy(result.get(key)) for key in
+                ('model_snapshot', 'image_input_evidence', 'usage', 'request_id', 'model', 'elapsed_ms', 'stop_reason')}
+            return {'answer': result['output']}, refs
         finally:
-            self.last_ai_diagnostics = process_diagnostics(runner.last_diagnostics)
+            owner.close_if_owned()
 
     def _assistance_query(self, prompt, payload, request_id, on_call_start, cancel_event, *, photo_inputs=None, photo_deadline=None):
         if not isinstance(request_id, str) or not request_id.strip():
             raise ServiceError('invalid_request', '生成请求缺少任务标识', stage='context')
-        model_json(payload)
         if cancel_event is not None and cancel_event.is_set():
             raise ServiceError('cancelled', '请求已取消', stage='analysis')
         result, image_reads = self._business_query(prompt, payload, photo_inputs,
@@ -279,6 +360,7 @@ class LiveIntegration:
         if not isinstance(answer, dict):
             raise ServiceError('answer_missing', 'AI 未返回可核实结果', stage='answer')
         answer['_host_image_reads'] = image_reads
+        answer['_host_model_result'] = deepcopy(self._query_state.model_result)
         return answer
 
     @boundary('analysis')
@@ -298,7 +380,7 @@ class LiveIntegration:
         if (any(invalid_reply_body(item['body']) for item in answer['reply_messages'])
                 or invalid_reply_body(answer['reply']) or not isinstance(summary, str) or len(summary) > 4000):
             raise ServiceError('answer_non_json', 'AI 未返回有效 WhatsApp 回复', stage='answer')
-        return {key: answer[key] for key in ('reply', 'reply_sources', 'reply_messages')} | {'wa_summary': summary.strip()}
+        return {key: answer[key] for key in ('reply', 'reply_sources', 'reply_messages')} | {'wa_summary': summary.strip()} | answer['_host_model_result']
 
     @boundary('analysis')
     def generate_manual(self, context, request_id, *, on_call_start=None, cancel_event=None, photo_inputs=None, photo_deadline=None):
@@ -346,7 +428,7 @@ class LiveIntegration:
                 raise ServiceError('answer_non_json', 'AI 未返回有效回复正文', stage='answer')
             metadata['reply_sources'] = answer['reply_sources']
             reply = answer['reply']
-        return {'reply': reply if not context.get('unsent_reply') else reply.strip(), 'verified_image_reads': image_reads, **metadata,
+        return {'reply': reply if not context.get('unsent_reply') else reply.strip(), 'verified_image_reads': image_reads, **metadata, **answer['_host_model_result'],
                 **({'reply_messages': answer['reply_messages']} if not context.get('unsent_reply') else {}),
                 **({key: answer[key] for key in ('requirement_changes', 'reply_case_refs', 'conversation_summary') if key in answer}
                    if not context.get('unsent_reply') else {})}
@@ -367,8 +449,9 @@ class LiveIntegration:
         answer = self._assistance_query(REQUIREMENTS, payload, request_id, on_call_start, cancel_event,
                                         photo_inputs=photo_inputs, photo_deadline=photo_deadline)
         from ..requirement_changes import validate_changes
-        validate_changes(answer, context)
-        return {key: answer[key] for key in ('requirement_changes', 'reply_case_refs', 'conversation_summary') if key in answer}
+        from ..photos import with_direct_photo_reads
+        validate_changes(answer, with_direct_photo_reads(context, answer.pop('_host_image_reads', [])))
+        return {key: answer[key] for key in ('requirement_changes', 'reply_case_refs', 'conversation_summary') if key in answer} | answer['_host_model_result']
 
     @boundary('analysis')
     def translate(self, items, request_id, *, on_call_start=None, cancel_event=None):

@@ -1,7 +1,12 @@
 """Synthetic WhatsApp channel isolation and send ledger tests."""
+import base64
+import hashlib
+import io
+import random
 import threading
 import time
 import unittest
+from PIL import Image
 from unittest.mock import patch
 
 import test_product_library_0313 as fixtures
@@ -33,6 +38,198 @@ class WhatsAppTests(unittest.TestCase):
     def generate_parts(self, context, *args, **kwargs):
         source = context['whatsapp_messages'][-1]['source_id']
         return {'reply_messages': [{'body': text, 'reply_sources': [source]} for text in ('First', 'Second', 'Third')], 'wa_summary': '摘要'}
+
+    def test_image_only_buyer_is_pending_without_text_only_generation(self):
+        self.setUpAccount()
+        self.service.set_whatsapp_reception(True)
+        self.ingest('image-1', body='', has_image=True)
+        contact = self.service._wa_contact('contact')
+        self.assertTrue(contact['pending'])
+        self.assertEqual(contact['pending_message_id'], 'image-1')
+        self.assertEqual(contact['error_code'], 'whatsapp_media_not_ready')
+        row = self.service.get_whatsapp_context('contact')['whatsapp_messages'][-1]
+        self.assertEqual((row['text'], row['role'], row['media']['status']), ('', 'buyer', 'pending'))
+        self.assertFalse(self.service.repo.list('wa_operation'))
+
+    def test_image_history_does_not_create_pending(self):
+        self.setUpAccount()
+        self.ingest('historical-image', body='', has_image=True, is_history=True)
+        self.assertFalse(self.service._wa_contact('contact')['pending'])
+        self.assertEqual(self.service.get_whatsapp_context('contact')['whatsapp_messages'][-1]['media']['status'], 'pending')
+
+    def test_image_transfer_multichunk_wakes_original_pending(self):
+        self.setUpAccount()
+        self.ingest('image-transfer', body='', has_image=True)
+        media = self.service.get_whatsapp_context('contact')['whatsapp_messages'][-1]['media']
+        identity = dict(account_id='wa-account', connection_epoch='epoch-1', chat_id='contact', message_id='image-transfer', source_version=media['source_version'])
+        image = Image.frombytes('RGB', (400, 400), random.Random(3).randbytes(400 * 400 * 3))
+        output = io.BytesIO()
+        image.save(output, format='PNG')
+        data = output.getvalue()
+        self.assertGreater(len(data), 256 * 1024)
+        with patch.object(self.service.integrations, 'generate_whatsapp', side_effect=self.generate_parts):
+            self.service.set_whatsapp_reception(True)
+            transfer = self.service._wa_media_begin(**identity, mime_type='image/png')['transfer_id']
+            for offset in range(0, len(data), 256 * 1024):
+                chunk = data[offset:offset + 256 * 1024]
+                self.assertEqual(self.service._wa_media_chunk(**identity, transfer_id=transfer, offset=offset, data_base64=base64.b64encode(chunk).decode())['next_offset'], offset + len(chunk))
+            result = self.service._wa_media_finish(**identity, transfer_id=transfer, size=len(data), sha256=hashlib.sha256(data).hexdigest())
+            self.assertEqual(result['status'], 'ready')
+            op = self.wait_op()
+            self.assertEqual(op['pending_message_id'], 'image-transfer')
+            with self.assertRaises(ServiceError):
+                self.service._wa_media_finish(**identity, transfer_id=transfer, size=len(data), sha256=hashlib.sha256(data).hexdigest())
+
+    def test_live_attempt_budget_is_bound_to_original_message(self):
+        from contextlib import nullcontext
+        from unittest.mock import Mock
+        service = self.service
+        service.mode = 'live'
+        params = {'account_id': 'a', 'connection_epoch': 'e1', 'chat_id': 'c', 'pending_message_id': 'm',
+                  'model_snapshot': {'profile_id': 'first'}, 'fingerprint': 'pending-image', 'context': {}}
+        facade = Mock()
+        def generate(_context, _job, **kwargs):
+            kwargs['on_call_start']()
+            raise ServiceError('synthetic_failure', 'failed')
+        facade.generate_whatsapp.side_effect = generate
+        with patch.object(service, '_wa_current', return_value=True), patch.object(service, '_ensure_identity'), \
+                patch.object(service, '_assert_reception_model'), patch.object(service, '_job_phase', return_value=nullcontext()):
+            with self.assertRaises(ServiceError) as raised:
+                service._task_whatsapp_reply(params, 'job-0', 1, facade)
+            self.assertEqual(raised.exception.code, 'synthetic_failure')
+            params.update(connection_epoch='e2', fingerprint='ready-image', model_snapshot={'profile_id': 'second'})
+            with self.assertRaises(ServiceError) as raised:
+                service._task_whatsapp_reply(params, 'job-1', 1, facade)
+            self.assertEqual(raised.exception.code, 'model_attempt_exhausted')
+            from reception_service.model_attempts import chain_id
+            key = chain_id(service.seller_id, 'reception', 'whatsapp',
+                           {'account_id': 'a', 'chat_id': 'c', 'pending_message_id': 'm'})
+            chain = service.repo.get('model_attempt_chain_v1', key)
+            self.assertEqual(chain['attempts'], 1)
+            self.assertEqual(chain['status'], 'unknown')
+        service.mode = 'demo'
+
+    def test_late_success_finishes_original_claim_without_applying(self):
+        from contextlib import nullcontext
+        from unittest.mock import Mock
+        from reception_service.model_attempts import chain_id
+        service = self.service
+        service.mode = 'live'
+        params = {'account_id': 'a', 'connection_epoch': 'e', 'chat_id': 'c', 'pending_message_id': 'm',
+                  'model_snapshot': {}, 'fingerprint': 'f', 'context': {}}
+        current = [True]
+        facade = Mock()
+        def generate(_context, _job, **kwargs):
+            kwargs['on_call_start']()
+            current[0] = False
+            return {'reply': 'late'}
+        facade.generate_whatsapp.side_effect = generate
+        with patch.object(service, '_wa_current', side_effect=lambda *args: current[0]), \
+                patch.object(service, '_ensure_identity'), patch.object(service, '_assert_reception_model'), \
+                patch.object(service, '_job_phase', return_value=nullcontext()):
+            with self.assertRaises(ServiceError) as raised:
+                service._task_whatsapp_reply(params, 'late-job', 1, facade)
+            self.assertEqual(raised.exception.code, 'cancelled')
+        key = chain_id(service.seller_id, 'reception', 'whatsapp',
+                       {'account_id': 'a', 'chat_id': 'c', 'pending_message_id': 'm'})
+        self.assertEqual(service.repo.get('model_attempt_chain_v1', key)['status'], 'completed')
+        self.assertFalse(service.repo.list('wa_draft'))
+        self.assertFalse(service.repo.list('wa_operation'))
+        service.mode = 'demo'
+
+    def test_live_router_transmits_owned_image_and_evidence(self):
+        import json
+        from pathlib import Path
+        import httpx
+        from reception_service.integrations.live import LiveIntegration
+        from reception_service.model_providers.transport import ProviderTransport
+        from reception_test_support.model import configure_synthetic_model
+
+        self.setUpAccount()
+        self.ingest('model-image', body='', has_image=True)
+        media = self.service.get_whatsapp_context('contact')['whatsapp_messages'][-1]['media']
+        identity = dict(account_id='wa-account', connection_epoch='epoch-1', chat_id='contact', message_id='model-image', source_version=media['source_version'])
+        output = io.BytesIO()
+        Image.new('RGB', (2, 2), 'red').save(output, format='PNG')
+        data = output.getvalue()
+        transfer = self.service._wa_media_begin(**identity, mime_type='image/png')['transfer_id']
+        self.service._wa_media_chunk(**identity, transfer_id=transfer, offset=0, data_base64=base64.b64encode(data).decode())
+        self.service._wa_media_finish(**identity, transfer_id=transfer, size=len(data), sha256=hashlib.sha256(data).hexdigest())
+        context = self.service.get_whatsapp_context('contact')
+        row = context['whatsapp_messages'][-1]
+        context['model_image_refs'] = [dict(source_id=row['source_id'], source_version=row['media']['source_version'], image_id=row['media']['media_id'], sha256=row['media']['sha256'], role=row['role'])]
+        requests = []
+        change_source = [False]
+        def respond(request):
+            requests.append(json.loads(request.content))
+            if change_source[0]:
+                self.service._wa_set_account('wa-account', 'epoch-2', 'connected')
+            answer = {'reply_messages': [{'body': 'Hello', 'reply_sources': [row['source_id']]}], 'wa_summary': '图片'}
+            return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': json.dumps(answer)}}], 'model': 'fixture'})
+        configure_synthetic_model(self.service, Path(self.tmp.name) / 'model-authority.json')
+        self.service._model_router._transport = ProviderTransport(_transport_factory=lambda: httpx.MockTransport(respond))
+        facade = LiveIntegration.__new__(LiveIntegration)
+        facade._query_state = threading.local()
+        facade.settings = {}
+        facade.resolve_identity = lambda seller: seller
+        facade.configure_model_router(self.service._model_router)
+        facade.configure_whatsapp_image_resolver(self.service._wa_resolve_current_image)
+        result = facade.generate_whatsapp(context, 'image-job')
+        self.assertEqual(result['image_input_evidence']['images'][0]['source_version'], media['source_version'])
+        self.assertEqual(result['image_input_evidence']['images'][0]['sha256'], hashlib.sha256(data).hexdigest())
+        self.assertIn(base64.b64encode(data).decode(), json.dumps(requests[0]))
+        self.assertEqual(result['reply_sources'], [row['source_id']])
+        from contextlib import nullcontext
+        self.service.mode = 'live'
+        self.service._model_config_valid = True
+        self.service._wa_enabled = True
+        params = {'account_id': 'wa-account', 'connection_epoch': 'epoch-1', 'chat_id': 'contact',
+                  'pending_message_id': 'model-image', 'fingerprint': self.service._wa_fingerprint('contact'),
+                  'model_snapshot': self.service._freeze_reception_model(('text', 'structure', 'single_image', 'combined')),
+                  'context': context}
+        change_source[0] = True
+        with patch.object(self.service, '_ensure_identity'), patch.object(self.service, '_job_phase', return_value=nullcontext()):
+            with self.assertRaises(ServiceError):
+                self.service._task_whatsapp_reply(params, 'stale-job', 1, facade)
+        self.assertFalse(self.service.repo.list('wa_operation'))
+        with self.assertRaises(ServiceError):
+            facade.generate_whatsapp(context, 'old-image-job')
+        self.assertEqual(len(requests), 2)
+        self.service.mode = 'demo'
+
+    def test_image_transfer_rejects_bad_offset_and_epoch(self):
+        self.setUpAccount()
+        self.ingest('image-transfer', has_image=True)
+        media = self.service.get_whatsapp_context('contact')['whatsapp_messages'][-1]['media']
+        identity = dict(account_id='wa-account', connection_epoch='epoch-1', chat_id='contact', message_id='image-transfer', source_version=media['source_version'])
+        transfer = self.service._wa_media_begin(**identity, mime_type='image/png')['transfer_id']
+        with self.assertRaises(ServiceError):
+            self.service._wa_media_chunk(**identity, transfer_id=transfer, offset=1, data_base64='YQ==')
+        transfer = self.service._wa_media_begin(**identity, mime_type='image/png')['transfer_id']
+        self.service._wa_set_account('wa-account', 'epoch-2', 'connected')
+        with self.assertRaises(ServiceError):
+            self.service._wa_media_chunk(**identity, transfer_id=transfer, offset=0, data_base64='YQ==')
+
+    def test_old_image_version_cannot_be_claimed_by_new_epoch(self):
+        self.setUpAccount()
+        self.ingest('old-image', has_image=True)
+        version = self.service.get_whatsapp_context('contact')['whatsapp_messages'][-1]['media']['source_version']
+        self.service._wa_set_account('wa-account', 'epoch-2', 'connected')
+        with self.assertRaises(ServiceError):
+            self.service._wa_media_begin('wa-account', 'epoch-2', 'contact', 'old-image', version, 'image/png')
+
+    def test_image_transfer_rejects_bad_digest_and_bad_image(self):
+        self.setUpAccount()
+        self.ingest('invalid-image', has_image=True)
+        media = self.service.get_whatsapp_context('contact')['whatsapp_messages'][-1]['media']
+        identity = dict(account_id='wa-account', connection_epoch='epoch-1', chat_id='contact', message_id='invalid-image', source_version=media['source_version'])
+        for digest in ('0' * 64, hashlib.sha256(b'not an image').hexdigest()):
+            transfer = self.service._wa_media_begin(**identity, mime_type='image/png')['transfer_id']
+            self.service._wa_media_chunk(**identity, transfer_id=transfer, offset=0, data_base64=base64.b64encode(b'not an image').decode())
+            with self.assertRaises(ServiceError):
+                self.service._wa_media_finish(**identity, transfer_id=transfer, size=12, sha256=digest)
+        self.assertEqual(self.service.get_whatsapp_context('contact')['whatsapp_messages'][-1]['media']['status'], 'pending')
+        self.assertFalse(self.service.repo.list('wa_media_asset'))
 
     def test_batch_advances_only_on_exact_ack_and_preserves_early_echo(self):
         self.setUpAccount()
@@ -230,7 +427,7 @@ class WhatsAppTests(unittest.TestCase):
         self.assertEqual(project_model_payload(context)['whatsapp_messages'], context['whatsapp_messages'])
         with patch.object(facade, 'resolve_identity', return_value='123') as identity, \
                 patch.object(facade, '_assistance_query', return_value={'reply_messages': [{'body': 'Hello',
-                    'reply_sources': ['wa-source']}], 'wa_summary': '客户问候。'}):
+                    'reply_sources': ['wa-source']}], 'wa_summary': '客户问候。', '_host_model_result': {}}):
             output = facade.generate_whatsapp(context, 'job')
         identity.assert_called_once_with('123')
         self.assertEqual(output['reply_sources'], ['wa-source'])

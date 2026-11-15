@@ -4,11 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目与维护入口
 
-客户接待工作台是面向 Windows 的 Electron + React/TypeScript 桌面应用，Python 服务承载业务，SQLite 保存本地状态，需求采集、回复和图片 AI 经 Accio Work 授权环境调用；聊天中文翻译可独立配置第三方通用文本模型。自动接待与普通人工聊天并存；飞书是可选的异步登记渠道。
+客户接待工作台是面向 Windows 的 Electron + React/TypeScript 桌面应用，Python 服务承载业务，SQLite 保存本地状态。0.4.0 普通入口为轻量启动台，同一 Windows 用户统一管理多个 API 并分别选择接待和翻译模型；需求、摘要及回复使用所选接待 API，相关受控原图与文字同轮提交。Accio Work 继续提供商家身份、平台读取、发送和采购工具。自动接待与普通人工聊天并存；飞书是可选的异步登记渠道。
+
+0.4.0 当前处于最终整合验证阶段，尚未构建候选或公开发布；用户已授权完成后直接打包发布。以[说明](docs/0.4.0发布说明.md)和[验证记录](docs/verification/0.4.0.json)记录实际结果。正式版拒绝 Demo 启动，合成支持位于独立 test_support/fixtures，不进入发行闭包。商家索引不保存 Accio 令牌，已有窗口经本机双向握手核验后才能激活，新窗口仍需受支持的授权启动。以下 0.3.x 段落保留历史发行证据，当前模型与入口语义以 0.4.0 实现为准。
 
 源码在独立私有仓库 `juccistar/reception-workbench` 维护，默认分支为 `main`。安装包与客户端更新继续使用公开仓库 `juccistar/reception-workbench-releases`；旧 Qt 工程及导出分支仅是历史来源，运行时不导入旧工程。仓库、应用标识、数据命名空间与固定签名公钥的约定见 [PROJECT.md](docs/PROJECT.md)。
 
-当前源码及公开发行为0.3.21，最终A候选307018f已正式发布，公开latest、四附件匿名完整下载及固定更新签名已核对；源码4770407与候选均构建后立即本地提交。后端200项、桌面/宿主191项及工具1项定向用例、类型与提示词一致性检查通过；源码和最终EXE各8张窗口图、包内正常扫码及受控SDK故障后原页保留2图均已逐张查看，扫码两组各观察超过60秒并确认刷新。实际状态见[方案](docs/0.3.21开发方案.md)、[说明](docs/0.3.21发布说明.md)和[记录](docs/verification/0.3.21.json)。自动接待按真人聊天节奏自然一至三条并逐条受理推进；人工只有普通单正文和整段建议/润色，旧多项建议不兼容、不拼接转换。当前自动进度与折叠历史记录独立于人工输入，常规尾部提取入口退役，旧操作和unknown保全。WhatsApp仅在原生确认新建时采用27字符短分区与v2配置，旧代次和原账本不变，旧0.3.20不识别v2。窗口自动两条/三条使用预置AI及实际Demo业务回执，中间等待/核查/停止使用投影夹具；未验收真实模型聊天效果或实号登录收发，未安装替换本机程序、迁移真实数据或推送私有源码，不以公开版本推断本机已升级。
+0.3.21公开发行基线的最终A候选307018f已正式发布，公开latest、四附件匿名完整下载及固定更新签名已核对；源码4770407与候选均构建后立即本地提交。后端200项、桌面/宿主191项及工具1项定向用例、类型与提示词一致性检查通过；源码和最终EXE各8张窗口图、包内正常扫码及受控SDK故障后原页保留2图均已逐张查看，扫码两组各观察超过60秒并确认刷新。实际状态见[方案](docs/0.3.21开发方案.md)、[说明](docs/0.3.21发布说明.md)和[记录](docs/verification/0.3.21.json)。自动接待按真人聊天节奏自然一至三条并逐条受理推进；人工只有普通单正文和整段建议/润色，旧多项建议不兼容、不拼接转换。当前自动进度与折叠历史记录独立于人工输入，常规尾部提取入口退役，旧操作和unknown保全。WhatsApp仅在原生确认新建时采用27字符短分区与v2配置，旧代次和原账本不变，旧0.3.20不识别v2。窗口自动两条/三条使用预置AI及实际Demo业务回执，中间等待/核查/停止使用投影夹具；未验收真实模型聊天效果或实号登录收发，未安装替换本机程序、迁移真实数据或推送私有源码，不以公开版本推断本机已升级。
 
 常用资料：[开发说明](docs/DEVELOPMENT.md)、[现行规则](docs/CURRENT_RULES.md)、[实施契约](docs/IMPLEMENTATION_CONTRACT.md)、[架构](docs/项目开发/02-架构文档.md)。此前0.3.20最终B候选225364c已正式发布，公开latest、四附件匿名完整下载和固定更新签名已核对，未安装替换本机程序。相关后端173项、桌面165项定向用例及类型检查通过；源码与最终EXE各12张窗口图、公共扫码2图及原生恢复确认2图均已查看。公共扫码正常及受控故障保留各超过60秒并观察刷新，B与受测A的应用和SDK归档逐字节一致；实号登录收发仍未验收。分条发送增加可说明原因的门控和waiting_sync，旧停止批次可凭确切未提交证据提取人工草稿；WhatsApp新增当前商家原生确认后的登录环境代次，零代沿用旧分区、旧目录与发送账本保全。源码、候选和公开状态见[0.3.20说明](docs/0.3.20发布说明.md)及[验证记录](docs/verification/0.3.20.json)，不以源码版本推断本机安装已更新。此前0.3.19公开latest及四附件匿名完整下载已核对；发布时未安装替换本机程序。0.3.19现已增补需求补录及窗口外旧需求保护、自然1至3条回复、国际站与WhatsApp逐条回执、人工分条编辑及当前条目润色；商品段落严格只删除“平台商品ID及”，不增加ID判断提示。增补源码构建85a91ce和A候选构建3735711完成后均立即提交，后端200项、桌面142项定向用例及类型/提示词检查通过；源码与候选EXE分别完成分条6图和诊断6图，均已查看。最终A候选已正式发布；候选文件、固定更新签名、SDK闭包和四附件匿名完整下载已核对。包内宿主及SDK正常扫码与受控故障后页面保留均观察超过60秒并覆盖刷新，两图已查看；此前公共页曾出现两次sdk_timeout，根因未确认，失败记录保留。WhatsApp分阶段脱敏诊断、可信页面在SDK失败后的保留、旧绑定清理及即时宿主状态继续保留，不加入旧数据清理。此前诊断基线构建完成立即提交f7f3c51，57项桌面、32项后端定向用例、1项SDK资源用例及类型检查通过；实际Demo窗口6图和公共页2图已逐张查看，编译宿主无预热冷启动及受控SDK失败后原始二维码均持续超过60秒并正常刷新。实施与实际验收结果见[方案](docs/0.3.19开发方案.md)、[说明](docs/0.3.19发布说明.md)和[记录](docs/verification/0.3.19.json)；真实商家连接故障尚未复现，实号登录收发未验收。0.3.18最终A候选构建完成立即提交22d6ecd并正式发布；最终EXE窗口、包内SDK公共扫码、固定更新签名与四附件匿名完整下载已核对，候选7张截图已逐张查看。0.3.18继续内嵌WhatsApp，规范视图及会话请求头、校正真实CDP版本、分阶段超时与取消，删除图片覆盖展示；后台增加出队完成归属、原线程异常保护、独立executor.health事件/get_executor_health快路径与受限轮转日志。健康异常撤销两通道授权，原发送unknown与确切请求回执保留；前端按观测时间合并健康状态，同毫秒故障优先。源码/窗口及公共SDK引导的实际验收范围见[开发方案](docs/0.3.18快速开发方案.md)、[说明](docs/0.3.18发布说明.md)和[记录](docs/verification/0.3.18.json)，实际公共扫码及SDK初始化已通过；网络使用真实Chromium标准标识，去掉会使网页误判版本的附加应用/Electron token，宿主版本保留在本地诊断。公共扫码不替代实号登录收发验收。0.3.17已按用户要求先修复并提交，再开发WhatsApp；最终C候选打包后立即提交a150253并正式发布，历史核验范围见[方案](docs/0.3.17开发方案.md)、[说明](docs/0.3.17发布说明.md)和[记录](docs/verification/0.3.17.json)。0.3.16的需求仅在确需新建或更新时改变，支持同客户多事项归属、原图预览和右键复制、顶部接待切换、直接历史补全、固定补充底栏及完整链接独立操作，见[开发方案](docs/0.3.16开发方案.md)、[发布说明](docs/0.3.16发布说明.md)、[验证记录](docs/verification/0.3.16.json)及[提示词规则核对](docs/0.3.16提示词规则核对.md)。requirement_changes.py共用需求增量与多事项应用，正式需求仍为ai-v1；无变化不输出／重写需求，clear_fields才表达有依据清空，requirements_revision与普通case修订分开。手动查看旧事项不改后台当前指针，已停止事项不因路由重新开启或抢占当前接待。cached_media.py及media-host.ts通过宿主私有分块读取原图和复制用全尺寸PNG，不提高普通响应预算。
 
@@ -37,9 +39,9 @@ Python 运行时依赖见 `services/reception/pyproject.toml`。Node 脚本优�
 | 命令 | 实际作用 |
 | --- | --- |
 | `npm run build` | esbuild 打包 main/preload，Vite 构建 renderer，输出到 `artifacts/app`；不打包 Python |
-| `npm start` | 启动 Electron，默认 Demo；仅当 main 构建产物不存在时先构建 |
+| `npm start` | 启动 Electron，普通入口为启动台；仅当 main 构建产物不存在时先构建 |
 | `npm run typecheck` | 按桌面端 tsconfig 执行 `tsc --noEmit` |
-| `npm run test:backend` | 使用项目 Python 执行 unittest discovery |
+| `npm run test:backend` | 使用项目 Python 按文件隔离运行；旧用例显式装配合成支持，040用例默认走生产入口 |
 | `npm run test:ui` | 执行桌面/宿主 Vitest 测试 |
 | `npm run test:tools` | 用 Node 内置测试运行器执行 `scripts/tests/*.test.mjs` |
 | `npm test` | 串行运行后端、桌面/宿主、工具三组测试，不包含类型检查或构建 |
@@ -54,7 +56,7 @@ Python 运行时依赖见 `services/reception/pyproject.toml`。Node 脚本优�
 # 后端单文件
 $env:PYTHONPATH = 'services/reception/src'
 $env:PYTHONIOENCODING = 'utf-8'
-.\services\reception\.venv\Scripts\python.exe -B -m unittest discover -s services/reception/tests -p 'test_manual_receipts.py' -v
+.\services\reception\.venv\Scripts\python.exe -B -m unittest discover -s services/reception/tests -p 'test_identity_revocation_040.py' -v
 
 # 桌面/宿主单文件
 npm run test:ui -- apps/desktop/tests/chat-service-client.test.ts
@@ -63,9 +65,9 @@ npm run test:ui -- apps/desktop/tests/chat-service-client.test.ts
 node --test scripts/tests/release-paths.test.mjs
 ```
 
-后端命令追加 `-k test_missing_or_invalid_acceptance_evidence_stays_unknown` 可运行单个用例；上述 Vitest 命令追加 `-t "preserves Unicode"` 可按用例名称筛选。
+后端命令追加 `-k test_failed_resolution_revokes_all_grants_without_changing_unknown` 可运行单个用例；旧版用例使用 `npm run test:backend -- test_manual_receipts.py` 显式装配独立合成支持。上述 Vitest 命令追加 `-t "preserves Unicode"` 可按用例名称筛选。
 
-`node scripts/smoke-demo.mjs --label dev-check-001` 会使用临时 Demo 数据实际打开 Electron，检查翻译、主动建议和正常关闭，并在 `artifacts/verification/demo-<label>` 保存报告及截图；先构建，每次换一个未使用的 label。截图验收需要实际查看图片。普通浏览器没有 `window.reception` 桥，不能作为完整工作台运行环境。
+0.4.0 先构建，再使用 `node scripts/smoke-launcher-entry-040.mjs --label dev-check-001` 检查正式启动台；它会在发现已有全局配置或商家索引时停止，不改真实配置。`smoke-launcher-040.mjs` 与 `smoke-workbench-040.mjs` 使用同样的 `--label` 参数，在临时目录通过独立宿主和合成业务检查交互，不能当作真实商家验收。报告与截图保存到 `artifacts/verification/` 对应目录，每次使用新 label。旧 smoke-demo 不适用于正式0.4.0入口。截图验收需要实际查看图片。普通浏览器没有 `window.reception` 桥，不能作为完整工作台运行环境。
 
 真实连接需在目标商家的 Accio Work 授权会话执行 `授权启动接待.cmd`。启动仅建立当前身份及读取能力，AI 检查和自动发送授权有各自的操作，详见 [授权启动说明](docs/自动接待启动与授权.md)。离线回归使用临时目录、合成数据和替身；真实平台读取、AI、客户发送和飞书写入分别按当前明确授权的对象与范围执行。
 
@@ -91,8 +93,8 @@ npm run package:release -- --candidate --output relase/release-next
 - **桌面宿主与桥**：`apps/desktop/src/main/index.ts` 管理窗口、IPC 来源检查、原生确认、后台生命周期、存储和更新。`preload/index.ts` 只向 renderer 暴露冻结的 `window.reception`。页面没有 Node、SQLite、任意文件或 shell 接口；存储、更新和授权启动指引走专用 IPC，不混入业务 RPC。
 - **业务传输**：`main/service-client.ts` 管理一个自有 Python 子进程，通过 stdin/stdout 的 UTF-8 JSON Lines 关联请求和事件，不开放本地 HTTP 业务端口。请求为 `{id, method, params}`，响应为 `{id, result}` 或 `{id, error}`，事件为 `{event, data}`。stdout 只能输出协议，不能混入普通日志。
 - **跨语言契约**：`apps/desktop/src/shared/api.ts` 定义 DTO、`ReceptionBridge` 和 `API_METHODS`，`shared/chat-protocol.ts` 校验人工聊天参数。新增或修改业务接口时同时核对 preload、main 与 Python 分派；字段使用 snake_case，时间使用毫秒。`confirm_send` 由宿主经专用原生确认入口调用，`shutdown` 仅供宿主内部使用。
-- **Python 业务层**：`services/reception/run.py` 引导包入口 `src/reception_service/__main__.py`；`service.py` 中的 `ReceptionService` 负责业务分派、任务、授权和状态协调。慢操作先返回 `{job_id}`，后续通过任务事件更新结果。业务协调和外部 AI 等待分离，每商家一个 Accio AI 执行槽；消息监测独立，队列优先处理人工发送、回执核查及已就绪自动发送，并保留公平调度。本地查询、保存和暂停不应排在长 AI 请求后；接管、暂停及来源变化可取消旧生成。聊天第三方翻译使用独立HTTP队列，原生业务不抢占其请求；译文按商家持久保存。0.3.6的服务地址、模型和Key由宿主用Windows用户级DPAPI在同Windows用户间共享，目录取真实KnownFolder而非Accio重定向的LOCALAPPDATA；商家启用绑定实际数据根，更换端点或恢复到新根须重新确认，业务数据仍隔离。
-- **上下文与外部适配**：`context.py` 组合有预算的消息、采购事实、适用资料、会话补充及受限原图引用。`build_integrations` 为 Demo/Live 提供同一门面：Demo 使用合成数据，Live 经 `integrations/live.py` 和 `integrations/accio_native/` 调用 Accio。原生副本来源见 `vendor/SOURCE.txt`，可维护但变更需保留来源说明及回归；需求与回复继续使用Accio；第三方Provider用于聊天文字和有效人工建议的中文翻译，不翻译采购事项或自动内部草稿。
+- **Python 业务层**：`services/reception/run.py` 引导包入口 `src/reception_service/__main__.py`；`service.py` 中的 `ReceptionService` 负责业务分派、任务、授权和状态协调。慢操作先返回 `{job_id}`，后续通过任务事件更新结果。业务协调和模型等待分离，接待与翻译各1槽、活跃HTTP合计2、带图最多1；采购使用独立Accio槽。模型同步回调由有界工作线程执行，取消后实际结束才归还槽和资源；消息监测独立，队列优先处理人工发送、回执核查及已就绪自动发送，并保留公平调度。本地查询、保存和暂停不应排在长 AI 请求后；接管、暂停及来源变化可取消旧生成。聊天第三方翻译使用独立HTTP队列，原生业务不抢占其请求；译文按商家持久保存。0.3.6的服务地址、模型和Key由宿主用Windows用户级DPAPI在同Windows用户间共享，目录取真实KnownFolder而非Accio重定向的LOCALAPPDATA；商家启用绑定实际数据根，更换端点或恢复到新根须重新确认，业务数据仍隔离。
+- **上下文与外部适配**：`context.py` 组合有预算的消息、采购事实、适用资料、会话补充及受限原图引用。正式 `build_integrations` 只构造 Live；开发合成工厂显式从 test_support 注入。`integrations/live.py` 通过 ModelRouter 调所选接待API，相关受控原图与文字同轮编码并核输入证据，不回退Accio接待AI；`integrations/accio_native/` 保留身份、平台和采购工具。原生副本来源见 `vendor/SOURCE.txt`，可维护但变更需保留来源说明及回归。翻译用途只处理聊天文字和有效人工建议，不翻译采购事项或自动内部草稿。全局模型列表、接待/翻译路由和修订由启动台配置，Key使用真实KnownFolder下的CurrentUser DPAPI文件，renderer不回读明文；权威文件修订检查不能只依赖通知。
 
 0.3.13的Case.requirements_format=ai-v1，requirements固定product、product_id、product_url、product_images、quantity、specifications、customization、destination、delivery、budget、packaging、certifications、contact共13键，值为{value,evidence_ids,source_excerpts?,evidence_versions?}；除图片为string[]，其余为中文业务正文或null，不写display_value或字段提醒状态。AI依据真实需求整理字段，product_url由程序根据数字ID派生；程序不扫描历史链接或解析假定卡片/SKU代填，不另存平台标题。conversation_summary按商家+conversation_id独立保存，同会话多需求共用，无Case仍可有摘要和人工聊天；正常接待/人工建议同轮更新，润色仅改冻结正文。
 

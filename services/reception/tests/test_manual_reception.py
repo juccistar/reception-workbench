@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from test_core import MockFacade
+from reception_test_support.model import configure_synthetic_model, synthetic_snapshot
 from reception_service.errors import ServiceError
 from reception_service.repository import new_id, now_ms
 from reception_service.service import ReceptionService
@@ -22,6 +23,13 @@ class ManualFacade(MockFacade):
         self.previews = []
         self.intents = []
         self.recent_reads = 0
+
+    def generate(self, context, request_id, *, on_call_start=None, cancel_event=None):
+        if on_call_start:
+            on_call_start()
+        result = super().generate(context, request_id)
+        result['model_snapshot'] = synthetic_snapshot(self.model_router)
+        return result
 
     def read_recent_conversations(self, seller_id, before_ms=None, count=20):
         self.recent_reads += 1
@@ -47,6 +55,8 @@ class ManualReceptionTests(unittest.TestCase):
         self.scheduler = patch.object(ReceptionService, '_schedule', return_value=None)
         self.scheduler.start()
         self.service = ReceptionService(self.root, 'live', seller_id=self.facade.seller)
+        configure_synthetic_model(self.service, self.root / 'model-authority.json', activate=True)
+        self.facade.model_router = self.service._model_router
         self.assertEqual(self.wait_job(self.service.call('check_connection'))['status'], 'succeeded')
         self.cid = '10001:10002'
         self.case_id = self.ingest()['case_id']
@@ -114,10 +124,8 @@ class ManualReceptionTests(unittest.TestCase):
         return {'case_id': case['case_id'], 'expected_case_revision': case['revision']}
 
     def test_failed_live_ai_does_not_block_manual_preview_and_acceptance(self):
-        def fail_ai(context, request_id):
-            self.facade.generate_calls += 1
-            raise ServiceError('synthetic_ai_failed', 'Synthetic AI failed')
-        with patch.object(self.facade, 'generate', side_effect=fail_ai):
+        with patch.object(self.service, '_freeze_reception_model',
+                          side_effect=ServiceError('synthetic_ai_failed', 'Synthetic AI failed')):
             checked = self.wait_job(self.service.call('check_ai'))
         self.assertEqual(checked['status'], 'failed')
         self.assertEqual(self.service.checks['ai']['status'], 'failed')
@@ -135,7 +143,7 @@ class ManualReceptionTests(unittest.TestCase):
         result = self.confirm(self.prepare(draft))
         self.assertEqual(result['status'], 'succeeded', result)
         self.assertEqual(result['result']['status'], 'accepted')
-        self.assertEqual(self.facade.generate_calls, 1)
+        self.assertEqual(self.facade.generate_calls, 0)
         self.assertTrue(self.facade.observed_authorization)
         self.assertEqual(self.facade.previews[0]['send_mode'], 'manual')
         self.assertEqual(self.facade.intents[0]['send_mode'], 'manual')
@@ -337,7 +345,7 @@ class ManualReceptionTests(unittest.TestCase):
             self.assertEqual(self.wait_job(ack)['status'], 'failed')
         self.assertEqual(self.service.get_conversation(self.cid)['case'], before)
 
-    def test_explicit_ai_check_pauses_manual_mode_and_uses_synthetic_context(self):
+    def test_explicit_ai_check_pauses_manual_mode_and_checks_model_capabilities(self):
         self.start_manual()
         draft = self.manual()
         confirmation = self.prepare(draft)
@@ -346,9 +354,9 @@ class ManualReceptionTests(unittest.TestCase):
         self.assertEqual(checked['status'], 'succeeded', checked)
         self.assertFalse(self.service.get_snapshot()['reception']['running'])
         self.assertEqual(self.confirm(confirmation)['status'], 'failed')
-        context = generate.call_args.args[0]
-        self.assertNotEqual(context['case']['case_id'], self.case_id)
-        self.assertNotIn(self.cid, str(context))
+        generate.assert_not_called()
+        self.assertEqual(self.service.checks['ai']['status'], 'passed')
+        self.service._assert_reception_model(synthetic_snapshot(self.service._model_router))
         self.assertEqual(self.service.get_conversation(self.cid)['draft'], draft)
 
     def test_queued_ai_check_is_revoked_when_manual_reception_resumes(self):

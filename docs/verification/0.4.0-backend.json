@@ -1,0 +1,335 @@
+{
+  "version": "0.4.0",
+  "status": "passed",
+  "scope": "selected_backend_regressions",
+  "full_suite": false,
+  "files": [
+    {
+      "file": "test_attempt_service_paths_040.py",
+      "status": "passed",
+      "tests": 7,
+      "exit_code": 0,
+      "elapsed_ms": 4539,
+      "log_truncated": false
+    },
+    {
+      "file": "test_execution_translation_040.py",
+      "status": "passed",
+      "tests": 4,
+      "exit_code": 0,
+      "elapsed_ms": 370,
+      "log_truncated": false
+    },
+    {
+      "file": "test_identity_revocation_040.py",
+      "status": "passed",
+      "tests": 4,
+      "exit_code": 0,
+      "elapsed_ms": 1430,
+      "log_truncated": false
+    },
+    {
+      "file": "test_image_transfer_040.py",
+      "status": "passed",
+      "tests": 6,
+      "exit_code": 0,
+      "elapsed_ms": 721,
+      "log_truncated": false
+    },
+    {
+      "file": "test_image_transfer_metadata_040.py",
+      "status": "passed",
+      "tests": 5,
+      "exit_code": 0,
+      "elapsed_ms": 736,
+      "log_truncated": false
+    },
+    {
+      "file": "test_input_ownership_runtime_040.py",
+      "status": "passed",
+      "tests": 7,
+      "exit_code": 0,
+      "elapsed_ms": 1746,
+      "log_truncated": false
+    },
+    {
+      "file": "test_message_page_040.py",
+      "status": "passed",
+      "tests": 2,
+      "exit_code": 0,
+      "elapsed_ms": 288,
+      "log_truncated": false
+    },
+    {
+      "file": "test_model_attempt_lifecycle_040.py",
+      "status": "passed",
+      "tests": 10,
+      "exit_code": 0,
+      "elapsed_ms": 2573,
+      "log_truncated": false
+    },
+    {
+      "file": "test_model_attempts_040.py",
+      "status": "passed",
+      "tests": 10,
+      "exit_code": 0,
+      "elapsed_ms": 1173,
+      "log_truncated": false
+    },
+    {
+      "file": "test_model_checker_040.py",
+      "status": "passed",
+      "tests": 10,
+      "exit_code": 0,
+      "elapsed_ms": 1728,
+      "log_truncated": false
+    },
+    {
+      "file": "test_model_generation_040.py",
+      "status": "passed",
+      "tests": 12,
+      "exit_code": 0,
+      "elapsed_ms": 2975,
+      "log_truncated": false
+    },
+    {
+      "file": "test_model_image_interleave_040.py",
+      "status": "passed",
+      "tests": 1,
+      "exit_code": 0,
+      "elapsed_ms": 2048,
+      "log_truncated": false
+    },
+    {
+      "file": "test_model_inputs_040.py",
+      "status": "passed",
+      "tests": 10,
+      "exit_code": 0,
+      "elapsed_ms": 417,
+      "log_truncated": false
+    },
+    {
+      "file": "test_model_network_040.py",
+      "status": "passed",
+      "tests": 4,
+      "exit_code": 0,
+      "elapsed_ms": 1796,
+      "log_truncated": false
+    },
+    {
+      "file": "test_model_provider_encoding_040.py",
+      "status": "passed",
+      "tests": 5,
+      "exit_code": 0,
+      "elapsed_ms": 237,
+      "log_truncated": false
+    },
+    {
+      "file": "test_model_resource_budget_040.py",
+      "status": "passed",
+      "tests": 4,
+      "exit_code": 0,
+      "elapsed_ms": 1662,
+      "log_truncated": false
+    },
+    {
+      "file": "test_model_router_040.py",
+      "status": "passed",
+      "tests": 3,
+      "exit_code": 0,
+      "elapsed_ms": 307,
+      "log_truncated": false
+    },
+    {
+      "file": "test_model_runtime_040.py",
+      "status": "passed",
+      "tests": 2,
+      "exit_code": 0,
+      "elapsed_ms": 460,
+      "log_truncated": false
+    },
+    {
+      "file": "test_model_transport_040.py",
+      "status": "passed",
+      "tests": 11,
+      "exit_code": 0,
+      "elapsed_ms": 1804,
+      "log_truncated": false
+    },
+    {
+      "file": "test_production_entry_040.py",
+      "status": "passed",
+      "tests": 4,
+      "exit_code": 0,
+      "elapsed_ms": 1948,
+      "log_truncated": false
+    },
+    {
+      "file": "test_requirement_model_040.py",
+      "status": "passed",
+      "tests": 1,
+      "exit_code": 0,
+      "elapsed_ms": 944,
+      "log_truncated": false
+    },
+    {
+      "file": "test_service_integration_040.py",
+      "status": "passed",
+      "tests": 8,
+      "exit_code": 0,
+      "elapsed_ms": 12788,
+      "log_truncated": false
+    },
+    {
+      "file": "test_service_model_wiring_040.py",
+      "status": "passed",
+      "tests": 4,
+      "exit_code": 0,
+      "elapsed_ms": 586,
+      "log_truncated": false
+    },
+    {
+      "file": "test_upstream_input_ownership_040.py",
+      "status": "passed",
+      "tests": 10,
+      "exit_code": 0,
+      "elapsed_ms": 1597,
+      "log_truncated": false
+    },
+    {
+      "file": "test_manual_reception.py",
+      "status": "passed",
+      "tests": 27,
+      "exit_code": 0,
+      "elapsed_ms": 12341,
+      "log_truncated": false
+    },
+    {
+      "file": "test_photo_reception.py",
+      "status": "passed",
+      "tests": 21,
+      "exit_code": 0,
+      "elapsed_ms": 21060,
+      "log_truncated": false
+    },
+    {
+      "file": "test_message_monitor.py",
+      "status": "passed",
+      "tests": 50,
+      "exit_code": 0,
+      "elapsed_ms": 41001,
+      "log_truncated": false
+    },
+    {
+      "file": "test_whatsapp_0317.py",
+      "status": "passed",
+      "tests": 29,
+      "exit_code": 0,
+      "elapsed_ms": 11385,
+      "log_truncated": false
+    },
+    {
+      "file": "test_whatsapp_media_lifetime.py",
+      "status": "passed",
+      "tests": 3,
+      "exit_code": 0,
+      "elapsed_ms": 615,
+      "log_truncated": false
+    },
+    {
+      "file": "test_conversation_assistance_031.py",
+      "status": "passed",
+      "tests": 13,
+      "exit_code": 0,
+      "elapsed_ms": 4936,
+      "log_truncated": false
+    },
+    {
+      "file": "test_reply_batches_0319.py",
+      "status": "passed",
+      "tests": 17,
+      "exit_code": 0,
+      "elapsed_ms": 15474,
+      "log_truncated": false
+    },
+    {
+      "file": "test_requirement_changes_0316.py",
+      "status": "passed",
+      "tests": 18,
+      "exit_code": 0,
+      "elapsed_ms": 6268,
+      "log_truncated": false
+    },
+    {
+      "file": "test_storage_maintenance.py",
+      "status": "passed",
+      "tests": 20,
+      "exit_code": 0,
+      "elapsed_ms": 14436,
+      "log_truncated": false
+    },
+    {
+      "file": "test_reception_prompts_0314.py",
+      "status": "passed",
+      "tests": 11,
+      "exit_code": 0,
+      "elapsed_ms": 611,
+      "log_truncated": false
+    },
+    {
+      "file": "test_demo_incoming.py",
+      "status": "passed",
+      "tests": 3,
+      "exit_code": 0,
+      "elapsed_ms": 1863,
+      "log_truncated": false
+    },
+    {
+      "file": "test_execution_0310.py",
+      "status": "passed",
+      "tests": 30,
+      "exit_code": 0,
+      "elapsed_ms": 17482,
+      "log_truncated": false
+    },
+    {
+      "file": "test_procurement_0310.py",
+      "status": "passed",
+      "tests": 13,
+      "exit_code": 0,
+      "elapsed_ms": 3006,
+      "log_truncated": false
+    },
+    {
+      "file": "test_product_catalog_0312.py",
+      "status": "passed",
+      "tests": 13,
+      "exit_code": 0,
+      "elapsed_ms": 3443,
+      "log_truncated": false
+    },
+    {
+      "file": "test_supplement_attachments.py",
+      "status": "passed",
+      "tests": 9,
+      "exit_code": 0,
+      "elapsed_ms": 4945,
+      "log_truncated": false
+    },
+    {
+      "file": "test_cached_media.py",
+      "status": "passed",
+      "tests": 7,
+      "exit_code": 0,
+      "elapsed_ms": 550,
+      "log_truncated": false
+    }
+  ],
+  "tests": 428,
+  "raw_log_directory": "artifacts/verification/backend-040-final-003",
+  "previous_failed_runs_preserved": [
+    "artifacts/verification/backend-040-final-001",
+    "artifacts/verification/backend-040-adjacent-001",
+    "artifacts/verification/backend-040-fixtures-002"
+  ]
+}

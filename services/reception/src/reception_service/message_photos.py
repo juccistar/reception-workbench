@@ -199,6 +199,7 @@ class MessagePhotosMixin:
 
     def _prepare_direct_photos(self, conversation_id, job_id, epoch, facade):
         """Load originals on this worker; the main AI request reads them itself."""
+        started = time.monotonic()
         cid = conversation_id
         with self._lock:
             token = self._read_token(facade)
@@ -221,7 +222,7 @@ class MessagePhotosMixin:
                 return list(selected.values())
             candidates = copy.deepcopy(selected_images(original_messages))
             seconds = self.settings.get('image_prepare_seconds', 60)
-            seconds = seconds if type(seconds) is int and 1 <= seconds <= 600 else 60
+            seconds = min(seconds, 60) if type(seconds) is int and seconds >= 1 else 60
             batch_mib = self.settings.get('image_batch_mib', 64)
             batch_mib = batch_mib if type(batch_mib) is int and 1 <= batch_mib <= 1024 else 64
             parallelism = self.settings.get('image_parallelism', 2)
@@ -251,16 +252,16 @@ class MessagePhotosMixin:
             for message, sha in bindings.values():
                 current = self._photo_target(cid, message['message_id'], photo_version(message))
                 state = self._photo_state(current)
-                asset = self.repo.get('image_asset', sha)
+                asset = self.repo.image_transfer_metadata('image_asset', sha)
                 if state.get('status') != 'ready' or state.get('sha256') != sha or not asset or asset.get('sha256') != sha:
                     raise ServiceError('cancelled', '图片内容已变化，旧回复未应用')
 
-        started = time.monotonic()
         deadline = started + seconds
         cancel_event = self._generation_cancel_event(job_id)
         coverage = {message['message_id']: {'message_id': message['message_id'], 'role': message['role'],
                                            'status': 'pending', 'reason': 'not_prepared'} for message in candidates}
-        guard.photo_deadline = deadline
+        from .model_media import PhotoDeadline
+        guard.photo_deadline = PhotoDeadline(deadline, started)
         guard.photo_coverage = coverage
         total_bytes = 0
         pending = []
@@ -291,7 +292,7 @@ class MessagePhotosMixin:
                 guard()
                 state = self._photo_state(message)
                 sha = state.get('sha256')
-                asset = self.repo.get('image_asset', sha) if sha else None
+                asset = self.repo.image_transfer_metadata('image_asset', sha) if sha else None
                 if state.get('status') != 'ready' or not asset or asset.get('sha256') != sha:
                     coverage[message['message_id']].update(status='failed', reason='load_failed')
                     return
@@ -413,7 +414,30 @@ class MessagePhotosMixin:
     def _direct_photo_inputs(self, context):
         """Private arguments for an owned integration, never an RPC/image DTO."""
         photo = context.get('photo_context') or {}
-        result = []
+        from .model_media import OwnedInput
+        from .media_resources import ResourceLimitError
+        refs = [('image_asset', ref['image_sha256']) for ref in photo.get('direct_images', [])]
+        refs += [('supplement_attachment', ref['attachment_id']) for ref in context.get('supplement_image_refs', [])]
+        with self._lock:
+            metadata = [(kind, key, self.repo.image_transfer_metadata(kind, key)) for kind, key in refs]
+            if any(not item or item.get('content_type') != 'text'
+                   or type(item.get('content_length')) is not int or item['content_length'] <= 0
+                   for _, _, item in metadata):
+                raise ServiceError('source_changed', '图片内容已变化，请重新生成')
+            try:
+                owner = OwnedInput(2 * 1024 * 1024 + sum(item['content_length'] * 4 for _, _, item in metadata))
+            except ResourceLimitError as error:
+                raise ServiceError('model_resource_over_limit' if error.code == 'resource_too_large' else 'model_resource_busy',
+                                   '模型输入超出资源预算', stage='model') from None
+            try:
+                return self._snapshot_direct_photo_inputs(context, photo, metadata, owner)
+            except BaseException:
+                owner.close_if_owned()
+                raise
+
+    def _snapshot_direct_photo_inputs(self, context, photo, metadata, owner):
+        from .model_media import OwnedPhotoInputs
+        result = OwnedPhotoInputs(owner)
         with self._lock:
             for ref in photo.get('direct_images', []):
                 message = self._photo_target(ref['conversation_id'], ref['message_id'], ref['source_version'])
@@ -433,6 +457,9 @@ class MessagePhotosMixin:
                     raise ServiceError('source_changed', '业务补充图片已变化，请重新生成')
                 result.append({'attachment': copy.deepcopy(item), 'asset': {
                     'sha256': item['sha256'], 'mime': item['media_type'], 'original_b64': item['original_b64']}})
+            if any((self.repo.image_transfer_metadata(kind, key) or {}).get('version') != item['version']
+                   for kind, key, item in metadata):
+                raise ServiceError('source_changed', '图片内容已变化，请重新生成')
         return result
 
     def _observe_draft_photos(self, case, job_id, epoch, facade, prior_drafts, automatic):

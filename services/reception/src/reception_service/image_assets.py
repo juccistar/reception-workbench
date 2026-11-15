@@ -16,6 +16,9 @@ from urllib.parse import urljoin, urlsplit
 
 from PIL import Image, ImageOps
 
+from .media_resources import PROCESS_MEDIA_BUDGET, ResourceLimitError
+from .errors import ServiceError
+
 MAX_BYTES = 6 * 1024 * 1024
 MAX_PIXELS = 20_000_000
 MAX_DIMENSION = 8192
@@ -72,6 +75,18 @@ class _ImageRedirect(Exception):
 
 
 def decode_image(data: bytes, mime: str) -> dict:
+    # Reserve the maximum pixel workspace before Pillow opens or decodes data.
+    size = len(data) if isinstance(data, bytes) else 0
+    try:
+        lease = PROCESS_MEDIA_BUDGET.acquire(MAX_PIXELS * 16 + size * 4 + MAX_PREVIEW_BYTES * 4, pixels=True)
+    except ResourceLimitError as error:
+        raise ServiceError('model_resource_over_limit' if error.code == 'resource_too_large' else 'model_resource_busy',
+                           '图片处理资源暂不可用', stage='context') from None
+    with lease:
+        return _decode_image_leased(data, mime)
+
+
+def _decode_image_leased(data: bytes, mime: str) -> dict:
     if not isinstance(data, bytes) or len(data) > MAX_BYTES:
         raise ImageAssetError("image size limit exceeded")
     if not isinstance(mime, str) or mime.lower() not in (*_FORMATS.values(), _BINARY_MIME):
@@ -274,7 +289,7 @@ def fetch_image(resource_url: str, *, resolver=None, transport=None) -> dict:
                 continue
             _remaining(deadline)
             return decode_image(data, mime)
-    except ImageAssetError:
+    except (ImageAssetError, ServiceError):
         raise
     except Exception:
         raise ImageAssetError('image retrieval failed') from None

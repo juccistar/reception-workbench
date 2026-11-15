@@ -40,7 +40,8 @@ for (const row of manifest.files) {
   const staged = row.path === 'services/reception/run.py' ? path.join(staging, 'python/run.py') : path.join(staging, 'python/src', row.path.slice('services/reception/src/'.length));
   assert.equal(hash(await readFile(staged)), row.sha256, row.path + ' staged');
 }
-const currentPython = (await filesAt(path.join(root, 'services/reception/src'))).filter(name => (name.endsWith('.py') || name.endsWith('/SOURCE.txt') || name === 'reception_service/resources/builtin_policies.json') && !name.split('/').includes('__pycache__')).map(name => 'services/reception/src/' + name);
+const currentPython = (await filesAt(path.join(root, 'services/reception/src'))).filter(name => (name.endsWith('.py') || name.endsWith('/SOURCE.txt') || name === 'reception_service/resources/builtin_policies.json') && !name.split('/').includes('__pycache__') && name !== 'reception_service/integrations/demo.py').map(name => 'services/reception/src/' + name);
+assert(!manifest.files.some(row => row.path === 'services/reception/src/reception_service/integrations/demo.py'), 'Retired Demo shim must not enter package input');
 assert.deepEqual([...manifest.files.map(row => row.path)].sort(), [...currentPython, 'services/reception/run.py'].sort(), 'Python source manifest coverage');
 const frozen = path.join(staging, 'python-dist/reception-backend');
 const frozenFiles = await filesAt(frozen);

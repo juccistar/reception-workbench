@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { ApiMethod, ChatSendParams, ConversationDetail, Draft, ExecutorHealth, Job, JobAck, Outbox, Preferences, ReceptionBridge, ServiceEvent, Snapshot, Supplement, SupplementAttachment, SupplementAttachmentBatch, SupplementUpload } from '../../shared/api';
 import { executorHealth } from '../executorHealth';
+import { createEventRefresh } from './eventRefresh';
 
 export type Page = 'home' | 'reception' | 'whatsapp' | 'handoff' | 'customers' | 'policies' | 'settings' | 'activity' | 'products' | 'suppliers' | 'procurement';
 type SendStatus = Job['status'] | 'requesting' | 'retry' | 'accepted' | 'rejected';
@@ -114,7 +115,6 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const pendingRef = useRef(new Set<string>());
   const receptionIntent = useRef(0);
   const mounted = useRef(true);
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollPositions = useRef(new Map<string, number>());
   selectionRef.current = selection;
   detailRef.current = detail;
@@ -246,7 +246,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     mounted.current = true; void refreshSnapshot();
     if (bridge) void bridge.invoke<ExecutorHealth>('get_executor_health').then(health => { if (mounted.current) observeHealth(health); }).catch(() => {});
     if (bridge) void bridge.getPreferences().then(result => { if (mounted.current) setPreferences({ ...defaults, ...result }); }).catch(() => { if (mounted.current) setNotice('布局偏好读取失败，已使用默认布局。'); });
-    return () => { mounted.current = false; if (refreshTimer.current) clearTimeout(refreshTimer.current); };
+    return () => { mounted.current = false; };
   }, [bridge, refreshSnapshot, observeHealth]);
 
   useEffect(() => {
@@ -259,11 +259,16 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
 
   useEffect(() => {
     if (!bridge) return;
-    return bridge.onEvent((event: ServiceEvent) => {
+    const refresh = createEventRefresh(async key => {
+      if (key === 'snapshot') { await refreshSnapshot(); return; }
+      const current = selectionRef.current;
+      if (key === current.conversationId && !closingRef.current) await loadDetail(current.conversationId, current.caseId, true);
+    });
+    const unsubscribe = bridge.onEvent((event: ServiceEvent) => {
       const expectedDisconnect = event.event === 'backend.disconnected' && event.data !== null && typeof event.data === 'object' && 'expected' in event.data && event.data.expected === true;
       if (event.event === 'backend.closing' || expectedDisconnect) {
         closingRef.current = true; setClosing(true); ++snapshotSequence.current; ++detailSequence.current;
-        if (refreshTimer.current) { clearTimeout(refreshTimer.current); refreshTimer.current = null; }
+        refresh.stop();
         setLoading(false); setDetailLoading(false); setError(''); setNotice(''); return;
       }
       if (closingRef.current) return;
@@ -284,14 +289,11 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
       }
       if (event.event === 'state.changed' || (event.event === 'job.updated'
           && (!isActive(event.data as Job) || ['generate_draft', 'send_chat', 'confirm_send', 'automatic_send'].includes((event.data as Job).kind)))) {
-        if (refreshTimer.current) clearTimeout(refreshTimer.current);
-        refreshTimer.current = setTimeout(() => {
-          void refreshSnapshot();
-          const current = selectionRef.current;
-          if (current.conversationId) void loadDetail(current.conversationId, current.caseId, true);
-        }, 70);
+        refresh.request('snapshot');
+        if (selectionRef.current.conversationId) refresh.request(selectionRef.current.conversationId);
       }
     });
+    return () => { refresh.stop(); unsubscribe(); };
   }, [bridge, loadDetail, refreshSnapshot, updateJobs, observeHealth]);
 
   const beginManualEdit = useCallback((conversationId: string): Promise<boolean> => {

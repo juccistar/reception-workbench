@@ -101,6 +101,39 @@ describe('WhatsApp host/service coordination', () => {
     expect(invoke.mock.calls.filter(([method]) => method === '_wa_set_account')).toHaveLength(1);
     expect(notify.mock.calls.filter(([event]) => event.event === 'whatsapp.host.changed')).toHaveLength(2);
   });
+  it('keeps observations and stop moving while image download hangs and deduplicates it', async () => {
+    const { coordinator, host, invoke } = setup(); await coordinator.connect();
+    const download = vi.fn(() => new Promise<void>(() => {}));
+    Object.assign(host, { downloadImage: download });
+    const image = { id: 'image', chat_id: intent.chat_id, body: '', timestamp_ms: 1, from_me: false, name: '', is_group: false, is_history: false, has_image: true };
+    const event = { type: 'messages' as const, account_id: intent.account_id, connection_epoch: intent.connection_epoch, messages: [image] };
+    coordinator.receive(event);
+    coordinator.receive(event);
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+    coordinator.receive({ ...event, messages: [{ ...image, id: 'text', has_image: false }] });
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('_wa_ingest', expect.objectContaining({ messages: [expect.objectContaining({ id: 'text' })] })));
+    await coordinator.stop();
+    expect(host.close).toHaveBeenCalledOnce();
+    expect(invoke).toHaveBeenCalledWith('_wa_media_fail', expect.objectContaining({ message_id: 'image' }));
+  });
+  it('revokes a hanging media RPC and never sends its next chunk after stop', async () => {
+    const { coordinator, host, invoke } = setup(); await coordinator.connect();
+    let release!: (value: unknown) => void;
+    invoke.mockImplementation(async method => {
+      if (method === '_wa_media_begin') return new Promise(resolve => { release = resolve; });
+      return {};
+    });
+    Object.assign(host, { downloadImage: async (_a: string, _e: string, _c: string, _m: string, consume: (mime: string, size: number, chunks: AsyncIterable<Buffer>) => Promise<void>) => {
+      async function* chunks() { yield Buffer.from('image'); }
+      await consume('image/png', 5, chunks());
+    } });
+    coordinator.receive({ type: 'messages', account_id: intent.account_id, connection_epoch: intent.connection_epoch, messages: [{ id: 'image', chat_id: intent.chat_id, body: '', timestamp_ms: 1, from_me: false, name: '', is_group: false, is_history: false, has_image: true }] });
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'));
+    await coordinator.stop();
+    release({ transfer_id: 'late-transfer' });
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('_wa_media_fail', expect.objectContaining({ transfer_id: 'late-transfer' })));
+    expect(invoke.mock.calls.some(([method]) => method === '_wa_media_chunk')).toBe(false);
+  });
   it('clamps native bounds and rejects any attempt to cover trusted controls', () => {
     expect(validateWhatsAppView({ visible: true, bounds: { x: 184, y: 240, width: 1300, height: 1000 } }, { width: 1440, height: 960 })).toEqual({ visible: true, bounds: { x: 184, y: 240, width: 1256, height: 696 } });
     expect(() => validateWhatsAppView({ visible: true, bounds: { x: 0, y: 0, width: 1440, height: 960 } }, { width: 1440, height: 960 })).toThrow('控制区');

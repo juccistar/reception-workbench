@@ -21,6 +21,7 @@ async function copyPublicPython(from,to) {
  await mkdir(to,{recursive:true});
  for(const item of await readdir(from,{withFileTypes:true})) {
   if(item.isSymbolicLink()) throw new Error('Source links are not allowed in a distribution.');
+  if(item.name === 'demo.py' && path.basename(from) === 'integrations') continue;
   if(item.isDirectory()&&item.name!=='__pycache__') await copyPublicPython(path.join(from,item.name),path.join(to,item.name));
   const source=path.join(from,item.name);
   const relative=path.relative(root,source).replaceAll('\\','/');
@@ -60,9 +61,10 @@ const runBytes=await readFile(path.join(sourceRoot,'run.py'));
 manifest.push({path:'services/reception/run.py',bytes:runBytes.length,sha256:hash(runBytes)});
 await writeFile(path.join(staging,'source-manifest.json'),JSON.stringify({format:1,files:manifest},null,2));
 const pythonDist=path.join(staging,'python-dist');
-run(pythonPath(),['-m','PyInstaller','--clean','--noconfirm','--noupx','--onedir','--console','--name','reception-backend','--paths',path.join(staging,'python/src'),'--collect-submodules','reception_service','--add-data',path.join(staging,'python/src/reception_service/resources/builtin_policies.json')+path.delimiter+'reception_service/resources','--distpath',pythonDist,'--workpath',path.join(staging,'python-work'),'--specpath',path.join(staging,'python-spec'),path.join(staging,'python/run.py')],path.join(staging,'python'));
+run(pythonPath(),['-m','PyInstaller','--clean','--noconfirm','--noupx','--onedir','--console','--name','reception-backend','--paths',path.join(staging,'python/src'),'--collect-submodules','reception_service','--exclude-module','reception_service.integrations.demo','--exclude-module','reception_test_support','--add-data',path.join(staging,'python/src/reception_service/resources/builtin_policies.json')+path.delimiter+'reception_service/resources','--distpath',pythonDist,'--workpath',path.join(staging,'python-work'),'--specpath',path.join(staging,'python-spec'),path.join(staging,'python/run.py')],path.join(staging,'python'));
+run(pythonPath(),['-I',path.join(root,'scripts/verify-production-closure.py'),path.join(staging,'python/src'),path.join(pythonDist,'reception-backend','reception-backend.exe')]);
 const appStage=path.join(staging,'app');
-for(const entry of ['main','preload','renderer'])await copyTree(path.join(root,'artifacts/app',entry),path.join(appStage,entry), name => name !== 'node_modules' && name !== 'whatsapp-runtime-manifest.json');
+for(const entry of ['main','preload','launcher-preload','renderer'])await copyTree(path.join(root,'artifacts/app',entry),path.join(appStage,entry), name => name !== 'node_modules' && name !== 'whatsapp-runtime-manifest.json');
 const runtimeStage = path.join(staging, 'whatsapp-runtime');
 await copyTree(path.join(root, 'artifacts/app/main/node_modules'), path.join(runtimeStage, 'node_modules'));
 await copyFile(path.join(root, 'artifacts/app/main/whatsapp-runtime-manifest.json'), path.join(runtimeStage, 'whatsapp-runtime-manifest.json'));
@@ -74,6 +76,8 @@ function verifyBundledWhatsApp(directory) {
  const expected = new Map(whatsappRuntime.files.map(file => [file.path, file]));
  const listed = listPackage(archive).map(file => file.replaceAll('\\', '/').replace(/^\//, ''));
  const appEntries = listPackage(path.join(directory, 'resources', 'app.asar'));
+ if (!appEntries.some(file => file.replaceAll('\\', '/') === '/launcher-preload/index.js')) throw new Error('Launcher preload missing from packaged application.');
+ if (appEntries.some(file => /(^|\/)(?:demo|test_support|synthetic_harness)(?:[\/.]|$)/i.test(file.replaceAll('\\', '/')))) throw new Error('Synthetic test support in packaged application.');
  if (appEntries.some(file => /(^|\/)node_modules(\/|$)/.test(file.replaceAll('\\', '/')))) throw new Error('Unexpected dependencies outside the WhatsApp runtime archive.');
  for (const entry of listed.filter(file => file.startsWith('node_modules/'))) {
   if (!expected.has(entry) && ![...expected.keys()].some(file => file.startsWith(entry + '/'))) throw new Error('Unexpected WhatsApp dependency in packaged application.');
@@ -96,7 +100,7 @@ const launchPolicy=path.join(staging,'reception-launch.json');
 await writeFile(launchPolicy,JSON.stringify({format:1,app_id:UPDATE_APP_ID,routing:'verified-seller-v1',version:pkg.version},null,2)+'\n');
 const launchModules=['connect-live.mjs','merchant-profiles.mjs','merchant-mutex.mjs','launch-identity.mjs','windows-job.mjs','data-location.mjs','release-paths.mjs'];
 const restoreIntegrity = installWindowsIntegrityRetry(output);
-const baseConfig={appId:'local.inquiry.reception.workbench',productName:'ReceptionWorkbench',directories:{app:appStage,output},electronVersion:electronPkg.version,electronDist,asar:true,files:['main/**/*','preload/**/*','renderer/**/*','package.json','!**/node_modules{,/**/*}'],extraFiles:[{from:path.join(root,'授权启动接待.cmd'),to:'授权启动接待.cmd'},...launchModules.map(name=>({from:path.join(root,'scripts',name),to:'scripts/'+name}))],extraResources:[{from:runtimeArchive,to:'whatsapp-runtime.asar'},{from:launchPolicy,to:'reception-launch.json'},{from:path.join(root,'docs/人工接待使用.md'),to:'人工接待使用.md'},{from:startupGuide,to:'自动接待启动与授权.md'},{from:path.join(root,'docs/自动接待连续性.md'),to:'自动接待连续性.md'},{from:path.join(root,'docs/在线升级.md'),to:'在线升级.md'},{from:path.join(pythonDist,'reception-backend'),to:'backend'},{from:path.join(sourceRoot,'src/reception_service/integrations/accio_native/vendor/SOURCE.txt'),to:'backend/SOURCE.txt'},...(existsSync(guide)?[{from:guide,to:'USER_GUIDE.md'}]:[])],npmRebuild:false,forceCodeSigning:false,win:{target:'dir',signAndEditExecutable:false,executableName:'ReceptionWorkbench'}};
+const baseConfig={appId:'local.inquiry.reception.workbench',productName:'ReceptionWorkbench',directories:{app:appStage,output},electronVersion:electronPkg.version,electronDist,asar:true,files:['main/**/*','preload/**/*','launcher-preload/**/*','renderer/**/*','package.json','!**/node_modules{,/**/*}'],extraFiles:[{from:path.join(root,'授权启动接待.cmd'),to:'授权启动接待.cmd'},...launchModules.map(name=>({from:path.join(root,'scripts',name),to:'scripts/'+name}))],extraResources:[{from:runtimeArchive,to:'whatsapp-runtime.asar'},{from:launchPolicy,to:'reception-launch.json'},{from:path.join(root,'docs/人工接待使用.md'),to:'人工接待使用.md'},{from:startupGuide,to:'自动接待启动与授权.md'},{from:path.join(root,'docs/自动接待连续性.md'),to:'自动接待连续性.md'},{from:path.join(root,'docs/在线升级.md'),to:'在线升级.md'},{from:path.join(pythonDist,'reception-backend'),to:'backend'},{from:path.join(sourceRoot,'src/reception_service/integrations/accio_native/vendor/SOURCE.txt'),to:'backend/SOURCE.txt'},...(existsSync(guide)?[{from:guide,to:'USER_GUIDE.md'}]:[])],npmRebuild:false,forceCodeSigning:false,win:{target:'dir',signAndEditExecutable:false,executableName:'ReceptionWorkbench'}};
 try {
 await build({projectDir:root,publish:'never',targets:Platform.WINDOWS.createTarget(['dir']),config:structuredClone(baseConfig)});
 } finally { restoreIntegrity(); }

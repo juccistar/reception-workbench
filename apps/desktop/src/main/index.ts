@@ -6,7 +6,16 @@ import { WhatsAppCoordinator, validateWhatsAppView } from './whatsapp-coordinato
 import { WhatsAppHost } from './whatsapp/host';
 import { WhatsAppSessionHost } from './whatsapp-session-host';
 import { randomUUID } from 'node:crypto';
+import { runLauncher } from './launcher-host';
+import { createLauncherRegistry } from './launcher-registry';
+import { createWindowsLauncherActivation } from './launcher-activation';
+import { createModelSettingsStore } from './model-settings-store';
+import { ModelConfigHost } from './model-config-host';
 import { TranslationHost } from './translation-host';
+import { TranslationActivationHost } from './translation-activation-host';
+import { importLegacyTranslation } from './legacy-model-import';
+import { createSharedTranslationStore } from './shared-translation';
+import { createWindowsUserEncryption } from './windows-user-encryption';
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir, readFile, writeFile, rename, lstat } from 'node:fs/promises';
@@ -72,7 +81,8 @@ async function start(): Promise<void> {
       app.exit(0);
       return;
     }
-    runWorkbench();
+    if (context) runWorkbench();
+    else await runLauncher();
   } catch (error) {
     await app.whenReady();
     dialog.showErrorBox('工作台未能启动', error instanceof DispatchError ? error.message : genericLaunchMessage);
@@ -83,7 +93,7 @@ async function start(): Promise<void> {
 function runWorkbench(): void {
 const args = launchArgs;
 function option(name: string) { const index=args.indexOf(name); return index>=0 && typeof args[index+1]==='string' ? args[index+1] : ''; }
-const mode: Mode = args.includes('--live') || args.includes('--connect-from-accio') ? 'live' : 'demo';
+const mode: Mode = app.isPackaged || args.includes('--live') || args.includes('--connect-from-accio') ? 'live' : 'demo';
 const expectedSeller = option('--seller-id') || option('--expect-seller');
 if (expectedSeller && !/^[1-9]\d*$/.test(expectedSeller)) throw new Error('Expected seller ID must use positive ASCII digits.');
 const bootstrapPaths = getBootstrapPaths();
@@ -127,8 +137,15 @@ let updatePrepared = false;
 let updateRecoveryStarted = false;
 let cancelUpdateRestart: (() => Promise<void>) | null = null;
 let updateHostPromise: Promise<UpdateHost> | null = null;
+const imageRequests = new Map<string, AbortController>();
+const usedImageRequestIds = new Set<string>();
+const imageCopies = new Set<AbortController>();
+let closeActivation: (() => Promise<void>) | null = null;
+function abortImages() { for (const controller of imageRequests.values()) controller.abort(); for (const controller of imageCopies) controller.abort(); }
+async function revokeActivation() { const close = closeActivation; closeActivation = null; await close?.(); }
 const methods = new Set<string>(API_METHODS);
 let translationCoordinator: TranslationHost | null = null;
+let modelSyncTimer: ReturnType<typeof setInterval> | null = null;
 let whatsappCoordinator: WhatsAppCoordinator | null = null;
 const whatsappSessions = new WhatsAppSessionHost(profileRoot);
 let whatsappRebuild: Promise<unknown> | null = null;
@@ -224,6 +241,7 @@ function storageInfo(): StorageInfo {
 function storageProgress(stage: string, message: string) {
   if (window && !window.isDestroyed()) window.webContents.send('reception:event', { event: 'storage.progress', data: { stage, message } });
 }
+const maintenanceProgress = { onProgress: (stage: string) => storageProgress(stage, stage === 'cancel_requested' ? '已请求停止维护，正在等待数据工具实际退出，请勿关闭程序。' : '正在维护数据，请等待操作完成。') };
 function backendCommand(): MaintenanceCommand {
   let executable: string; let prefix: string[];
   if (app.isPackaged) { executable = path.join(process.resourcesPath, 'backend', 'reception-backend.exe'); prefix = []; }
@@ -251,13 +269,13 @@ async function performStorageTask(request: StorageRequest): Promise<string> {
   await createArchiveParent(safetyParent);
   let result;
   if (request.action === 'backup') {
-    result = await runMaintenance(backendCommand(), maintenanceArguments('backup', dataRoot, { mode, target: uniqueArchive(request.target!, 'backup') }));
+    result = await runMaintenance(backendCommand(), maintenanceArguments('backup', dataRoot, { mode, target: uniqueArchive(request.target!, 'backup') }), maintenanceProgress);
   } else if (request.action === 'open') {
     const historyRoot = dataRoot || captured.dataRoot;
     const sameRoot = historyRoot && path.resolve(historyRoot).toLowerCase() === path.resolve(request.target!).toLowerCase();
-    result = await runMaintenance(backendCommand(), sameRoot ? maintenanceArguments('inspect', historyRoot, { mode }) : maintenanceArguments('open', historyRoot || request.target!, { mode, ...(historyRoot ? { target: request.target, backup: safetyParent } : {}) }));
+    result = await runMaintenance(backendCommand(), sameRoot ? maintenanceArguments('inspect', historyRoot, { mode }) : maintenanceArguments('open', historyRoot || request.target!, { mode, ...(historyRoot ? { target: request.target, backup: safetyParent } : {}) }), maintenanceProgress);
   } else {
-    result = await runMaintenance(backendCommand(), maintenanceArguments(request.action, dataRoot, { mode, target: request.target, archive: request.backup, backup: safetyParent }));
+    result = await runMaintenance(backendCommand(), maintenanceArguments(request.action, dataRoot, { mode, target: request.target, archive: request.backup, backup: safetyParent }), maintenanceProgress);
   }
   const nextRoot = request.action === 'backup' ? dataRoot : request.target!;
   if (path.resolve(result.data_root) !== path.resolve(nextRoot)) throw new StorageError('target_mismatch', '核验结果与选择的目录不一致，未切换。');
@@ -286,6 +304,7 @@ async function manageStorage(input: unknown): Promise<StorageResult> {
   } catch (error) { return { status: 'failed', message: error instanceof StorageError ? error.message : '数据目录校验未通过，请检查完整路径和访问权限。' }; }
   if (storageBusy || updateTask || closing) return { status: 'failed', message: '已有升级或数据管理操作正在进行。' };
   storageBusy = true;
+  abortImages();
   let release: (() => Promise<void>) | undefined;
   try {
     release = await acquireStorageOperation(bootstrapPaths.stateDir);
@@ -348,6 +367,7 @@ async function prepareUpdateInstall(version: string, installerPath: string, inst
   if (!window || !backend || !dataRoot || startupError) throw new Error('当前工作区尚未就绪，不能安装升级。');
   const target = window;
   updateTask = true;
+  abortImages();
   let frozen = false;
   let gate: { commit: () => Promise<void>; cancel: () => Promise<void> } | null = null;
   try {
@@ -367,7 +387,7 @@ async function prepareUpdateInstall(version: string, installerPath: string, inst
     await stopBackendForClose(target, false);
     const parent = safetyBackupParent(bootstrapPaths.stateDir, process.env.RECEPTION_MERCHANT_REGISTRY_DIR, [dataRoot, app.isPackaged ? path.dirname(process.execPath) : projectRoot]);
     await createArchiveParent(parent);
-    const result = await runMaintenance(backendCommand(), maintenanceArguments('backup', dataRoot, { mode, target: uniqueArchive(parent, 'pre-update') }));
+    const result = await runMaintenance(backendCommand(), maintenanceArguments('backup', dataRoot, { mode, target: uniqueArchive(parent, 'pre-update') }), maintenanceProgress);
     if (!result.backup || path.resolve(result.data_root).toLowerCase() !== path.resolve(dataRoot).toLowerCase()) throw new Error('未收到完整备份确认。');
     writeBootstrap(bootstrapPaths.configFile, { ...captured, lastBackup: { path: result.backup, completedAt: Date.now() } }, captured);
     await gate.commit();
@@ -442,9 +462,19 @@ function installIPC() {
   const mediaReady = () => {
     if (!window || window.isDestroyed() || !backend || closing || storageBusy || updateTask || backendStartPromise) throw new Error('后台正在启动、退出或管理数据。');
   };
-  ipcMain.handle('reception:image:original', async (event, reference: unknown) => {
+  const imageRequestId = (id: unknown): id is string => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id);
+  ipcMain.handle('reception:image:original', async (event, reference: unknown, id: unknown) => {
     validSender(event); mediaReady();
-    return readOriginal(call, reference, mediaReady);
+    if (!imageRequestId(id) || usedImageRequestIds.has(id) || usedImageRequestIds.size >= 65536 || imageRequests.size >= 2) throw new Error('原图请求无效或繁忙。');
+    usedImageRequestIds.add(id);
+    const controller = new AbortController(); imageRequests.set(id, controller);
+    try { return await readOriginal(call, reference, mediaReady, false, controller.signal); }
+    finally { imageRequests.delete(id); }
+  });
+  ipcMain.handle('reception:image:cancel', (event, id: unknown) => {
+    validSender(event);
+    if (!imageRequestId(id)) throw new Error('原图请求无效。');
+    imageRequests.get(id)?.abort();
   });
   ipcMain.handle('reception:image:menu', async (event, reference: unknown) => {
     validSender(event); mediaReady(); validateReference(reference);
@@ -455,9 +485,14 @@ function installIPC() {
       menu.popup({ window: target, callback: () => resolve(chosen) });
     });
     if (!selected) return 'cancelled';
-    const image = await readOriginal(call, reference, mediaReady, true);
     mediaReady();
-    await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(image.bytes)], { type: 'image/png' }) })]);
+    const controller = new AbortController(); imageCopies.add(controller);
+    try {
+      await readOriginal(call, reference, mediaReady, true, controller.signal, async image => {
+        mediaReady();
+        await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(image.bytes)], { type: 'image/png' }) })]);
+      });
+    } finally { imageCopies.delete(controller); }
     return 'copied';
   });
   ipcMain.handle('reception:product:open', async (event, reference: unknown) => {
@@ -469,23 +504,28 @@ function installIPC() {
     validSender(event); mediaReady();
     await copyProductText(call, reference, mediaReady, text => clipboard.writeText(text));
   });
-  ipcMain.handle('reception:translation:get', event => { validSender(event); return translations().get(); });
-  ipcMain.handle('reception:translation:save', (event, input: unknown) => {
+  const translationActivation = new TranslationActivationHost({ dataRoot, invoke: call, readModels: async () => (await createModelSettingsStore()).read(), canWrite: () => !!backend && !backendStartPromise && !closing && !storageBusy && !updateTask, confirm });
+  ipcMain.handle('reception:translation:import-legacy', async event => {
     validSender(event);
-    return translations().save(parameters(input));
+    if (closing || storageBusy || updateTask) throw new Error('工作区正在关闭或管理数据。');
+    await importLegacyTranslation(await createModelSettingsStore(), await createSharedTranslationStore(createWindowsUserEncryption(), mode), confirm);
   });
-  ipcMain.handle('reception:translation:check', async event => {
-    validSender(event);
-    if (closing || storageBusy || updateTask) throw new Error('工作台正在退出或管理数据。');
-    if (mode === 'live' && !(await confirm('合成翻译检查', '执行一次第三方翻译检查？', '只发送固定合成文字，不读取客户聊天；服务商可能计费，失败不自动重试。', '开始检查'))) throw new Error('已取消检查。');
-    await translations().get();
-    return call('check_translation_provider');
-  });
+  ipcMain.handle('reception:translation:get', async event => { validSender(event); return translationActivation.get(); });
+  ipcMain.handle('reception:translation:enable', async (event, enabled: unknown) => { validSender(event); return translationActivation.set(enabled); });
   ipcMain.handle('reception:translation:clear', async event => {
     validSender(event);
     if (closing || storageBusy || updateTask) throw new Error('工作台正在退出或管理数据。');
     if (!(await confirm('清理聊天译文', '清除本商家的聊天译文缓存？', '原始消息、采购事实、草稿和发送回执不会删除。之后重新翻译可能产生费用。', '清除译文'))) return { removed: 0 };
     return call('clear_translation_cache');
+  });
+  ipcMain.handle('reception:models:summary', async event => { validSender(event); return (await createModelSettingsStore()).read(); });
+  ipcMain.handle('reception:models:launcher', async event => {
+    validSender(event);
+    const args = app.isPackaged ? [] : [path.resolve(process.argv[1])];
+    const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
+    for (const key of Object.keys(env)) if (/^(ACCIO_|RECEPTION_)/i.test(key)) delete env[key];
+    const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', env });
+    await new Promise<void>((resolve, reject) => { child.once('error', reject); child.once('spawn', () => { child.unref(); resolve(); }); });
   });
   ipcMain.handle('reception:launch:get', async event => { validSender(event); return accioLaunchInfo(); });
   ipcMain.handle('reception:launch:copy', async event => { validSender(event); return copyAccioLaunchInstructions(); });
@@ -620,7 +660,7 @@ async function startBackend() {
     const sameConfigured = location.configuredRoot && path.resolve(location.configuredRoot).toLowerCase() === path.resolve(dataRoot).toLowerCase();
     const registeredNew = args.includes('--connect-from-accio') && sameConfigured && registeredNewRoot(process.env.RECEPTION_MERCHANT_REGISTRY_DIR, bootstrapPaths.stateDir, dataRoot, expectedSeller);
     if (location.source === 'default' || location.source === 'argument' && !sameConfigured || registeredNew) prepare.push('--allow-new');
-    const prepared = await runMaintenance(runner, prepare);
+    const prepared = await runMaintenance(runner, prepare, maintenanceProgress);
     // Raw recovery evidence has a different manifest and must not become a restore archive.
     startupRecoveryBackup = prepared.recovery_backup || null;
     if (prepared.backup) {
@@ -639,7 +679,20 @@ async function startBackend() {
       if (value?.event === 'state.changed') updateVerifiedTitle();
     });
     await backend.invoke('get_snapshot');
-    await translations().start();
+    const modelHost = new ModelConfigHost(await createModelSettingsStore(), (method, params) => call(method, params));
+    let appliedModelRevision = (await modelHost.read()).directory_revision;
+    await modelHost.synchronize();
+    let syncingModels = false;
+    modelSyncTimer = setInterval(() => {
+      if (syncingModels || closing || !backend) return;
+      syncingModels = true;
+      void modelHost.read().then(async settings => {
+        if (settings.directory_revision !== appliedModelRevision) {
+          await modelHost.synchronize();
+          appliedModelRevision = settings.directory_revision;
+        }
+      }).catch(() => { appliedModelRevision = -1; /* Authority checks in the backend fail closed until synchronization succeeds. */ }).finally(() => { syncingModels = false; });
+    }, 3000);
     // Offline recovery may outlast the renderer's first snapshot request.
     // Announce readiness only after the new backend has answered successfully.
     if (window && !window.isDestroyed()) window.webContents.send('reception:event', { event: 'state.changed', data: { reason: 'backend_ready' } });
@@ -662,6 +715,9 @@ async function savePendingEdits(target: BrowserWindow): Promise<boolean> {
 }
 async function stopBackendForClose(target: BrowserWindow, allowForce: boolean): Promise<void> {
   closing=true; ++receptionIntent;
+  abortImages();
+  await revokeActivation();
+  if (modelSyncTimer) { clearInterval(modelSyncTimer); modelSyncTimer = null; }
   translationCoordinator?.stop();
   // Keep editing disabled through every wait/force-exit reminder after revocation.
   target.setEnabled(false);
@@ -745,11 +801,44 @@ else {
     } finally { backendStartPromise = null; storageProgress('ready', startupError || '数据目录预检完成。'); }
     if (backend) window.webContents.send('reception:event', { event: 'state.changed', data: {} });
     if(args.includes('--connect-from-accio') && backend) {
-      try {
-        await call('check_connection');
+      void (async () => { try {
+        const started = await call<{ job_id: string }>('check_connection');
+        const deadline = Date.now() + 120000;
+        let verifiedJob = false;
+        while (Date.now() < deadline && backend && !closing) {
+          const jobs = await call<Array<{job_id: string; kind: string; status: string}>>('list_jobs', { include_background: true });
+          const job = jobs.find(item => item.job_id === started.job_id && item.kind === 'check_connection');
+          if (job?.status === 'succeeded') { verifiedJob = true; break; }
+          if (job && ['failed', 'cancelled', 'blocked'].includes(job.status)) break;
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        if (!verifiedJob) throw new Error('connection_check_incomplete');
         const snapshot = await call<Snapshot>('get_snapshot');
-        if (snapshot.app.account_verified && /^[1-9]\d*$/.test(snapshot.app.seller_id)) window.setTitle(`询盘接待助手 · 商家 ${snapshot.app.seller_id}`);
-      } catch { /* explicit connection page will display why */ }
+        if (snapshot.app.account_verified && snapshot.app.seller_id === expectedSeller && /^[1-9]\d*$/.test(snapshot.app.seller_id)) {
+          window?.setTitle(`询盘接待助手 · 商家 ${snapshot.app.seller_id}`);
+          const registryDirectory = process.env.RECEPTION_MERCHANT_REGISTRY_DIR;
+          if (registryDirectory && path.isAbsolute(registryDirectory) && path.isAbsolute(bootstrapPaths.stateDir) && path.isAbsolute(dataRoot)) {
+            const refreshed = resolveDataLocation(args);
+            if (path.resolve(refreshed.currentRoot) !== path.resolve(dataRoot)) throw new Error('data_root_changed');
+            await Promise.all([registryDirectory, bootstrapPaths.stateDir, dataRoot].map(directory => rejectDirectoryLinks(directory)));
+            const record = await (await createLauncherRegistry()).registerVerified({ seller_id: snapshot.app.seller_id, name: `商家 ${snapshot.app.seller_id.slice(-4)}`, registry_directory: path.resolve(registryDirectory), state_directory: path.resolve(bootstrapPaths.stateDir), data_root: path.resolve(dataRoot), verified_at: Date.now() });
+            const latest = await call<Snapshot>('get_snapshot');
+            if (closing || !latest.app.account_verified || latest.app.seller_id !== record.seller_id || path.resolve(resolveDataLocation(args).currentRoot) !== record.data_root) throw new Error('identity_changed');
+            const activation = await createWindowsLauncherActivation();
+            const validate = async () => {
+              if (closing || storageBusy || updateTask || !window || window.isDestroyed()) throw new Error('window_unavailable');
+              const current = await call<Snapshot>('get_snapshot');
+              if (closing || storageBusy || updateTask || !current.app.account_verified || current.app.seller_id !== record.seller_id || path.resolve(resolveDataLocation(args).currentRoot) !== record.data_root || !window || window.isDestroyed()) throw new Error('identity_changed');
+            };
+            const close = await activation.publishVerifiedWindow(record, async () => {
+              await validate();
+              if (!window || window.isDestroyed()) throw new Error('window_unavailable');
+              if (window.isMinimized()) window.restore(); window.show(); window.focus();
+            }, validate);
+            if (closing || storageBusy || updateTask) await close(); else closeActivation = close;
+          }
+        }
+      } catch { /* explicit connection page will display why */ } })();
     }
     } finally { await releaseStart(); }
   }).catch(()=>{dialog.showErrorBox('工作台未能启动','请检查程序组件和本地目录权限，保留已有数据后重试。');app.exit(2);});

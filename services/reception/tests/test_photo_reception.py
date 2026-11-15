@@ -61,7 +61,7 @@ class PhotoReceptionTests(unittest.TestCase):
 
     def generate(self, context, request_id, *, on_call_start=None, photo_inputs=None):
         self.contexts.append(copy.deepcopy(context))
-        self.inputs.append(copy.deepcopy(photo_inputs))
+        self.inputs.append(copy.deepcopy(list(photo_inputs)) if photo_inputs is not None else None)
         if self.block:
             if not self.before_start:
                 on_call_start()
@@ -166,7 +166,7 @@ class PhotoReceptionTests(unittest.TestCase):
         inputs = []
         generate = self.service.integrations.generate_manual
         def capture(context, request, *, photo_inputs=None, **options):
-            inputs.append((copy.deepcopy(context), copy.deepcopy(photo_inputs)))
+            inputs.append((copy.deepcopy(context), copy.deepcopy(list(photo_inputs)) if photo_inputs is not None else None))
             return generate(context, request, photo_inputs=photo_inputs, **options)
         with patch.object(self.service.integrations, 'generate_manual', new=capture):
             self.completed(self.service.generate_manual_suggestion('photo-cid', 'manual-with-seller-image',

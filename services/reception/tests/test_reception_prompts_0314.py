@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -27,18 +28,16 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         self.live.resolve_identity = lambda seller: seller
         owner = self
 
-        class Runner:
-            def __init__(self, *args, **kwargs):
-                self.last_request = {}
-                self.last_diagnostics = {}
+        class Router:
+            def generate(self, purpose, instruction, payload, *, images, required_capabilities, cancel, on_call_start, deadline, _owned_input=None):
+                owner.assertGreater(deadline, time.monotonic())
+                owner.requests.append(instruction + '\ncontext =\n' + payload)
+                if on_call_start:
+                    on_call_start()
+                return {'output': owner.answer(), 'model_snapshot': {}}
 
-            def run(self, args, *, input, **kwargs):
-                owner.requests.append(input)
-                return {'answer': json.dumps(owner.answer(), ensure_ascii=False)}
-
-        self.runner = patch('reception_service.integrations.live.DesktopQueryRunner', Runner)
-        self.runner.start()
-        self.addCleanup(self.runner.stop)
+        self.live.settings = {}
+        self.live.configure_model_router(Router())
 
     def message(self, mid, role, text, stamp):
         return {'seller_id': '1', 'buyer_id': '2', 'conversation_id': '1-2#synthetic',
@@ -79,7 +78,9 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         for irrelevant in ('商品主图仅供展示和找货', '另一客户的数量、预算', '未入清单的展示图',
                            '【兼容图片输入】', '【本轮图片附件与聊天记录】'):
             self.assertNotIn(irrelevant, instruction)
-        self.assertEqual(prompts.PROMPT_VERSION, 'reception-0.3.21')
+        self.assertEqual(prompts.PROMPT_VERSION, 'reception-0.4.0')
+        self.assertNotIn('read_compat', instruction)
+        self.assertIn('不调用工具', instruction)
 
     def test_automatic_live_request_carries_restored_rules_and_current_contract(self):
         context = self.context()

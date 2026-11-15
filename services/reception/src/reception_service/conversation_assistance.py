@@ -268,23 +268,45 @@ class ConversationAssistanceMixin:
             if before != after:
                 return {'_job_status': 'stale', 'message': '建议依据已变化，请重新生成'}
             context, fingerprint = refreshed, refreshed_fingerprint
+            photo_deadline = getattr(guard, 'photo_deadline', None)
+            if photo_deadline is None and context.get('supplement_image_refs'):
+                from .model_media import start_photo_deadline
+                photo_deadline = start_photo_deadline(getattr(self, 'settings', None))
             photo_inputs = ([] if unsent and not context.get('supplement_image_refs')
                             else self._direct_photo_inputs(context))
-        def started():
-            with self._lock, self.repo.transaction():
-                guard()
-                self._charge_usage(ai=True)
-        with self._job_phase(job_id, 'identity_ms'):
-            self._ensure_identity(facade)
-        found_product, catalog_product = None, None
-        options = {'on_call_start': started, 'cancel_event': self._generation_cancel_event(job_id)}
-        parameters = inspect.signature(facade.generate_manual).parameters
-        if 'photo_inputs' in parameters:
-            options['photo_inputs'] = photo_inputs
-        if 'photo_deadline' in parameters and getattr(guard, 'photo_deadline', None) is not None:
-            options['photo_deadline'] = guard.photo_deadline
-        with self._job_phase(job_id, 'ai_elapsed_ms'):
-            output = facade.generate_manual(context, job_id, **options)
+        try:
+            from .model_attempts import AttemptLifecycle, claim
+            attempt_tokens = {}
+            def started():
+                with self._lock, self.repo.transaction():
+                    guard()
+                    if self.mode == 'live':
+                        attempt_tokens.update(claim(self.repo, seller_id=self.seller_id, purpose='manual',
+                                                    channel='international', source={'conversation_id': cid,
+                                                    'client_request_id': params['request_id']}))
+                    self._charge_usage(ai=True)
+            with self._job_phase(job_id, 'identity_ms'):
+                self._ensure_identity(facade)
+            model_snapshot = self._freeze_reception_model() if self.mode == 'live' else None
+            found_product, catalog_product = None, None
+            attempt_lifecycle = AttemptLifecycle(self.repo, started, attempt_tokens)
+            options = {'on_call_start': attempt_lifecycle, 'cancel_event': self._generation_cancel_event(job_id)}
+            parameters = inspect.signature(facade.generate_manual).parameters
+            if 'photo_inputs' in parameters:
+                options['photo_inputs'] = photo_inputs
+            if 'photo_deadline' in parameters and photo_deadline is not None:
+                options['photo_deadline'] = photo_deadline
+            try:
+                with self._job_phase(job_id, 'ai_elapsed_ms'):
+                    output = facade.generate_manual(context, job_id, **options)
+            except BaseException:
+                attempt_lifecycle.fallback('unknown')
+                raise
+        finally:
+            owner = getattr(photo_inputs, 'owner', None)
+            if owner is not None:
+                owner.close_if_owned()
+        attempt_lifecycle.fallback('completed')
         self._job_update(job_id, diagnostics={'image_reads': len(output.get('verified_image_reads', [])) if isinstance(output, dict) else 0})
         if not context.get('unsent_reply'):
             try:
@@ -299,6 +321,7 @@ class ConversationAssistanceMixin:
         cid = context['conversation_id']
         with self._lock, self.repo.transaction():
             guard()
+            self._verify_model_result(model_snapshot, output)
             unsent = context.get('unsent_reply')
             draft = self.repo.get('chat_draft', cid) if unsent else None
             selected = draft.get('body') if draft else None

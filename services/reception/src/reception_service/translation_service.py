@@ -2,6 +2,8 @@
 import copy
 import hashlib
 import itertools
+import ntpath
+import os
 import queue
 import threading
 import time
@@ -9,7 +11,7 @@ import time
 from .errors import ServiceError
 from .photos import is_photo_placeholder
 from .repository import encoded, new_id, now_ms
-from .translation_provider import ChatCompletionsTranslator, TranslationProviderError, normalize_base_url
+from .translation_provider import RouterTranslator, TranslationProviderError, normalize_base_url
 
 _DEFAULT = {'enabled': False, 'base_url': 'https://api.deepseek.com/v1', 'model': '',
             'revision': 0, 'credential_ref': None, 'enabled_data_root': None}
@@ -71,7 +73,10 @@ class TranslationMixin:
             for _, cancel in self._translation_active.values():
                 cancel.set()
         if threading.current_thread() is not self._translation_worker:
-            self._translation_worker.join()
+            self._translation_worker.join(timeout=10)
+            if self._translation_worker.is_alive() or any(thread.is_alive() for thread, _ in list(self._translation_active.values())):
+                self._executor_health.fail('stalled', 'translation_shutdown_timeout')
+                raise ServiceError('executor_unavailable', '翻译任务尚未退出，无法安全关闭。', stage='shutdown')
         self._translation_key = ''
 
     def get_translation_config(self):
@@ -79,19 +84,62 @@ class TranslationMixin:
         with self._lock:
             return copy.deepcopy(self._translation_settings)
 
+    def _translation_enabled_for_current_root(self):
+        settings = self._translation_settings
+        if self.mode == 'demo' and settings.get('revision') == 0:
+            return bool(settings.get('enabled'))
+        root = settings.get('enabled_data_root')
+        return bool(settings.get('enabled') and self.account_verified and self.seller_id
+                    and settings.get('enabled_seller_id') == self.seller_id
+                    and isinstance(root, str) and root
+                    and ntpath.normcase(os.path.realpath(root)) == ntpath.normcase(os.path.realpath(self.data_root)))
+
+    def _set_translation_enabled(self, enabled, seller_id, data_root, revision):
+        if (type(enabled) is not bool or type(revision) is not int or not isinstance(seller_id, str)
+                or not isinstance(data_root, str) or not data_root or len(data_root) > 32768):
+            raise ServiceError('invalid_params', '翻译授权参数无效。')
+        with self._lock:
+            if not self.account_verified or not self.seller_id or seller_id != self.seller_id:
+                raise ServiceError('identity_blocked', '当前商家身份已变化。')
+            if ntpath.normcase(os.path.realpath(data_root)) != ntpath.normcase(os.path.realpath(self.data_root)):
+                raise ServiceError('source_changed', '业务数据目录已变化。')
+            if revision != self._translation_settings['revision']:
+                raise ServiceError('revision_conflict', '翻译设置已变化，请重新读取。')
+            if enabled and self.mode != 'demo':
+                self._translation_snapshot()
+            self._translation_generation += 1
+            for _, cancel in self._translation_active.values():
+                cancel.set()
+            self._translation_settings.update(enabled=enabled, enabled_seller_id=seller_id if enabled else None,
+                                              enabled_data_root=str(self.data_root.resolve()) if enabled else None,
+                                              revision=revision + 1)
+            self._translation_health = self._translation_message = ''
+            self._control.put('meta', 'translation_settings', self._translation_settings)
+            info = self.get_translation_info()
+        self._emit('translation.settings_changed', info)
+        return info
+
     def get_translation_info(self):
         with self._lock:
             settings = self._translation_settings
-            configured = bool(settings['model'] and self._translation_key)
+            if self.mode == 'demo':
+                configured = True
+            else:
+                try:
+                    self._translation_snapshot()
+                    configured = True
+                except ServiceError:
+                    configured = False
+            enabled = self._translation_enabled_for_current_root()
             status = ('demo' if self.mode == 'demo' else 'not_configured' if not configured else
-                      'disabled' if not settings['enabled'] else self._translation_health or 'ready')
+                      'disabled' if not enabled else self._translation_health or 'ready')
             messages = {'demo': '演示翻译仅使用本地合成数据，不调用第三方。',
                         'not_configured': '请配置模型和 API Key；已保存译文仍可查看。',
                         'disabled': '第三方聊天翻译已关闭；已保存译文仍可查看。',
                         'ready': '聊天翻译已配置，首次调用或合成检查将核验服务。'}
             usage = self._control.get('meta', 'translation_usage', {})
-            return {**{key: settings[key] for key in ('enabled', 'base_url', 'model', 'revision')},
-                    'has_key': bool(self._translation_key), 'status': status,
+            return {**{key: settings[key] for key in ('base_url', 'model', 'revision')}, 'enabled': enabled,
+                    'has_key': bool(self._translation_key) or (self.mode != 'demo' and configured), 'status': status,
                     'message': self._translation_message or messages.get(status, '正在检查翻译服务。'),
                     'usage': {key: int(usage.get(key, 0)) for key in
                               ('requests', 'prompt_tokens', 'completion_tokens', 'unknown_requests', 'cache_hits')}}
@@ -151,13 +199,37 @@ class TranslationMixin:
         self._emit('translation.settings_changed', self.get_translation_info())
         return self.get_translation_info()
 
+    def configure_model_router(self, router):
+        """Inject the shared runtime; its owner retains responsibility for closing it."""
+        with self._lock:
+            self._translation_router = router
+            self._translation_generation += 1
+            for _, cancel in self._translation_active.values():
+                cancel.set()
+
+    def _translation_snapshot(self):
+        if not getattr(self, '_model_config_valid', True):
+            raise ServiceError('model_configuration_invalid', '模型配置不可用', stage='model_configuration')
+        router = getattr(self, '_translation_router', None) or getattr(self, '_model_router', None)
+        if router is None:
+            raise ServiceError('translation_not_configured', '请先配置第三方翻译服务。')
+        return router, router.resolve('translation', ('text', 'translation'))
+
+    def _translation_cache_model(self):
+        if self.mode == 'demo':
+            return ['demo', self._translation_settings['base_url'], self._translation_settings['model']]
+        from dataclasses import asdict
+        try:
+            _, snapshot = self._translation_snapshot()
+            return asdict(snapshot)
+        except ServiceError:
+            return ['unconfigured', self._translation_settings['base_url'], self._translation_settings['model']]
+
     def _new_translation_provider(self):
         if self.mode == 'demo':
             return _DemoTranslator(self.integrations)
-        settings = self._translation_settings
-        if not self._translation_key or not settings['model']:
-            raise ServiceError('translation_not_configured', '请先配置第三方翻译服务。')
-        return ChatCompletionsTranslator(settings['base_url'], settings['model'], self._translation_key)
+        router, _ = self._translation_snapshot()
+        return RouterTranslator(router)
 
     def _translation_sources(self, cid, items):
         conversation = self._chat_owner(cid)
@@ -209,8 +281,8 @@ class TranslationMixin:
                 remaining -= len(tail.encode('utf-8'))
             context.reverse()
             identity = {'kind': kind, 'source_id': item['source_id'], 'field': None, 'source_hash': digest}
-            key = _hash([2, self.seller_id, cid, identity, 'zh-CN', self._translation_settings['base_url'],
-                         self._translation_settings['model'], 'chat-v3-reviewed-039', context])
+            key = _hash([2, self.seller_id, cid, identity, 'zh-CN', self._translation_cache_model(),
+                         'chat-v3-reviewed-039', context])
             payload = {'text': text, 'speaker': source['role'] if kind == 'message' else 'seller', 'context': context}
             resolved.append((identity, key, payload))
         if sum(len(payload['text']) for _, _, payload in resolved) > 100000:
@@ -269,7 +341,7 @@ class TranslationMixin:
                 suggestion = self._manual_suggestion(conversation_id)
                 if not suggestion or suggestion['status'] != 'ready':
                     raise ServiceError('source_changed', '人工建议依据已变化，请重新生成后再翻译。')
-            if not self._translation_settings['enabled']:
+            if not self._translation_enabled_for_current_root():
                 raise ServiceError('translation_disabled', '请先在设置中启用第三方聊天翻译。')
             if self._translation_queue.qsize() >= 190:
                 raise ServiceError('translation_busy', '翻译队列已满，请稍后重试。')
@@ -343,7 +415,7 @@ class TranslationMixin:
                 for key, (thread, _) in list(self._translation_active.items()):
                     if not thread.is_alive():
                         self._translation_active.pop(key, None)
-                available = len(self._translation_active) < self.settings.get('translation_parallelism', 2)
+                available = len(self._translation_active) < 1
             if not available:
                 self._stop.wait(.05)
                 continue
@@ -366,8 +438,9 @@ class TranslationMixin:
             active = list(self._translation_active.values())
             for _, cancel in active:
                 cancel.set()
+        deadline = time.monotonic() + 9
         for thread, _ in active:
-            thread.join()
+            thread.join(timeout=max(0, deadline - time.monotonic()))
         while True:
             try:
                 _, _, task = self._translation_queue.get_nowait()
@@ -379,7 +452,12 @@ class TranslationMixin:
     def _translation_current(self, task, cancel):
         if self._stop.is_set() or cancel.is_set() or task['generation'] != self._translation_generation:
             raise TranslationProviderError('cancelled', '')
+        provider = task['provider']
+        if isinstance(provider, RouterTranslator):
+            provider.router.assert_current(provider.snapshot)
         if not task['check']:
+            if not self._translation_enabled_for_current_root():
+                raise TranslationProviderError('cancelled', '')
             sources = task.get('sources', task['work'])
             current = self._translation_sources(task['cid'], [identity for identity, _, _ in sources]) if sources else []
             if [key for _, key, _ in current] != [key for _, key, _ in sources]:
@@ -404,6 +482,9 @@ class TranslationMixin:
 
     def _run_translation(self, task, cancel):
         job_id = task['job_id']
+        from .model_attempts import AttemptLifecycle, claim_many
+        attempt_tokens = {}
+        attempt_lifecycle = None
         try:
             with self._lock:
                 self._translation_current(task, cancel)
@@ -425,7 +506,11 @@ class TranslationMixin:
                         for index, part in enumerate(_split(payload['text'])):
                             part_key = key + ':' + str(index)
                             if not self.repo.get('translation_part_v2', part_key):
-                                pending.append({**payload, 'key': part_key, 'text': part})
+                                pending.append({**payload, 'key': part_key, 'text': part,
+                                                '_attempt_source': {'conversation_id': task['cid'], 'identity': identity,
+                                                    'text': payload['text'], 'speaker': payload['speaker'],
+                                                    'context': payload['context'], 'target': 'zh-CN',
+                                                    'part_index': index, 'part': part}})
             while pending:
                 batch, cost = [], 800  # Reserve fixed prompt/envelope space before conservative byte estimates.
                 while pending and len(batch) < 6:
@@ -434,11 +519,19 @@ class TranslationMixin:
                         break
                     batch.append(pending.pop(0))
                     cost += estimate
-                with self._lock:
-                    self._translation_current(task, cancel)
-                    if self.mode != 'demo':
+                attempt_tokens = {}
+                def started():
+                    with self._lock, self.repo.transaction():
+                        self._translation_current(task, cancel)
+                        if not task['check']:
+                            attempt_tokens.update(claim_many(self.repo, seller_id=self.seller_id, purpose='translation',
+                                channel='chat', sources=[row['_attempt_source'] for row in batch]))
                         self._record_translation_usage(started=True)
-                result = task['provider'].translate(batch, job_id, cancel_event=cancel)
+                attempt_lifecycle = AttemptLifecycle(self.repo, started, attempt_tokens)
+                if isinstance(task['provider'], RouterTranslator):
+                    result = task['provider'].translate(batch, job_id, cancel_event=cancel, on_call_start=attempt_lifecycle)
+                else:
+                    result = task['provider'].translate(batch, job_id, cancel_event=cancel)
                 rows = result.get('items') if isinstance(result, dict) else None
                 if (not isinstance(rows, list) or len(rows) != len(batch)
                         or any(not isinstance(row, dict) or not isinstance(row.get('text'), str) or not row['text'].strip() for row in rows)
@@ -451,6 +544,8 @@ class TranslationMixin:
                     for row in rows:
                         if not task['check']:
                             self.repo.put('translation_part_v2', row['key'], {'text': row['text']})
+                    attempt_lifecycle.fallback('completed')
+                    attempt_tokens = {}
             with self._lock, self.repo.transaction():
                 self._translation_current(task, cancel)
                 for identity, key, payload in task['work']:
@@ -463,8 +558,13 @@ class TranslationMixin:
                 self._translation_message = '演示翻译检查通过，未访问第三方。' if self.mode == 'demo' else '第三方聊天翻译请求成功。'
             self._job_update(job_id, status='succeeded', stage='complete', completed_at=now_ms(), message='翻译检查完成' if task['check'] else '聊天译文已保存')
         except Exception as error:
+            had_attempt = bool(attempt_tokens) or bool(attempt_lifecycle and attempt_lifecycle.had_attempt)
+            if attempt_lifecycle is not None:
+                attempt_lifecycle.fallback('unknown')
             code = error.code if isinstance(error, (TranslationProviderError, ServiceError)) else 'translation_failed'
-            if (isinstance(error, TranslationProviderError) and error.retryable and task['attempt'] < 2
+            if code in ('model_cleanup_timeout', 'model_cleanup_failed'):
+                self._executor_health.fail('failed', code)
+            if (not had_attempt and isinstance(error, TranslationProviderError) and error.retryable and task['attempt'] < 2
                     and not task['check'] and not cancel.is_set() and not self._stop.is_set()
                     and task['generation'] == self._translation_generation):
                 delay = error.retry_after if error.retry_after is not None else (1, 3)[task['attempt']]

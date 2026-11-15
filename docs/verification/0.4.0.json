@@ -1,0 +1,106 @@
+{
+  "version": "0.4.0",
+  "date": "2026-11-15",
+  "status": "source_built_window_verification_pending",
+  "base_commit": "c6be2c575a4d235ac2f1b42fa1ad035064c16740",
+  "branch": "feat/launcher-multimodal-0.4.0",
+  "plan": "docs/0.4.0开发方案.md",
+  "design_audit": "docs/verification/0.4.0-plan-audit.json",
+  "authorization": {
+    "development": true,
+    "targeted_verification": true,
+    "source_build": true,
+    "local_commit_immediately_after_each_version_build": true,
+    "candidate_packaging": true,
+    "public_release": true,
+    "release_repository": "juccistar/reception-workbench-releases",
+    "private_source_push": false,
+    "installation_or_real_data_migration": false,
+    "real_customer_messages_or_paid_model_calls": false,
+    "full_test_suite": false
+  },
+  "implementation": {
+    "identity_and_grant_invalidation": "implemented_targeted_tests_passed",
+    "launcher_and_production_demo_removal": "implemented_window_and_frozen_closure_pending",
+    "global_model_configuration": "implemented_targeted_tests_passed",
+    "multimodal_provider_and_task_routing": "implemented_targeted_tests_passed",
+    "whatsapp_media_ingestion": "implemented_targeted_tests_passed",
+    "startup_output_and_lazy_loading": "implemented_targeted_tests_passed",
+    "query_projection_and_event_refresh": "implemented_targeted_tests_and_query_measurement_passed",
+    "media_transfer_and_memory_ownership": "implemented_targeted_tests_passed",
+    "legacy_runtime_cleanup": "implemented_frozen_closure_pending"
+  },
+  "verification": {
+    "targeted_backend": {
+      "status": "passed",
+      "files": 40,
+      "tests": 428,
+      "full_suite": false,
+      "record": "docs/verification/0.4.0-backend.json",
+      "network": "mock_and_loopback_only"
+    },
+    "targeted_desktop_host": {
+      "status": "passed",
+      "files": 16,
+      "tests": 89,
+      "targets": [
+        "chat-host",
+        "media-host",
+        "message-images",
+        "original-image-dialog",
+        "requirements-no-translation",
+        "whatsapp-coordinator",
+        "whatsapp-host-lifecycle",
+        "event-refresh",
+        "launcher-activation",
+        "legacy-model-import",
+        "model-check-host",
+        "model-settings-store",
+        "model-summary",
+        "translation-activation-host",
+        "storage-host",
+        "data-storage"
+      ]
+    },
+    "targeted_tools": {
+      "status": "passed",
+      "tests": 6,
+      "files": [
+        "launch-output-040.test.mjs",
+        "maintenance-cancel-040.test.mjs",
+        "release-paths.test.mjs",
+        "test_benchmark_040.py"
+      ],
+      "node_tests": 4,
+      "python_benchmark_tests": 2
+    },
+    "typecheck": "passed",
+    "prompt_consistency": {
+      "status": "passed",
+      "version": "reception-0.4.0"
+    },
+    "performance": "docs/verification/0.4.0-performance.json",
+    "source_build": {
+      "status": "passed",
+      "command": "node scripts/build.mjs",
+      "output": "artifacts/app",
+      "immediate_local_commit": true
+    },
+    "source_window": null,
+    "candidate_build": null,
+    "candidate_window": null,
+    "update_signature": null,
+    "anonymous_release_downloads": null,
+    "real_provider_quality": "not_verified",
+    "real_account_send_receive": "not_verified",
+    "accio_authorization_reuse_after_complete_exit_or_reboot": "not_verified"
+  },
+  "release": {
+    "repository": "juccistar/reception-workbench-releases",
+    "github_cli_available": true,
+    "github_cli_authentication_current_session": "not_logged_in_at_source_build",
+    "draft_created": false,
+    "published": false,
+    "installed": false
+  }
+}

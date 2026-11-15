@@ -34,10 +34,10 @@ def _path(value):
     return path
 
 
-def _workspace(root, *, clean=True):
+def _workspace(root, *, clean=True, validated=None):
     if not root.is_dir():
         raise StorageError('Workspace does not exist')
-    preflight_workspace(root)
+    preflight_workspace(root, validated=validated)
     return _files(root, require_checkpoint=clean, check_references=clean,
                   receipt_roots=[str(root / 'live/workctl-state/chat-analysis/send-receipts')])
 
@@ -151,7 +151,14 @@ def _check_history(current, archive):
                 raise StorageError('Backup conflicts with current operation history')
 
 
-def run_maintenance(action, source, destination=None, archive=None, backup_dir=None, *, allow_new=False):
+def run_maintenance(action, source, destination=None, archive=None, backup_dir=None, *, allow_new=False, progress=None, cancel=None):
+    def checkpoint(stage):
+        if progress is not None:
+            progress(stage)
+        if cancel is not None and cancel():
+            raise StorageError('Maintenance cancelled at a safe point', code='storage_cancelled')
+
+    checkpoint('validate')
     root = _path(source)
     backup = None
     if action == 'prepare' and (not root.exists() or
@@ -191,19 +198,30 @@ def run_maintenance(action, source, destination=None, archive=None, backup_dir=N
             raise StorageError('Workspace does not exist')
         lock = _lock_readonly(root)
         try:
-            paths = _workspace(root, clean=False)
+            validated = {}
+            paths = _workspace(root, clean=False, validated=validated)
+            checkpoint('validated')
             recovery_backup = None
             if action == 'prepare' and lock.was_clean:
                 from .storage_recovery import recover_wal
+                checkpoint('recovery')
                 recovery_backup = recover_wal(root, lock, backup_dir)
+                # A nonempty result means recovery wrote to the workspace.
+                # No affected WAL returns None before any write.
+                if recovery_backup is not None:
+                    validated.clear()
+                checkpoint('recovery_complete')
             if lock.was_clean:
-                paths = _workspace(root)
+                paths = _workspace(root, validated=validated)
             upgrades = []
             for name in paths:
                 if not name.endswith('.sqlite3'):
                     continue
                 kind = 'ledger' if name.endswith(('adapters-live.sqlite3', 'integrations-demo.sqlite3')) else 'repository'
-                if validate_database(root / name, kind) != (LEDGER_VERSION if kind == 'ledger' else REPOSITORY_VERSION):
+                key = (root / name, kind)
+                if key not in validated:
+                    validated[key] = validate_database(*key)
+                if validated[key] != (LEDGER_VERSION if kind == 'ledger' else REPOSITORY_VERSION):
                     upgrades.append(name)
             if action == 'prepare' and upgrades and not lock.was_clean:
                 raise StorageError('Upgrade requires clean shutdown and a safety backup; recover the workspace with the previous version first')
@@ -213,13 +231,16 @@ def run_maintenance(action, source, destination=None, archive=None, backup_dir=N
                 cleanup_required = needs_reminder_cleanup(root, paths)
         finally:
             lock.release()
+        checkpoint('verified')
         cleanup = None
         if action == 'prepare' and (upgrades or cleanup_required):
             backup = backup_workspace(root, _archive_path(backup_dir))
+            checkpoint('backup_complete')
         if action == 'prepare' and cleanup_required:
             # No content is deleted before a complete archive is validated and
             # every current source file is matched to that archive under lock.
             from .reminder_cleanup import clean_reminders
+            checkpoint('write')
             with WorkspaceLock(root) as lock:
                 if not lock.was_clean:
                     raise StorageError('Workspace has no managed clean shutdown')
@@ -231,6 +252,7 @@ def run_maintenance(action, source, destination=None, archive=None, backup_dir=N
     if action == 'backup':
         target = _path(destination)
         backup = backup_workspace(root, target)
+        checkpoint('backup_complete')
         return {'status': 'completed', 'action': action, 'data_root': str(root), 'backup': str(backup)}
     if action in ('migrate', 'restore'):
         target = _path(destination)
@@ -252,6 +274,7 @@ def run_maintenance(action, source, destination=None, archive=None, backup_dir=N
                 finally:
                     lock.mark_clean_shutdown()
         backup_workspace(root, safety)
+        checkpoint('backup_complete')
         # Keep the source locked until publishing; reject changes since safety snapshot.
         with WorkspaceLock(root) as lock:
             if not lock.was_clean:
@@ -261,6 +284,7 @@ def run_maintenance(action, source, destination=None, archive=None, backup_dir=N
                 chosen = old_archive or safety
                 if old_archive:
                     _check_history(safety, old_archive)
+                checkpoint('write')
                 restore_workspace(chosen, target)
             finally:
                 lock.mark_clean_shutdown()

@@ -1,24 +1,37 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { app, WebContentsView, type BrowserWindow, type Rectangle } from 'electron';
-import puppeteer, { type Frame, type HTTPResponse, type Page } from 'puppeteer';
+import type { Browser, Frame, HTTPResponse, Page } from 'puppeteer';
 import type { WhatsAppHostInfo, WhatsAppPageState, WhatsAppPhase } from '../../shared/whatsapp';
 import { SendLedger, type FrozenIntent, type SendResult } from './ledger';
 import { ViewTransport } from './transport';
 import { connectionFailure, retryAfterDelay, whatsappUserAgent, whatsappPageProbe, WhatsAppConnectionError, WhatsAppStepFailure } from './connection';
 import { WhatsAppDiagnostics } from './diagnostics';
 
+// Preserve the host's fixed-archive require routing. Both SDKs load only on the
+// first connection, and concurrent hosts share the same in-flight load.
+type WhatsAppSdk = { Client: new (options: any) => any; puppeteer: typeof import('puppeteer')['default'] };
+let sdkLoading: Promise<WhatsAppSdk> | undefined;
+function loadSdk(): Promise<WhatsAppSdk> {
+  if (!sdkLoading) {
+    sdkLoading = Promise.resolve().then(() => {
+      const { Client } = require('whatsapp-web.js');
+      const puppeteer = require('puppeteer').default ?? require('puppeteer');
+      return { Client, puppeteer };
+    }).catch(error => { sdkLoading = undefined; throw error; });
+  }
+  return sdkLoading;
+}
+
 // whatsapp-web.js 1.34.8, Apache-2.0. The instance-specific initialize adapter
 // follows Client.initialize, replacing browser creation and guarding frame reinjection.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { Client } = require('whatsapp-web.js');
 
 type AccountStatus = 'connecting' | 'qr' | 'authenticated' | 'ready' | 'disconnected' | 'error';
 export type WhatsAppEvent =
   | ({ type: 'account'; status: AccountStatus } & WhatsAppHostInfo)
   | { type: 'messages'; account_id: string; connection_epoch: string; messages: WhatsAppMessage[] }
   | { type: 'ack'; message_id: string; ack: number; account_id: string; connection_epoch: string };
-export interface WhatsAppMessage { id: string; chat_id: string; body: string; timestamp_ms: number; from_me: boolean; name: string; is_group: boolean; is_history: boolean; metadata_only?: boolean; ack?: number }
+export interface WhatsAppMessage { id: string; chat_id: string; body: string; timestamp_ms: number; from_me: boolean; name: string; is_group: boolean; is_history: boolean; metadata_only?: boolean; ack?: number; has_image?: boolean }
 export interface WhatsAppHostOptions { window: BrowserWindow; partition: string; directory: string; diagnosticsDirectory?: string; applicationVersion?: string; sessionGeneration?: number; onEvent: (event: WhatsAppEvent) => void }
 const direct = (id: string): boolean => /@(c\.us|lid)$/.test(id);
 const serialized = (id: any): string => typeof id === 'string' ? id : (id?._serialized || '');
@@ -33,7 +46,7 @@ export class WhatsAppHost {
   private observedDocumentSerial = 0;
   private retryNotBefore = 0;
   private transport?: ViewTransport;
-  private browser?: Awaited<ReturnType<typeof puppeteer.connect>>;
+  private browser?: Browser;
   private phaseTimer?: ReturnType<typeof setTimeout>;
   private pageCleanup?: () => void;
   private failure?: WhatsAppConnectionError;
@@ -315,7 +328,7 @@ export class WhatsAppHost {
     const chat = String(message.fromMe ? message.to : message.from || '');
     const id = serialized(message.id);
     if (!direct(chat) || !id || !account || !epoch || !this.active(generation, account, epoch)) return;
-    const item: WhatsAppMessage = { id, chat_id: chat, body: typeof message.body === 'string' ? message.body : '', timestamp_ms: Number(message.timestamp || 0) * 1000, from_me: !!message.fromMe, name, is_group: false, is_history: history, ack: typeof message.ack === 'number' ? message.ack : undefined };
+    const item: WhatsAppMessage = { id, chat_id: chat, body: typeof message.body === 'string' ? message.body : '', timestamp_ms: Number(message.timestamp || 0) * 1000, from_me: !!message.fromMe, name, is_group: false, is_history: history, ack: typeof message.ack === 'number' ? message.ack : undefined, has_image: message.type === 'image' };
     if (item.from_me && !history && this.pendingSends.get(epoch)) this.outgoing.push({ account, epoch, message: item });
     else this.options.onEvent({ type: 'messages', account_id: account, connection_epoch: epoch, messages: [item] });
   }
@@ -348,9 +361,10 @@ export class WhatsAppHost {
       await this.cleanupTask;
       if (this.cleanupFailed) throw new WhatsAppConnectionError('cdp_error');
       if (!this.current(generation)) return;
-      const client = this.client = await this.step(generation, 'auth_setup', async () => new Client({ userAgent: false, authTimeoutMs: PHASE_TIMEOUT_MS, webVersionCache: { type: 'none' } }));
+      const sdk = await this.step(generation, 'auth_setup', loadSdk);
+      const client = this.client = await this.step(generation, 'auth_setup', async () => new sdk.Client({ userAgent: false, authTimeoutMs: PHASE_TIMEOUT_MS, webVersionCache: { type: 'none' } }));
       this.bindEvents(client, generation);
-      await this.initialize(client, generation);
+      await this.initialize(client, generation, sdk.puppeteer);
     })().catch(error => this.fail(generation, error));
   }
   private httpFailure(response: HTTPResponse): WhatsAppConnectionError {
@@ -401,7 +415,7 @@ export class WhatsAppHost {
     page.on('pageerror', notice);
     this.pageCleanup = () => { page.off('response', response); page.off('framenavigated', navigated); page.off('pageerror', notice); restoreBindings(); };
   }
-  private async initialize(client: any, generation: number): Promise<void> {
+  private async initialize(client: any, generation: number, puppeteer: WhatsAppSdk['puppeteer']): Promise<void> {
     const ensureCurrent = () => { if (this.closing || this.generation !== generation) throw new WhatsAppConnectionError('page_closed'); };
     // Start a fresh document for each connection; the persistent partition is retained.
     // This also discards exposed bindings/scripts belonging to a retired SDK instance.
@@ -499,6 +513,47 @@ export class WhatsAppHost {
       }
     }
   }
+  async downloadImage(account: string, epoch: string, chatId: string, messageId: string, consume: (mime: string, size: number, chunks: AsyncIterable<Buffer>) => Promise<void>): Promise<void> {
+    const generation = this.generation;
+    const check = () => { if (!this.active(generation, account, epoch) || Date.now() >= deadline) throw new Error('WhatsApp image source changed'); };
+    const deadline = Date.now() + 60_000;
+    check();
+    const bounded = async <T>(promise: Promise<T>): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([promise, new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('WhatsApp image source changed')), Math.max(0, deadline - Date.now()));
+          timer.unref?.();
+        })]);
+      } finally { if (timer) clearTimeout(timer); }
+    };
+    const message = await bounded<any>(this.client.getMessageById(messageId));
+    check();
+    if (!message || serialized(message.id) !== messageId || serialized(message.fromMe ? message.to : message.from) !== chatId || message.type !== 'image' || !message.hasMedia) throw new Error('WhatsApp image unavailable');
+    // Dispose even when the page creates the handle after the deadline.
+    let abandoned = false;
+    const pendingHandle = this.client.pupPage.evaluateHandle(async (id: string) => (await (window as any).WWebJS.resolveMediaBlob(id))?.blob ?? null, messageId);
+    void pendingHandle.then((late: any) => { if (abandoned) void late.dispose().catch(() => {}); }, () => {});
+    let handle: Awaited<typeof pendingHandle>;
+    try { handle = await bounded(pendingHandle); } catch (error) { abandoned = true; throw error; }
+    try {
+      check();
+      const metadata = await bounded<{ size: number; mime: string }>(handle.evaluate((blob: Blob | null, id: string) => ({ size: blob?.size ?? 0, mime: (window as any).require('WAWebCollections').Msg.get(id)?.mimetype || 'application/octet-stream' }), messageId));
+      check();
+      if (!Number.isSafeInteger(metadata.size) || metadata.size <= 0 || metadata.size > 6 * 1024 * 1024) throw new Error('WhatsApp image too large');
+      async function* chunks() {
+        for (let offset = 0; offset < metadata.size; offset += 256 * 1024) {
+          check();
+          const encoded = await bounded<string>(handle.evaluate(async (blob: Blob, start: number, end: number) => (window as any).WWebJS.arrayBufferToBase64Async(await blob.slice(start, end).arrayBuffer()), offset, Math.min(offset + 256 * 1024, metadata.size)));
+          check();
+          yield Buffer.from(encoded, 'base64');
+        }
+      }
+      await bounded(consume(metadata.mime, metadata.size, chunks()));
+      check();
+    } finally { await bounded(handle.dispose()).catch(() => {}); }
+  }
+
   async lookupMessage(messageId: string): Promise<SendResult | null> {
     if (this.status !== 'ready' || !messageId) return null;
     const message = await this.client.getMessageById(messageId);

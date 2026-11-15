@@ -117,6 +117,46 @@ def _retry_after(value):
         return None
 
 
+class RouterTranslator:
+    """Use the shared model runtime without owning or closing its HTTP pool."""
+    def __init__(self, router):
+        self.router = router
+        self.snapshot = router.resolve('translation', ('text', 'translation'))
+
+    def translate(self, items, request_id, *, cancel_event=None, on_call_start=None):
+        if cancel_event is not None and cancel_event.is_set():
+            raise _error('cancelled')
+        self.router.assert_current(self.snapshot)
+        outgoing = [{'id': f't{i}', 'text': item['text'], 'speaker': item['speaker'],
+                     'context': item['context']} for i, item in enumerate(items, 1)]
+        result = self.router.generate('translation', _SYSTEM_PROMPT, {'items': outgoing},
+                                      required_capabilities=('text', 'translation'),
+                                      cancel=cancel_event, on_call_start=on_call_start, max_output_tokens=4096)
+        self.router.assert_current(self.snapshot)
+        if cancel_event is not None and cancel_event.is_set():
+            raise _error('cancelled')
+        try:
+            output = result['output']
+            rows = output['items']
+            if not isinstance(rows, list) or len(rows) != len(items):
+                raise ValueError()
+            mapped = {}
+            for row in rows:
+                identifier, text = row['id'], row['text']
+                if (not isinstance(identifier, str) or identifier in mapped or
+                        not isinstance(text, str) or not text.strip() or len(text) > _MAX_TRANSLATION):
+                    raise ValueError()
+                mapped[identifier] = text
+            if set(mapped) != {f't{i}' for i in range(1, len(items) + 1)}:
+                raise ValueError()
+            return {'items': [{'key': item['key'], 'text': mapped[f't{i}']}
+                              for i, item in enumerate(items, 1)],
+                    'usage': result.get('usage') or {}, 'model': result.get('model'),
+                    'request_id': result.get('request_id') or request_id}
+        except (KeyError, TypeError, ValueError):
+            raise _error('invalid_response') from None
+
+
 class ChatCompletionsTranslator:
     def __init__(self, base_url, model, api_key, *, transport=None):
         self.base_url = normalize_base_url(base_url)

@@ -28,12 +28,13 @@ export function OriginalImageDialog({ images, initial, bridge, onClose, dialogLa
     let active = true; let objectUrl = '';
     setUrl(''); setError(''); setOriginalSize(false);
     if (!image?.ref || !bridge?.getImageOriginal) { setError('原图不可用'); return; }
-    void bridge.getImageOriginal(image.ref).then(result => {
+    const requestId = crypto.randomUUID();
+    void bridge.getImageOriginal(image.ref, requestId).then(result => {
       if (!active) return;
       objectUrl = URL.createObjectURL(new Blob([new Uint8Array(result.bytes)], { type: result.media_type }));
       setUrl(objectUrl);
     }, () => { if (active) setError('原图读取失败或已变化'); });
-    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+    return () => { active = false; void bridge.cancelImageOriginal?.(requestId).catch(() => {}); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [bridge, refKey]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {

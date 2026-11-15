@@ -5,17 +5,19 @@ import tempfile
 import threading
 import time
 import unittest
+import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'test_support'))
+from reception_test_support.service import create_synthetic_service
 from reception_service.errors import ServiceError
 from reception_service.model_payload import project_model_payload
 from reception_service.requirement_changes import requirement_revision
-from reception_service.service import ReceptionService
 
 
 class RequirementChangesTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.service = ReceptionService(Path(self.temp.name))
+        self.service = create_synthetic_service(Path(self.temp.name))
         self.owner = {'conversation_id': 'multi-synthetic', 'buyer_id': 'synthetic-buyer',
                       'seller_id': 'demo-seller', 'customer_name': 'Synthetic multi-case'}
         self.messages = []

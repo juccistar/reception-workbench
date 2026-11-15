@@ -31,13 +31,10 @@ class IntegrationFacade(Protocol):
 
 
 def build_integrations(mode: str, data_dir: Path, settings: dict) -> IntegrationFacade:
-    if mode == 'demo':
-        from .demo import DemoIntegration
-        return DemoIntegration(Path(data_dir), settings)
     if mode == 'live':
         from .live import LiveIntegration
         return LiveIntegration(Path(data_dir), settings)
-    raise ServiceError('invalid_mode', '只支持演示模式或真实模式', stage='runtime')
+    raise ServiceError('invalid_mode', '只支持真实模式', stage='runtime')
 
 
 __all__ = ['IntegrationFacade', 'build_integrations']

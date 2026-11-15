@@ -1,5 +1,6 @@
 """Execution-slot isolation, cancellation, priority and bounded local admission."""
 import queue
+import sys
 from pathlib import Path
 import tempfile
 import threading
@@ -7,6 +8,8 @@ import time
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'test_support'))
+from reception_test_support.service import SyntheticReceptionService, create_synthetic_service
 from reception_service.errors import ServiceError, safe_diagnostics
 from reception_service.execution import BusinessQueue
 from reception_service.service import ReceptionService
@@ -16,10 +19,12 @@ class ExecutionTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        scheduler = patch.object(ReceptionService, '_schedule', return_value=None)
+        # The legacy runner replaces the public ReceptionService alias with a
+        # compatibility subclass. The factory still constructs this base class.
+        scheduler = patch.object(SyntheticReceptionService, '_schedule', return_value=None)
         scheduler.start()
         self.addCleanup(scheduler.stop)
-        self.service = ReceptionService(Path(self.temporary.name))
+        self.service = create_synthetic_service(Path(self.temporary.name))
         self.addCleanup(self.service.close)
         self.cid = self.service.repo.list('conversation')[0]['conversation_id']
         self.case = self.service.get_conversation(self.cid)['case']
@@ -125,8 +130,7 @@ class ExecutionTests(unittest.TestCase):
     def test_queue_rejection_rolls_back_other_job_claims(self):
         service = self.service
         actions = [lambda: service._enqueue('sync_messages', {'conversation_id': self.cid}),
-                   lambda: service.generate_manual_suggestion(self.cid, 'full-suggestion', self.case['case_id']),
-                   lambda: service.organize_requirements(self.cid, self.case['case_id'], 'full-requirements')]
+                   lambda: service.generate_manual_suggestion(self.cid, 'full-suggestion', self.case['case_id'])]
         for action in actions:
             with self.subTest(action=action):
                 before_jobs = service.repo.list('job')
@@ -136,7 +140,6 @@ class ExecutionTests(unittest.TestCase):
                 self.assertEqual(error.exception.code, 'task_queue_full')
                 self.assertEqual(service.repo.list('job'), before_jobs)
         self.assertIsNone(service.repo.get('manual_request', 'full-suggestion'))
-        self.assertIsNone(service.repo.get('requirement_request', 'full-requirements'))
 
     def test_full_queue_does_not_consume_unknown_reconciliation_retry(self):
         service = self.service
@@ -505,7 +508,10 @@ class ExecutionTests(unittest.TestCase):
 
     def test_phase_budgets_allow_real_ai_wait_but_detect_a_stuck_external_read(self):
         service = self.service
-        health = service._executor_health
+        from reception_service.executor_health import ExecutorHealth
+        # Advance this job's clock without also advancing an unrelated live
+        # consumer's independently bounded queue/scheduler phase.
+        health = ExecutorHealth(service)
         item = ('job_phase', 'generate_draft', {}, service._epoch, False)
         health.start_job(item)
         with health.phase(item[0], 'ai_elapsed_ms'):

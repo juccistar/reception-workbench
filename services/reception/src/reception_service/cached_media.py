@@ -14,6 +14,7 @@ from PIL import Image, ImageOps
 
 from .errors import ServiceError
 from .image_assets import MAX_BYTES, MAX_DIMENSION, MAX_PIXELS
+from .image_transfer import ImageTransferMixin
 from .product_identity import product_kind, product_link
 from .repository import encoded
 
@@ -25,8 +26,12 @@ def _fail():
     raise ServiceError('image_unavailable', '原图不可用或来源已变化，请刷新后重试')
 
 
-class CachedMediaMixin:
-    def _cached_image(self, ref, *, validate_pixels=True):
+class CachedMediaMixin(ImageTransferMixin):
+    def _cached_image_snapshot(self, ref, *, metadata=False):
+        def asset_record(kind, key):
+            if metadata and hasattr(self.repo, 'image_transfer_metadata'):
+                return self.repo.image_transfer_metadata(kind, key) or {}
+            return self.repo.get(kind, key) or {}
         if not isinstance(ref, dict) or not self.account_verified or self._closing:
             _fail()
         kind = ref.get('kind')
@@ -51,10 +56,10 @@ class CachedMediaMixin:
                     or product.get('product_id') != record.get('product_id') or record.get('updated_at', 0) != ref['version']
                     or not any(isinstance(i, dict) and i.get('status') == 'ready' and i.get('asset_sha256') == sha for i in images[:5])):
                 _fail()
-            asset = self.repo.get('image_asset', sha) or {}
+            asset = asset_record('image_asset', sha)
         elif kind == 'supplement':
             conversation = self.repo.get('conversation', ref['conversation_id']) or {}
-            asset = self.repo.get('supplement_attachment', ref['attachment_id']) or {}
+            asset = asset_record('supplement_attachment', ref['attachment_id'])
             if (conversation.get('seller_id') != self.seller_id or asset.get('seller_id') != self.seller_id
                     or asset.get('conversation_id') != ref['conversation_id'] or asset.get('buyer_id') != conversation.get('buyer_id')
                     or asset.get('id') != ref['attachment_id'] or asset.get('status') != 'ready'
@@ -73,15 +78,39 @@ class CachedMediaMixin:
             state = self._photo_state(message)
             if state.get('status') != 'ready' or state.get('sha256') != sha:
                 _fail()
-            asset = self.repo.get('image_asset', sha) or {}
+            asset = asset_record('image_asset', sha)
         if asset.get('sha256') != sha:
             _fail()
-        try:
-            content = asset['original_b64']
-            if not isinstance(content, str) or len(content) > ((MAX_BYTES + 2) // 3) * 4:
+        if metadata and 'version' in asset:
+            length = asset.get('content_length')
+            if asset.get('content_type') != 'text' or type(length) is not int or not 0 < length <= ((MAX_BYTES + 2) // 3) * 4:
                 _fail()
+            kind = 'supplement_attachment' if ref['kind'] == 'supplement' else 'image_asset'
+            key = ref['attachment_id'] if kind == 'supplement_attachment' else sha
+            return (kind, key, asset['version'], length, asset.get('size'), asset.get('mime') or asset.get('media_type'), sha)
+        content = asset.get('original_b64')
+        if not isinstance(content, str) or not content or len(content) > ((MAX_BYTES + 2) // 3) * 4:
+            _fail()
+        return (content, asset.get('size'), asset.get('mime') or asset.get('media_type'), sha)
+
+    def _cached_image_metadata(self, ref):
+        return self._cached_image_snapshot(ref, metadata=True)
+
+    def _cached_image_load_transfer(self, metadata):
+        if len(metadata) == 4:  # lightweight test doubles and legacy repository implementations
+            return metadata
+        kind, key, _version, length, size, mime, sha = metadata
+        asset = self.repo.get(kind, key) or {}
+        content = asset.get('original_b64')
+        if not isinstance(content, str) or len(content) != length:
+            _fail()
+        return content, size, mime, sha
+
+    def _cached_image(self, ref, *, validate_pixels=True):
+        content, size, asset_mime, sha = self._cached_image_snapshot(ref)
+        try:
             data = base64.b64decode(content, validate=True)
-            if not 0 < len(data) <= MAX_BYTES or len(data) != asset['size'] or hashlib.sha256(data).hexdigest() != sha:
+            if not 0 < len(data) <= MAX_BYTES or len(data) != size or hashlib.sha256(data).hexdigest() != sha:
                 _fail()
             if not validate_pixels:
                 return data, None, None, None
@@ -90,7 +119,7 @@ class CachedMediaMixin:
                 with Image.open(io.BytesIO(data), formats=tuple(_FORMATS)) as image:
                     mime = _FORMATS.get(image.format)
                     width, height = image.size
-                    if (mime != (asset.get('mime') or asset.get('media_type')) or not 0 < width <= MAX_DIMENSION
+                    if (mime != asset_mime or not 0 < width <= MAX_DIMENSION
                             or not 0 < height <= MAX_DIMENSION or width * height > MAX_PIXELS or getattr(image, 'n_frames', 1) != 1):
                         _fail()
                     image.verify()

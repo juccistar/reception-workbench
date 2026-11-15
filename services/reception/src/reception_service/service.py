@@ -63,11 +63,12 @@ FAST = frozenset({'get_snapshot', 'get_executor_health', 'get_conversation', 'ge
                   'list_products', 'get_product', 'get_product_main_image', 'request_product_images', 'list_suppliers', 'get_supplier', 'save_supplier', 'save_product_offer',
                   'select_supplier_offer', 'bind_requirement_product', 'set_product_default_offer', 'get_procurement_settings',
                   'save_procurement_settings', 'set_procurement_enabled', 'list_procurement_tasks', 'request_procurement',
-                  'reconcile_procurement', '_image_original_describe', '_image_original_chunk',
-                  '_image_copy_describe', '_image_copy_chunk', '_product_link_for_reference', '_copy_text_for_reference',
+                  'reconcile_procurement', '_image_prepare', '_image_status', '_image_transfer_chunk', '_image_cancel',
+                  '_set_translation_enabled', '_product_link_for_reference', '_copy_text_for_reference',
                   'get_whatsapp_state', 'save_whatsapp_binding', 'get_whatsapp_context', 'set_whatsapp_reception',
                   'takeover_whatsapp', 'reconcile_whatsapp_operation', '_wa_set_account', '_wa_ingest',
-                  '_wa_prepare_send', '_wa_transport_result', '_wa_ack', 'shutdown'})
+                  '_wa_prepare_send', '_wa_transport_result', '_wa_ack', '_wa_media_begin', '_wa_media_chunk',
+                  '_wa_media_finish', '_wa_media_fail', '_configure_models', 'shutdown'})
 DEFAULT_SETTINGS = {'workctl_path': '', 'poll_seconds': 30, 'probe_seconds': 2, 'merge_seconds': 1,
                     'required_fields': ['product', 'quantity', 'specifications', 'destination'],
                     'image_batch_mib': 64, 'image_prepare_seconds': 60, 'image_parallelism': 2,
@@ -98,15 +99,15 @@ def coverage():
 
 
 class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin, ProductLibraryMixin, RequirementMediaMixin, ExecutionMixin, ProcurementMixin, ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
-    def __init__(self, data_root: Path, mode='demo', seller_id='', emit=None):
-        if mode not in ('demo', 'live'):
+    def __init__(self, data_root: Path, mode='live', seller_id='', emit=None, *, _integration_factory=None, _fixture_initializer=None):
+        if mode != 'live' and not (mode == 'demo' and _integration_factory and _fixture_initializer):
             raise ServiceError('invalid_mode', '运行模式无效')
         self._seller_guard = None
         self._workspace_lock = WorkspaceLock(data_root).acquire(invalidate_clean=False)
         try:
             preflight_workspace(data_root)
             self._workspace_lock.invalidate_clean_shutdown()
-            self._initialize(data_root, mode, seller_id, emit)
+            self._initialize(data_root, mode, seller_id, emit, _integration_factory, _fixture_initializer)
         except BaseException:
             # No clean marker on partial startup. Stop any successfully started
             # threads before releasing the data-root lock and storage handles.
@@ -114,10 +115,17 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                 self._stop.set()
             if hasattr(self, '_generation_active'):
                 self._join_generation_tasks()
-            for name in ('_worker', '_monitor_thread', '_translation_worker', '_health_watchdog'):
-                thread = getattr(self, name, None)
+            deadline = time.monotonic() + 10
+            threads = [getattr(self, name, None) for name in
+                       ('_worker', '_monitor_thread', '_translation_worker', '_health_watchdog')]
+            for thread in threads:
                 if thread and thread.ident is not None and thread is not threading.current_thread():
-                    thread.join()
+                    thread.join(timeout=max(0, deadline - time.monotonic()))
+            active_translation = getattr(self, '_translation_active', {})
+            if (any(thread and thread.is_alive() for thread in threads)
+                    or any(thread.is_alive() for thread, _ in list(active_translation.values()))):
+                # The live threads retain this service and its locks and repositories.
+                raise ServiceError('executor_unavailable', '启动线程尚未退出，无法安全释放数据锁。', stage='shutdown')
             for name in ('repo', '_control'):
                 repository = getattr(self, name, None)
                 if repository is not None:
@@ -126,7 +134,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
             self._workspace_lock.release()
             raise
 
-    def _initialize(self, data_root, mode, seller_id, emit):
+    def _initialize(self, data_root, mode, seller_id, emit, integration_factory, fixture_initializer):
         self.data_root = Path(data_root)
         self.mode = mode
         self.expected_seller_id = seller_id
@@ -140,6 +148,9 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
         self._epoch = 0
         self._queue = BusinessQueue()
         self._init_execution()
+        from .model_router import ModelRouter
+        self._model_router = ModelRouter()
+        self._model_config_valid = False
         self._executor_health = ExecutorHealth(self)
         self._queue.executor_guard = self._executor_health.require
         self._chat_facades = {}
@@ -169,7 +180,11 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
         self.settings = copy.deepcopy(DEFAULT_SETTINGS)
         self.settings.update(self._control.get('meta', 'settings', {}))
         self.settings['feishu']['write_enabled'] = False
-        self.integrations = build_integrations(mode, self.data_root / mode, copy.deepcopy(self.settings))
+        self._integration_factory = integration_factory or build_integrations
+        self.integrations = self._integration_factory(mode, self.data_root / mode, copy.deepcopy(self.settings))
+        configure_router = getattr(self.integrations, 'configure_model_router', None)
+        if configure_router is not None:
+            configure_router(self._model_router)
         self.repo = Repository(self.data_root / 'demo' / 'workspace.sqlite3', self.seller_id) if mode == 'demo' else Repository(None)
         self.checks = {name: blank_check() for name in CHECK_NAMES}
         self._init_requirement_media()
@@ -178,9 +193,9 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
         self._init_product_library()
         self._init_whatsapp()
         self._initialize_unread()
-        if mode == 'demo' and not self.repo.list('conversation'):
-            self._seed()
-        self._hydrate_demo_messages()
+        self._fixture_initializer = fixture_initializer
+        if self._fixture_initializer is not None:
+            self._fixture_initializer(self)
         self._init_translation()
         self._worker = threading.Thread(target=self._executor_health.run, args=(self._work_loop, 'worker'), name='reception-external-worker', daemon=True)
         self._worker.start()
@@ -330,6 +345,71 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
         except TypeError as error:
             raise ServiceError('invalid_params', '业务参数不完整或含未知字段') from error
 
+    def _configure_models(self, **packet):
+        with self._lock:
+            self._model_config_valid = False
+            try:
+                affected = self._model_router.configure(packet)
+            except ServiceError:
+                self._translation_generation += 1
+                for _, cancel in self._translation_active.values():
+                    cancel.set()
+                self.checks['ai'] = {**blank_check(), 'status': 'blocked', 'message': '模型配置不可用，请重新检查'}
+                self._wa_enabled = False
+                with self.repo.transaction():
+                    self._wa_cancel()
+                    self._revoke_model_batches()
+                self._pause()
+                raise
+            self._model_config_valid = True
+            if 'translation' in affected:
+                self._translation_generation += 1
+                for _, cancel in self._translation_active.values():
+                    cancel.set()
+            if 'reception' in affected:
+                self.checks['ai'] = {**blank_check(), 'status': 'not_checked', 'message': '接待模型已变化，请重新检查'}
+                self._wa_enabled = False
+                with self.repo.transaction():
+                    self._wa_cancel()
+                    self._revoke_model_batches()
+                self._pause()
+        self._changed()
+        return {'affected': sorted(affected)}
+
+    def _revoke_model_batches(self):
+        for batch in self.repo.list('reply_batch'):
+            if batch.get('origin') == 'automatic' and batch.get('status') in ('prepared', 'sending', 'waiting_retry', 'waiting_receipt', 'waiting_sync'):
+                self._stop_reply_batch(batch, '接待模型配置已变化，未提交条目已停止')
+
+    def _freeze_reception_model(self, required_capabilities=('text', 'structure')):
+        if not self._model_config_valid:
+            raise ServiceError('model_configuration_invalid', '模型配置不可用', stage='model_configuration')
+        from dataclasses import asdict
+        return asdict(self._model_router.resolve('reception', required_capabilities))
+
+    def _assert_reception_model(self, frozen):
+        if not self._model_config_valid:
+            raise ServiceError('model_configuration_invalid', '模型配置不可用', stage='model_configuration')
+        from .model_router import ModelSnapshot
+        try:
+            if not isinstance(frozen, dict) or frozen.get('purpose') != 'reception':
+                raise ValueError('invalid reception snapshot')
+            snapshot = ModelSnapshot(**{**frozen, 'required_capabilities': tuple(frozen['required_capabilities'])})
+        except (KeyError, TypeError, ValueError):
+            raise ServiceError('model_configuration_stale', '模型配置不可用或已变化', stage='model_configuration') from None
+        self._model_router.assert_current(snapshot)
+
+    def _verify_model_result(self, frozen, result):
+        if self.mode != 'live':
+            return None
+        actual = result.get('model_snapshot') if isinstance(result, dict) else None
+        self._assert_reception_model(frozen)
+        self._assert_reception_model(actual)
+        keys = ('purpose', 'profile_id', 'route_revision', 'config_revision', 'credential_revision', 'capability_revision')
+        if any(frozen.get(key) != actual.get(key) for key in keys):
+            raise ServiceError('model_configuration_stale', '模型配置已变化，请重新生成', stage='model_configuration')
+        return copy.deepcopy(actual)
+
     def _budget(self):
         return {'limit': None, 'used': self._budget_used, 'remaining': None,
                 'ai_used': self._ai_budget_used, 'ai_remaining': None, 'unlimited': True}
@@ -376,6 +456,12 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
         from .product_catalog import project_case
         with self._lock:
             projection = ReceptionProjection(self)
+            checks = copy.deepcopy(self.checks)
+            if self.mode == 'live':
+                try:
+                    self._freeze_reception_model()
+                except ServiceError:
+                    checks['ai'] = {**blank_check(), 'status': 'blocked', 'message': '接待模型配置不可用或已变化'}
             conversations = [self._summary(c, projection) for c in self.repo.list('conversation')]
             conversations.sort(key=lambda c: c['last_timestamp'] or 0, reverse=True)
             return {'app': {'version': __version__, 'mode': self.mode, 'seller_id': self.seller_id,
@@ -384,7 +470,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                     'reception': {'running': self._running, 'auto_send': self._auto_send,
                                   'manual_only': self._manual_only, 'started_at_ms': self._started_at_ms,
                                   'scope': copy.deepcopy(self._scope), 'budget': self._budget()},
-                    'checks': copy.deepcopy(self.checks), 'conversations': conversations,
+                    'checks': checks, 'conversations': conversations,
                     'handoff_cases': sorted([project_case(self.repo, case) for case in self.repo.list('case') if case['state'] == 'waiting_quote'],
                                             key=lambda case: case['updated_at'], reverse=True),
                     'policies': [policy_library.normalize_policy(p) for p in self.repo.list('policy')], 'jobs': self.list_jobs(), 'outbox': self.list_outbox(),
@@ -496,7 +582,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
             summary = ({key: summary[key] for key in ('conversation_id', 'body', 'revision', 'updated_at')}
                        if summary else None)
             return {'conversation': {**self._summary(conversation), 'revision': conversation['revision']}, 'case': project_case(self.repo, case),
-                    'cases': [project_case(self.repo, c) for c in self.repo.list('case') if c['conversation_id'] == conversation_id],
+                    'cases': [project_case(self.repo, c) for c in self.repo.list('case', conversation_id=conversation_id)],
                     'messages': self.get_messages(conversation_id, limit=100)['items'],
                     'reading': unread.reading(self.repo, conversation_id),
                     'history': self.repo.get('coverage', conversation_id, coverage()),
@@ -514,13 +600,20 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
             raise ServiceError('invalid_params', '分页条数应在 1 至 200 之间')
         with self._lock:
             self._require('conversation', conversation_id)
-            messages = self._messages(conversation_id)
+            before = None
             if before_id is not None:
-                positions = [i for i, m in enumerate(messages) if m['message_id'] == before_id]
-                if not positions:
+                message = self.repo.get('message', encoded([conversation_id, before_id]))
+                if not message or message.get('conversation_id') != conversation_id or message.get('message_id') != before_id:
+                    # Older databases may have used a different entity key.
+                    message = next((row for row in self.repo.list('message', conversation_id=conversation_id)
+                                    if row.get('message_id') == before_id), None)
+                if not message:
                     raise ServiceError('invalid_cursor', '分页游标不属于当前客户')
-                messages = messages[:positions[0]]
-            return {'items': messages[-limit:], 'has_more': len(messages) > limit,
+                stamp = message.get('timestamp_ms')
+                before = (stamp if stamp is not None else -1, before_id)
+            messages = self.repo.message_page(conversation_id, limit + 1, before=before)
+            return {'items': [self._photo_projection(message) for message in messages[-limit:]],
+                    'has_more': len(messages) > limit,
                     'reading': unread.reading(self.repo, conversation_id)}
 
     def mark_messages_read(self, conversation_id, through_message_id, observed_sequence):
@@ -943,10 +1036,14 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                         self.repo.put('case', case['case_id'], case, history=True)
                 self._invalidate()
         # Factory is local; credentials/runtime discovery belongs to explicit checks.
-        replacement = build_integrations(self.mode, self.data_root / self.mode, copy.deepcopy(updated))
+        replacement = self._integration_factory(self.mode, self.data_root / self.mode, copy.deepcopy(updated))
+        configure_router = getattr(replacement, 'configure_model_router', None)
+        if configure_router is not None:
+            configure_router(self._model_router)
         with self._lock:
             self.integrations = replacement
-            self._hydrate_demo_messages()
+            if self._fixture_initializer is not None:
+                self._fixture_initializer(self)
             self._monitor_wake.set()
         self._changed()
         return self.get_snapshot()
@@ -1015,6 +1112,8 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                     raise ServiceError('connection_required', '请先完成只读连接检查')
                 if not manual_only and self.checks['ai']['status'] != 'passed':
                     raise ServiceError('checks_required', '开启真实自动接待前请完成 AI 检查；每条发送仍单独执行原生预检')
+                if not manual_only:
+                    self._freeze_reception_model()
             scope = None if manual_only else self._authorized_scope
             if not manual_only and scope is None:
                 ids = (self._scope['conversation_ids'] if self._scope['mode'] == 'selected' else
@@ -1073,6 +1172,8 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
         if not manual and self._manual_only:
             raise ServiceError('cancelled', '人工接待已关闭自动发送权限')
         draft = self._require('draft', draft_id)
+        if self.mode == 'live' and not manual:
+            self._assert_reception_model(draft.get('model_snapshot'))
         case = self._require('case', draft['case_id'])
         conversation = self._require('conversation', draft['conversation_id'])
         if draft.get('batch_id'):
@@ -1309,9 +1410,9 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                        'buyer_id': conversation['buyer_id'], 'conversation_id': conversation_id, 'role': 'buyer',
                        'text': text, 'timestamp_ms': now_ms(), 'attachments': [], 'own': False}
             self._ingest(conversation, [message])
-            from .integrations.demo import DemoIntegration
-            if isinstance(self.integrations, DemoIntegration):
-                self.integrations.messages.append(copy.deepcopy(message))
+            messages = getattr(self.integrations, 'messages', None)
+            if isinstance(messages, list):
+                messages.append(copy.deepcopy(message))
         self._changed(conversation_id)
         return self.get_snapshot()
 
@@ -1529,6 +1630,10 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                              **({'result': result} if result is not None else {}),
                              **({'error': failure, 'diagnostics': result.get('diagnostics', {})} if isinstance(failure, dict) else {}))
         except ServiceError as error:
+            if error.code in ('model_cleanup_timeout', 'model_cleanup_failed'):
+                self._executor_health.fail('failed', error.code)
+            if self.mode == 'live' and error.code != 'cancelled' and (error.stage == 'identity' or error.code == 'seller_mismatch'):
+                self._identity_failed(epoch)
             if kind == 'product_lookup':
                 self._finish_product_claim(job_id, error.code)
             if kind == 'generate_draft' and (error.code.startswith('schema_') or error.code in ('invalid_ai_output', 'unverified_reply', 'answer_non_json', 'answer_missing', 'answer_schema', 'native_error', 'native_failed', 'timeout', 'native_timeout', 'task_failed', 'connection_error', 'channel_unavailable')):
@@ -1615,7 +1720,8 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                         if job_id not in self._generation_active:
                             self._generation_events.pop(job_id, None)
                 self._queue.complete(item)
-                self._executor_health.finish_job(job_id)
+                if job_id not in self._generation_active:
+                    self._executor_health.finish_job(job_id)
                 self._execution_local.job_id = previous_job
                 self._changed()
 
@@ -1628,6 +1734,13 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                 self._job_update(job_id, status='cancelled', stage='cancelled', completed_at=now_ms(),
                                  message='旧生成已取消，等待当前来源重新规划', ai_reserved_remaining=0,
                                  retry_at=None, retry_status='cancelled')
+                return
+            from .model_attempts import job_blocks_replay
+            if self.mode == 'live' and job_blocks_replay(self.repo, job):
+                self._job_update(job_id, status='failed', stage='retry', completed_at=now_ms(),
+                                 message='模型请求已开始但未得到可用结果，不自动重放',
+                                 retry_at=None, ai_reserved_remaining=0, retry_status='exhausted',
+                                 last_error_code=code, error={'code': code, 'message': '模型请求未完成'})
                 return
             attempt = max((j.get('retry_attempt', 0) for j in previous), default=0) + 1
             same_version = [j for j in previous if not job.get('source_text_sha256')
@@ -1884,6 +1997,10 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                 continue
             if job['status'] == 'deferred' and job.get('retry_at') is not None:
                 return job.get('source_case_revision') == case['revision'] and job['retry_at'] > now_ms()
+            if job['status'] == 'failed' and job.get('external_started'):
+                from .model_attempts import job_blocks_replay
+                if not job_blocks_replay(self.repo, job):
+                    continue
             if job['status'] == 'succeeded':
                 draft_id = (job.get('result') or {}).get('draft_id')
                 previous = next((d for d in drafts if d['draft_id'] == draft_id), None) if draft_id else None
@@ -1921,15 +2038,44 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                     current.update(status='partial' if error.code == 'history_limit' else 'failed',
                                    updated_at=now_ms(), message=str(error))
                     self.repo.put('coverage', job['conversation_id'], current)
+    def _identity_failed(self, epoch):
+        # A late failure from a cancelled check must not revoke a newer grant.
+        with self._lock:
+            if epoch != self._epoch or self._closing:
+                return False
+            self.account_verified = False
+            self._wa_enabled = False
+            self._procurement_authorized = False
+            self._procurement_epoch += 1
+            with self.repo.transaction():
+                self._wa_cancel()
+            self._pause()
+            self.checks['identity'] = {'status': 'blocked', 'check_id': None,
+                                       'checked_at': now_ms(), 'message': '卖家身份未核验',
+                                       'simulated': False}
+        self._changed()
+        return True
+
     def _ensure_identity(self, facade):
-        if not self.account_verified:
-            raise ServiceError('identity_required', '请先运行只读连接检查核验卖家身份', stage='identity')
+        with self._lock:
+            if not self.account_verified:
+                raise ServiceError('identity_required', '请先运行只读连接检查核验卖家身份', stage='identity')
+            epoch, seller = self._epoch, self.seller_id
         if self.mode == 'live':
-            with self._executor_health.phase(getattr(self._execution_local, 'job_id', None), 'identity_ms'):
-                actual = facade.resolve_identity(self.seller_id)
-            if actual != self.seller_id:
-                self._pause()
-                raise ServiceError('seller_mismatch', '当前平台卖家身份已变化', stage='identity')
+            try:
+                with self._executor_health.phase(getattr(self._execution_local, 'job_id', None), 'identity_ms'):
+                    actual = facade.resolve_identity(seller)
+                if actual != seller:
+                    raise ServiceError('seller_mismatch', '当前平台卖家身份已变化', stage='identity')
+            except Exception as error:
+                if getattr(error, 'code', None) == 'cancelled':
+                    raise
+                if not self._identity_failed(epoch):
+                    raise ServiceError('cancelled', '身份检查期间授权或设置已变化', stage='identity') from error
+                raise
+            with self._lock:
+                if epoch != self._epoch or self._closing or not self.account_verified:
+                    raise ServiceError('cancelled', '身份检查期间授权或设置已变化', stage='identity')
 
     def _task_check_connection(self, params, job_id, epoch, facade):
         self._set_check('runtime', job_id, 'running', '检查运行环境')
@@ -1952,12 +2098,11 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                 self._activate_seller(seller)
             elif seller != self.seller_id:
                 raise ServiceError('seller_mismatch', '演示卖家标识不匹配')
-        except ServiceError as error:
-            if error.code == 'cancelled':
+        except Exception as error:
+            if getattr(error, 'code', None) == 'cancelled':
                 raise
-            if self.mode == 'live':
-                self.account_verified = False
-                self._pause()
+            if self.mode == 'live' and not self._identity_failed(epoch):
+                raise ServiceError('cancelled', '身份检查期间授权或设置已变化', stage='identity') from error
             self._set_check('identity', job_id, 'blocked', '卖家身份未核验', simulated)
             raise
         self._set_check('identity', job_id, 'demo' if simulated else 'passed',
@@ -2172,6 +2317,10 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
     def _task_check_ai(self, params, job_id, epoch, facade):
         self._ensure_identity(facade)
         self._set_check('ai', job_id, 'running', '单次 AI 检查中，接待已暂停', self.mode == 'demo')
+        if self.mode == 'live':
+            self._freeze_reception_model()
+            self._set_check('ai', job_id, 'passed', '当前接待模型所需文字和结构能力已检查', False)
+            return {'message': '当前模型能力检查记录有效'}
         context = synthetic_context(self.seller_id)
         with self._lock:
             if epoch != self._epoch or self._closing or self._running:
@@ -2295,14 +2444,19 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                 budget['ai_used'] += 1  # Context reflects the call when it actually starts.
             with self._job_phase(job_id, 'context_ms'):
                 context = self.get_context(case['case_id'])
+        model_snapshot = self._freeze_reception_model() if self.mode == 'live' else None
         found_product, catalog_product = None, None
-        started = [False]
+        attempt_tokens = {}
+        from .model_attempts import AttemptLifecycle, claim, job_blocks_replay
+        attempt_source = {'conversation_id': case['conversation_id'], 'buyer_id': case['buyer_id'],
+                          'message_id': job.get('source_message_id'), 'text_sha256': job.get('source_text_sha256'),
+                          'continuation': supplement}
         def on_call_start():
             with self._lock, self.repo.transaction():
                 current = self._require('case', case['case_id'])
                 conversation_now = self._require('conversation', case['conversation_id'])
                 latest_now = self._latest_buyer(case['conversation_id'])
-                if (started[0] or epoch != self._epoch or self._closing or self._manual_only
+                if (attempt_tokens or epoch != self._epoch or self._closing or self._manual_only
                         or current['revision'] != case['revision'] or conversation_now.get('human_owned')
                         or (latest_now['message_id'] if latest_now else None) != job['source_message_id']
                         or supplement_fingerprint(self.get_context(case['case_id'])) != supplement_fingerprint(context)
@@ -2311,26 +2465,52 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                 if photo_guard is not None:
                     photo_guard()
                 current_job = self._require('job', job_id)
-                current_job.update(external_started=True, ai_reserved_remaining=0, stage='generate_draft', message='正在生成接待回复')
+                if automatic and self.mode == 'live':
+                    previous = self.repo.list('job', conversation_id=case['conversation_id'])
+                    if any(row.get('job_id') != job_id and row.get('kind') == 'generate_draft'
+                           and row.get('automatic') and job_blocks_replay(self.repo, row)
+                           and row.get('source_message_id') == current_job.get('source_message_id')
+                           and row.get('source_text_sha256') == current_job.get('source_text_sha256')
+                           for row in previous):
+                        raise ServiceError('model_attempt_exhausted', '该来源的模型请求已开始，请明确操作后重试', stage='generation')
+                if self.mode == 'live':
+                    attempt_tokens.update(claim(self.repo, seller_id=self.seller_id, purpose='reception',
+                                                channel='international', source=attempt_source))
+                current_job.update(external_started=True, model_attempt_chain_ids=list(attempt_tokens),
+                                   ai_reserved_remaining=0, stage='generate_draft', message='正在生成接待回复')
                 self.repo.put('job', job_id, current_job, history=True)
                 self._charge_usage(ai=True)
-                started[0] = True
             self._emit('job.updated', current_job)
+        attempt_lifecycle = AttemptLifecycle(self.repo, on_call_start, attempt_tokens)
         target = getattr(facade.generate, 'side_effect', None)
         parameters = inspect.signature(target if callable(target) else facade.generate).parameters
         arguments = {'request_id': job_id}
-        if 'photo_inputs' in parameters:
-            arguments['photo_inputs'] = self._direct_photo_inputs(context)
-        if 'cancel_event' in parameters:
-            arguments['cancel_event'] = self._generation_cancel_event(job_id)
-        if 'photo_deadline' in parameters:
-            arguments['photo_deadline'] = getattr(photo_guard, 'photo_deadline', None)
-        if 'on_call_start' in parameters:
-            arguments['on_call_start'] = on_call_start
-        else:
-            on_call_start()
-        with self._job_phase(job_id, 'ai_elapsed_ms'):
-            output = facade.generate(context, **arguments)
+        try:
+            photo_deadline = getattr(photo_guard, 'photo_deadline', None)
+            if photo_deadline is None and context.get('supplement_image_refs'):
+                from .model_media import start_photo_deadline
+                photo_deadline = start_photo_deadline(self.settings)
+            if 'photo_inputs' in parameters:
+                arguments['photo_inputs'] = self._direct_photo_inputs(context)
+            if 'cancel_event' in parameters:
+                arguments['cancel_event'] = self._generation_cancel_event(job_id)
+            if 'photo_deadline' in parameters:
+                arguments['photo_deadline'] = photo_deadline
+            if 'on_call_start' in parameters:
+                arguments['on_call_start'] = attempt_lifecycle
+            else:
+                attempt_lifecycle()
+            try:
+                with self._job_phase(job_id, 'ai_elapsed_ms'):
+                    output = facade.generate(context, **arguments)
+            except BaseException:
+                attempt_lifecycle.fallback('unknown')
+                raise
+        finally:
+            owner = getattr(arguments.get('photo_inputs'), 'owner', None)
+            if owner is not None:
+                owner.close_if_owned()
+        attempt_lifecycle.fallback('completed')
         image_reads = output.get('verified_image_reads', []) if isinstance(output, dict) else []
         self._job_update(job_id, diagnostics={'image_reads': len(image_reads)})
         context = with_direct_photo_reads(context, image_reads)
@@ -2346,6 +2526,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
             facts = {}
             output = dict(output, facts={}, question_keys=[], procurement_key=case['procurement_key'])
         with self._lock, self.repo.transaction():
+            verified_model = self._verify_model_result(model_snapshot, output)
             current = self._require('case', case['case_id'])
             current_conversation = self._require('conversation', case['conversation_id'])
             current_drafts = {d['draft_id']: d['revision'] for d in self.repo.list('draft') if d['case_id'] == case['case_id']}
@@ -2399,6 +2580,8 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
             new_context = with_direct_photo_reads(self.get_context(current['case_id']), output.get('verified_image_reads', []))
             draft = self._draft(current, output['reply'], output.get('reply_sources', []), new_context,
                                 'demo' if self.mode == 'demo' else 'ai', messages=output['reply_messages'])
+            if verified_model is not None:
+                draft['model_snapshot'] = verified_model
             draft['question_keys'] = [key for key in output.get('question_keys', []) if key in FIELDS]
             draft['reply_case_ids'] = applied['reply_case_ids']
             draft['related_case_versions'] = self._related_case_versions(applied['reply_case_ids'])
@@ -2596,6 +2779,11 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                 if source['timestamp_ms'] != intent['source_timestamp_ms'] or self._stop_requested(source['text']):
                     return SendGateDecision(False, 'source_changed')
                 if automatic:
+                    if self.mode == 'live':
+                        try:
+                            self._assert_reception_model(current.get('model_snapshot'))
+                        except ServiceError:
+                            return SendGateDecision(False, 'authorization_revoked')
                     if (self._manual_only or not self._auto_send or self._frozen_scope != intent['frozen_scope']
                             or not 0 < intent['budget_sequence'] <= self._budget_used):
                         return SendGateDecision(False, 'authorization_revoked')
@@ -2826,31 +3014,6 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
             raise ServiceError('feishu_blocked', '飞书结构未配置或检查失败', stage='feishu')
         return {'message': '演示结构检查完成' if self.mode == 'demo' else '结构只读检查完成'}
 
-    def _seed(self):
-        with self._lock, self.repo.transaction():
-            stamp = now_ms() - 600_000
-            samples = [
-                ('emma', 'Emma Wilson', 'Hi, I am interested in stainless steel bottles. Can I order a sample with our logo?',
-                 {'product': 'stainless steel bottles', 'customization': 'our logo'}),
-                ('sofia', 'Sofia Martinez', 'We need 500 canvas tote bags for our shop. Delivery to Madrid, Spain.',
-                 {'product': 'canvas tote bags', 'quantity': '500', 'destination': 'Madrid, Spain'}),
-                ('noah', 'Noah Brown', 'I am looking for ceramic mugs. Could you share the available shapes?',
-                 {'product': 'ceramic mugs'}),
-            ]
-            for index, (key, name, text, facts) in enumerate(samples):
-                cid, buyer, mid = f'demo-{key}', f'buyer-{key}', f'demo-{key}-message-1'
-                info = {'conversation_id': cid, 'buyer_id': buyer, 'customer_name': name}
-                message = {'message_id': mid, 'seller_id': self.seller_id, 'buyer_id': buyer,
-                           'conversation_id': cid, 'role': 'buyer', 'text': text, 'timestamp_ms': stamp + index * 1000,
-                           'attachments': [], 'own': False}
-                self._ingest(info, [message], has_more=False, full=True)
-                conversation = self._require('conversation', cid)
-                case = self._require('case', conversation['case_id'])
-            policy = {'policy_id': 'demo-sample-logo-policy', 'kind': 'policy', 'title': '演示：样品与 Logo 政策',
-                      'content': 'DEMO POLICY: Samples and custom logos can be requested for evaluation. Sample cost, logo setup cost, stock and delivery time must be checked before confirmation. No price or delivery commitment is approved.',
-                      'product_scope': [], 'confirmed': True, 'public': True, 'revision': 1, 'updated_at': now_ms(), 'valid_until': None}
-            self.repo.put('policy', policy['policy_id'], policy, history=True)
-
     def _release_seller_after_drain(self):
         guard, self._seller_guard = self._seller_guard, None
         if guard is None:
@@ -2878,21 +3041,49 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
                 return
         self._pause(closing=True)
         self._stop_translation()
-        self._stop_requirement_media()
-        if threading.current_thread() is not self._health_watchdog:
-            self._health_watchdog.join()
-        if self._monitor_thread and threading.current_thread() != self._monitor_thread:
-            self._monitor_thread.join()
-        if threading.current_thread() != self._worker:
-            self._worker.join()
+        self._image_transfer_close()
+        # Pool shutdown may wait for an in-flight media reader. Keep its thread
+        # and the workspace lock alive if it cannot drain within the deadline.
+        media_thread = getattr(self, '_media_shutdown_thread', None)
+        if media_thread is None:
+            def stop_media():
+                try:
+                    self._stop_requirement_media()
+                except BaseException as error:
+                    self._media_shutdown_error = error
+            media_thread = threading.Thread(target=stop_media, name='media-shutdown', daemon=True)
+            self._media_shutdown_thread = media_thread
+            media_thread.start()
+        deadline = time.monotonic() + 10
+        transfers = getattr(self, '_image_transfers', None)
+        transfer_threads = list(transfers.pool._threads) if transfers is not None else []
+        for thread in (media_thread, self._health_watchdog, self._monitor_thread, self._worker, *transfer_threads):
+            if thread and thread is not threading.current_thread():
+                thread.join(timeout=max(0, deadline - time.monotonic()))
+                if thread.is_alive():
+                    self._executor_health.fail('stalled', 'service_shutdown_timeout')
+                    raise ServiceError('executor_unavailable', '后台线程尚未退出，无法安全关闭。', stage='shutdown')
+        if getattr(self, '_media_shutdown_error', None) is not None:
+            self._executor_health.fail('failed', 'media_shutdown_failed')
+            raise ServiceError('executor_unavailable', '图片任务清理失败，无法安全关闭。', stage='shutdown')
         self._join_generation_tasks()
+        try:
+            self._model_router.close()
+        except ServiceError as error:
+            if error.code in ('model_cleanup_timeout', 'model_cleanup_failed'):
+                self._executor_health.fail('failed', error.code)
+            raise
+        deadline = time.monotonic() + 10
+        while not native_children_stopped():
+            if time.monotonic() >= deadline:
+                self._executor_health.fail('stalled', 'native_shutdown_timeout')
+                raise ServiceError('executor_unavailable', '后台子进程尚未退出，无法安全关闭。', stage='shutdown')
+            time.sleep(0.1)
         with self._lock:
             if not self._closed:
                 self._closed = True
                 try:
                     errors = []
-                    while not native_children_stopped():
-                        time.sleep(0.1)
                     for repository in (self.repo, self._control):
                         try:
                             repository.close()

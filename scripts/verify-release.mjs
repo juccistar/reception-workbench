@@ -40,8 +40,13 @@ async function fileNames(directory, prefix='') {
 const actualNames=await fileNames(folder);
 assert.deepEqual(actualNames.sort(),[...manifest.files.map(entry=>entry.path),'manifest.json'].sort(),'Unexpected or missing files in the release directory');
 const entries=listPackage(path.join(folder,'resources/app.asar')).map(name=>name.replaceAll('\\','/'));
-const unexpected=entries.filter(name=>!/^\/(?:main|preload|renderer)(?:\/|$)/.test(name)&&name!=='/package.json');
+const unexpected=entries.filter(name=>!/^\/(?:main|preload|launcher-preload|renderer)(?:\/|$)/.test(name)&&name!=='/package.json');
 assert.deepEqual(unexpected,[],'Unexpected input in compiled application archive');
+const [releaseMajor, releaseMinor] = manifest.version.split('.').map(Number);
+if (releaseMajor > 0 || releaseMinor >= 4) {
+ assert(entries.includes('/launcher-preload/index.js'),'Launcher preload is missing');
+ assert(entries.includes('/renderer/launcher.html'),'Launcher page is missing');
+}
 assert.equal(await digest(delivery.archive),delivery.archive_sha256);
 const result={passed:true,version:manifest.version,files:manifest.files.length,asar_entries:entries.length,archive_sha256:delivery.archive_sha256,customer_databases:0,development_dependencies:0,signed:delivery.signed};
 await writeFile(outputPath,JSON.stringify(result,null,2));

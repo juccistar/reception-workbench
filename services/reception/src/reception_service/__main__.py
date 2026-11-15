@@ -10,7 +10,6 @@ import sys
 import threading
 
 from .errors import ServiceError
-from .service import ReceptionService
 
 
 class _Parser(argparse.ArgumentParser):
@@ -23,8 +22,12 @@ class _Parser(argparse.ArgumentParser):
 
 
 def main():
+    # The checker has its own bounded protocol and must never initialize a workspace.
+    if sys.argv[1:] == ['--model-check']:
+        from .model_providers.checker import run_check_from_stdin
+        return run_check_from_stdin()
     parser = _Parser(description='客户接待工作台 Python 服务')
-    parser.add_argument('--mode', choices=('demo', 'live'), default='demo')
+    parser.add_argument('--mode', choices=('live',), default='live')
     parser.add_argument('--data-dir', type=Path, default=Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'AlibabaReceptionWorkbenchV2')
     parser.add_argument('--seller-id', default='')
     parser.add_argument('--workctl', default='')
@@ -60,6 +63,30 @@ def main():
         from .storage_maintenance import run_maintenance
         from .storage_guard import StorageError
         from .profile_recovery import ProfileRecoveryError, recover_created_profile
+        cancel_event = threading.Event()
+
+        def read_cancel():
+            # One bounded command; a partial or oversized line is never accepted.
+            try:
+                data = bytearray()
+                while len(data) <= 1024:
+                    chunk = os.read(sys.stdin.fileno(), 1)
+                    if not chunk:
+                        return
+                    data.extend(chunk)
+                    if chunk == b'\n':
+                        break
+                if len(data) <= 1024 and data.endswith(b'\n') and json.loads(data) == {'command': 'cancel'}:
+                    cancel_event.set()
+            except (ValueError, UnicodeError, OSError):
+                pass
+
+        def progress(stage):
+            sys.stderr.write(json.dumps({'type': 'maintenance_progress', 'stage': stage},
+                                        ensure_ascii=True, separators=(',', ':')) + '\n')
+            sys.stderr.flush()
+
+        threading.Thread(target=read_cancel, name='maintenance-cancel', daemon=True).start()
         try:
             if args.maintenance == 'recover-profile':
                 if (not all((args.source, args.seller_id, args.destination, args.backup_dir))
@@ -68,13 +95,17 @@ def main():
                     raise SystemExit(2)
                 program = (Path(sys.executable).resolve().parents[2] if getattr(sys, 'frozen', False)
                            else Path(__file__).resolve().parents[4])
+                # Profile recovery is an indivisible operation; callers wait for close.
+                progress('write')
                 result = recover_created_profile(args.source, args.seller_id, args.destination,
                                                  args.backup_dir, program_directory=program)
             else:
                 result = run_maintenance(args.maintenance, args.source, args.destination,
-                                         args.archive, args.backup_dir, allow_new=args.allow_new)
+                                         args.archive, args.backup_dir, allow_new=args.allow_new,
+                                         cancel=cancel_event.is_set, progress=progress)
         except Exception as exc:
             messages = {
+                'storage_cancelled': '维护已在安全位置取消。',
                 'storage_path_too_long': '数据目录路径过长，请选择较短的目录。',
                 'storage_busy': '工作区正在使用，请正常退出该商家的旧窗口后重试。',
                 'storage_backup_failed': '启动恢复备份未完成，请保留原目录并检查备份位置。',
@@ -101,6 +132,7 @@ def main():
         emit(result)
         return
 
+    from .service import ReceptionService
     service = ReceptionService(args.data_dir, args.mode, args.seller_id, emit=emit)
     if args.workctl:
         service.save_settings(workctl_path=args.workctl)

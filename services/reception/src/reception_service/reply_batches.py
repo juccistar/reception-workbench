@@ -98,7 +98,8 @@ class ReplyBatchMixin:
                                        supplement_issue_ids=current.get('supplement_issue_ids', []),
                                        expected_case_revision=case['revision'],
                                        expected_conversation_revision=conversation['revision'],
-                                       expected_fingerprint=current['context_fingerprint'])
+                                       expected_fingerprint=current['context_fingerprint'],
+                                       model_snapshot=copy.deepcopy(current.get('model_snapshot')))
             for part in batch['parts']:
                 child = copy.deepcopy(current)
                 child.update(draft_id=new_id('draft'), body=part['body'], status='planned',
@@ -126,6 +127,11 @@ class ReplyBatchMixin:
                 or self._manual_only or not self.account_verified
                 or batch.get('frozen_scope') != self._frozen_scope):
             return SendGateDecision(False, 'authorization_revoked')
+        if self.mode == 'live':
+            try:
+                self._assert_reception_model(batch.get('model_snapshot'))
+            except ServiceError:
+                return SendGateDecision(False, 'authorization_revoked')
         case = self.repo.get('case', batch['case_id'])
         conversation = self.repo.get('conversation', batch['conversation_id'])
         parent = self.repo.get('draft', batch['parent_draft_id'])

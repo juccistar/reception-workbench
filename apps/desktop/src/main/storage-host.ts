@@ -78,15 +78,37 @@ export function maintenanceArguments(action: string, source: string, options: { 
   return args;
 }
 /** Offline command has no renderer input beyond validated paths and never invokes service RPC. */
-export function runMaintenance(command: MaintenanceCommand, args: string[]): Promise<MaintenanceResult> {
+export function runMaintenance(command: MaintenanceCommand, args: string[], options: { timeoutMs?: number; onProgress?: (stage: string) => void } = {}): Promise<MaintenanceResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command.executable, [...command.prefix, ...args], { cwd: command.cwd, env: maintenanceEnvironment(command.env), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    let output = ''; let oversized = false;
+    const child = spawn(command.executable, [...command.prefix, ...args], { cwd: command.cwd, env: maintenanceEnvironment(command.env), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    let output = ''; let oversized = false; let failed = false; let pending = ''; let dropping = false;
+    child.stdin.on('error', () => {});
+    const timer = setTimeout(() => {
+      options.onProgress?.('cancel_requested');
+      child.stdin.write('{"command":"cancel"}\n');
+    }, options.timeoutMs ?? 30 * 60 * 1000);
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => { if (output.length + chunk.length > 1024 * 1024) oversized = true; else output += chunk; });
-    child.stderr.on('data', () => { /* Never expose arbitrary native output. */ });
-    child.once('error', () => reject(new StorageError('maintenance_unavailable', '离线数据工具未能启动，请检查程序组件。')));
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      for (const char of chunk) {
+        if (char === '\n') {
+          if (!dropping) {
+            try {
+              const value = JSON.parse(pending);
+              if (value?.type === 'maintenance_progress' && ['validate', 'validated', 'recovery', 'recovery_complete', 'verified', 'backup_complete', 'write'].includes(value.stage)) options.onProgress?.(value.stage);
+            } catch { /* Ignore untrusted diagnostics. */ }
+          }
+          pending = ''; dropping = false;
+        } else if (!dropping) {
+          if (pending.length >= 1024) { pending = ''; dropping = true; } else pending += char;
+        }
+      }
+    });
+    child.once('error', () => { failed = true; });
     child.once('close', code => {
+      clearTimeout(timer);
+      if (failed) { reject(new StorageError('maintenance_unavailable', '离线数据工具未能启动，请检查程序组件。')); return; }
       if (oversized) { reject(new StorageError('invalid_maintenance_result', '数据工具返回超过限制，目录选择未更改。')); return; }
       let result: Record<string, unknown>;
       try { result = JSON.parse(output.trim()); } catch { reject(new StorageError('invalid_maintenance_result', '未收到完整的数据操作结果，目录选择未更改。')); return; }

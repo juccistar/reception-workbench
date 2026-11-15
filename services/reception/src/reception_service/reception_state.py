@@ -2,6 +2,7 @@
 from collections import defaultdict
 
 from .repository import now_ms
+from .errors import ServiceError
 
 
 class ReceptionProjection:
@@ -97,8 +98,14 @@ class ReceptionProjection:
             block('out_of_scope', '客户不在本次自动接待范围')
         if not s.account_verified or s.mode == 'live' and s.checks['messages']['status'] != 'passed':
             block('capability', '消息读取能力尚未就绪')
-        if s.mode == 'live' and s.checks['ai']['status'] != 'passed':
-            block('ai_capability', 'AI 接待能力尚未就绪')
+        if s.mode == 'live':
+            try:
+                s._freeze_reception_model()
+                ready = s.checks['ai']['status'] == 'passed'
+            except ServiceError:
+                ready = False
+            if not ready:
+                block('ai_capability', 'AI 接待能力尚未就绪')
         # Send previews are diagnostic, not a gate: each send performs its own
         # native preflight, so even a failed earlier preview is not a blocker.
         if s._message_sync_pending(cid):

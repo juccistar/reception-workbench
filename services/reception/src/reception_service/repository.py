@@ -31,6 +31,7 @@ class Repository:
             path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.lock = threading.RLock()
+        self._image_metadata_cache = {}
         self.db = sqlite3.connect(str(path) if path else ':memory:', check_same_thread=False,
                                   isolation_level=None, timeout=5)
         try:
@@ -44,8 +45,19 @@ class Repository:
                     raise ServiceError('seller_mismatch', '数据库卖家身份不匹配')
                 self.db.execute(f'PRAGMA user_version={REPOSITORY_VERSION}')
                 self.put('meta', 'seller', {'seller_id': seller_id})
-            self.db.execute('PRAGMA journal_mode=WAL')
+            self.db.execute('PRAGMA journal_mode=WAL').fetchone()
             self.db.execute('PRAGMA synchronous=FULL')
+            # Create TEMP tracking after WAL is established. SQLite can retain a
+            # TEMP schema read lock across a journal-mode change, preventing an
+            # immediate checkpoint/close before the first ordinary data query.
+            with self.transaction():
+                self.db.execute('CREATE TEMP TABLE image_entity_versions (kind TEXT, id TEXT, version INTEGER NOT NULL, PRIMARY KEY(kind,id))')
+                for action in ('INSERT', 'UPDATE', 'DELETE'):
+                    row = 'OLD' if action == 'DELETE' else 'NEW'
+                    self.db.execute(f"""CREATE TEMP TRIGGER image_version_{action.lower()} AFTER {action} ON main.entities
+                        WHEN {row}.kind IN ('image_asset','supplement_attachment') BEGIN
+                        INSERT INTO image_entity_versions VALUES ({row}.kind, {row}.id, 1)
+                        ON CONFLICT(kind,id) DO UPDATE SET version=version+1; END""")
         except BaseException:
             self.db.close()
             raise
@@ -70,6 +82,36 @@ class Repository:
             row = self.db.execute('SELECT data FROM entities WHERE kind=? AND id=?', (kind, key)).fetchone()
             return json.loads(row[0]) if row else default
 
+    def image_transfer_metadata(self, kind: str, key: str):
+        """Fixed projection and transactional generation for cached image records."""
+        if kind not in ('image_asset', 'supplement_attachment'):
+            raise ValueError('Unsupported image record')
+        with self.lock:
+            external_version = self.db.execute('PRAGMA data_version').fetchone()[0]
+            generation = self.db.execute('SELECT version FROM image_entity_versions WHERE kind=? AND id=?', (kind, key)).fetchone()
+            stamp = (external_version, generation[0] if generation else 0)
+            cached = self._image_metadata_cache.get((kind, key))
+            if not self.db.in_transaction and cached and cached['version'] == stamp:
+                return dict(cached)
+            row = self.db.execute("""SELECT json_extract(data,'$.sha256'), json_extract(data,'$.size'),
+                json_extract(data,'$.mime'), json_extract(data,'$.media_type'),
+                json_extract(data,'$.seller_id'), json_extract(data,'$.conversation_id'),
+                json_extract(data,'$.buyer_id'), json_extract(data,'$.id'),
+                json_extract(data,'$.status'), json_extract(data,'$.origin'),
+                json_type(data,'$.original_b64'), length(json_extract(data,'$.original_b64'))
+                FROM entities e WHERE kind=? AND id=?""", (kind, key)).fetchone()
+            if row is None:
+                self._image_metadata_cache.pop((kind, key), None)
+                return None
+            names = ('sha256', 'size', 'mime', 'media_type', 'seller_id', 'conversation_id',
+                     'buyer_id', 'id', 'status', 'origin', 'content_type', 'content_length')
+            result = dict(zip(names, row), version=stamp)
+            if not self.db.in_transaction:
+                if len(self._image_metadata_cache) >= 128:
+                    self._image_metadata_cache.clear()
+                self._image_metadata_cache[(kind, key)] = result
+            return dict(result)
+
     def list(self, kind: str, **filters) -> list[dict]:
         # Filter ownership in SQLite so opening one customer never decodes another
         # customer's entire message history. The JSON paths are a fixed whitelist.
@@ -80,6 +122,26 @@ class Repository:
             return [json.loads(row[0]) for row in self.db.execute(
                 'SELECT data FROM entities WHERE kind=?' + where + ' ORDER BY rowid',
                 (kind, *filters.values()))]
+
+    def message_page(self, conversation_id: str, limit: int, before: tuple[int, str] | None = None) -> list[dict]:
+        """Return the newest page in display order, before an exclusive composite cursor.
+
+        The caller must first establish ownership of the conversation. LIMIT bounds
+        returned and decoded rows; without an index SQLite may still scan and sort.
+        """
+        if not isinstance(conversation_id, str) or not conversation_id or type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError('Invalid message page')
+        if before is not None and (not isinstance(before, tuple) or len(before) != 2 or type(before[0]) is not int or not isinstance(before[1], str)):
+            raise ValueError('Invalid message cursor')
+        timestamp = "COALESCE(json_extract(data,'$.timestamp_ms'),-1)"
+        message_id = "json_extract(data,'$.message_id')"
+        clause = '' if before is None else f' AND ({timestamp}, {message_id}) < (?, ?)'
+        params = ('message', conversation_id, *(before or ()), limit)
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT data FROM entities WHERE kind=? AND json_extract(data,'$.conversation_id')=?"
+                + clause + f' ORDER BY {timestamp} DESC, {message_id} DESC LIMIT ?', params).fetchall()
+        return [json.loads(row[0]) for row in reversed(rows)]
 
     def put(self, kind: str, key: str, value: dict, *, history: bool = False):
         with self.lock:

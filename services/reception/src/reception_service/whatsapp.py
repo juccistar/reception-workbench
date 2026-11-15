@@ -12,6 +12,7 @@ from .policy_library import select_policy_inputs
 from .repository import encoded, new_id, now_ms
 from .reply_messages import normalize_reply_output
 from .reply_batches import freeze_reply_batch, reply_batch_progress
+from .whatsapp_media import WhatsAppMediaMixin
 
 
 def _key(*parts):
@@ -24,8 +25,9 @@ def _text(value, limit=300):
     return value
 
 
-class WhatsAppMixin:
+class WhatsAppMixin(WhatsAppMediaMixin):
     def _init_whatsapp(self):
+        self._wa_transfers = {}
         self._wa_account = None
         self._wa_epoch = None
         self._wa_status = 'disconnected'
@@ -99,6 +101,8 @@ class WhatsAppMixin:
             if (account_id, connection_epoch, status) != (self._wa_account, self._wa_epoch, self._wa_status):
                 self._wa_enabled = False
                 self._wa_cancel()
+                for transfer_id in list(self._wa_transfers):
+                    self._wa_drop_transfer(transfer_id)
                 self._wa_account, self._wa_epoch, self._wa_status = account_id, connection_epoch, status
         self._changed()
         return self.get_whatsapp_state()
@@ -197,6 +201,8 @@ class WhatsAppMixin:
                 chat_id = _text(msg.get('chat_id'))
                 mid = _text(msg.get('id'))
                 body = msg.get('body')
+                if 'has_image' in msg and type(msg['has_image']) is not bool:
+                    raise ServiceError('invalid_params', 'WhatsApp 图片属性无效')
                 if not isinstance(body, str) or len(body) > 50000 or type(msg.get('timestamp_ms')) is not int:
                     raise ServiceError('invalid_params', 'WhatsApp 消息内容无效')
                 if msg['is_group'] or chat_id.endswith(('@g.us', '@broadcast', '@newsletter')):
@@ -213,6 +219,13 @@ class WhatsAppMixin:
                 mkey = _key(self.seller_id, account_id, mid)
                 prior = self.repo.get('wa_message', mkey)
                 if prior:
+                    media = prior.get('media') or {}
+                    version = _key(account_id, connection_epoch, chat_id, mid, str(msg['timestamp_ms']))
+                    if msg.get('has_image') and prior.get('chat_id') == chat_id and media and media.get('source_version') != version:
+                        prior['timestamp_ms'] = msg['timestamp_ms']
+                        prior['media'] = {'status': 'pending', 'source_version': version}
+                        self.repo.put('wa_message', mkey, prior)
+                        self._wa_cancel(chat_id, preserve_pending=True)
                     if prior.get('receipt_projection') and msg['from_me'] and prior.get('chat_id') == chat_id:
                         prior.update(timestamp_ms=msg['timestamp_ms'], ack=msg.get('ack'), receipt_projection=False)
                         self.repo.put('wa_message', mkey, prior)
@@ -220,9 +233,11 @@ class WhatsAppMixin:
                 row = {'seller_id': self.seller_id, 'account_id': account_id, 'chat_id': chat_id, 'message_id': mid,
                        'body': body, 'timestamp_ms': msg['timestamp_ms'], 'from_me': msg['from_me'],
                        'is_history': msg['is_history'], 'ack': msg.get('ack')}
+                if msg.get('has_image'):
+                    row['media'] = {'status': 'pending', 'source_version': _key(account_id, connection_epoch, chat_id, mid, str(msg['timestamp_ms']))}
                 self.repo.put('wa_message', mkey, row)
                 if not msg['is_history']:
-                    if not msg['from_me'] and body.strip():
+                    if not msg['from_me'] and (body.strip() or msg.get('has_image')):
                         contact.update(pending=True, pending_message_id=mid, attempt_fingerprint=None)
                         self._wa_cancel(chat_id)
                     elif msg['from_me']:
@@ -252,10 +267,11 @@ class WhatsAppMixin:
         with self._lock:
             self._wa_contact(chat_id)
             account = self._wa_account
-            messages = [r for r in self.repo.list('wa_message') if r.get('seller_id') == self.seller_id and r.get('account_id') == account and r.get('chat_id') == chat_id and r.get('body', '').strip() and r.get('message_id') not in exclude_message_ids]
+            messages = [r for r in self.repo.list('wa_message') if r.get('seller_id') == self.seller_id and r.get('account_id') == account and r.get('chat_id') == chat_id and (r.get('body', '').strip() or r.get('media')) and r.get('message_id') not in exclude_message_ids]
             messages.sort(key=lambda r: (r['timestamp_ms'], r['message_id']))
             recent = [{'source_id': 'wa_' + _key(account, r['message_id'])[:20], 'role': 'seller' if r['from_me'] else 'buyer',
-                       'timestamp_ms': r['timestamp_ms'], 'text': r['body'][:3000]} for r in messages[-30:]]
+                       'timestamp_ms': r['timestamp_ms'], 'text': r['body'][:3000],
+                       **({'media': copy.deepcopy(r['media'])} if r.get('media') else {})} for r in messages[-30:]]
             policies = select_policy_inputs(self.repo.list('policy'), {'facts': {}, 'procurement_key': ''})
             context = {'task_mode': 'whatsapp_reply', 'seller_id': self.seller_id, 'whatsapp_messages': recent,
                        'wa_summary': (self.repo.get('wa_summary', self._wa_contact_key(chat_id)) or {}).get('body', ''),
@@ -323,8 +339,22 @@ class WhatsAppMixin:
                 contact['error_code'] = exc.code
                 self.repo.put('wa_conversation', self._wa_contact_key(chat), contact)
                 continue
+            if any(row.get('media', {}).get('status') != 'ready' for row in context['whatsapp_messages'] if row.get('media')):
+                contact['error_code'] = 'whatsapp_media_not_ready'
+                self.repo.put('wa_conversation', self._wa_contact_key(chat), contact)
+                continue
+            context['model_image_refs'] = [dict(source_id=row['source_id'], source_version=row['media']['source_version'], image_id=row['media']['media_id'], sha256=row['media']['sha256'], role=row['role']) for row in context['whatsapp_messages'] if row.get('media')]
+            try:
+                for ref in context['model_image_refs']:
+                    self._wa_resolve_image(ref, self._wa_account, self._wa_epoch, chat)
+                capabilities = ('text', 'structure') + (('single_image', 'combined') if len(context['model_image_refs']) == 1 else ('multi_image', 'combined') if context['model_image_refs'] else ())
+                model_snapshot = self._freeze_reception_model(capabilities) if self.mode == 'live' else None
+            except ServiceError as exc:
+                contact['error_code'] = exc.code
+                self.repo.put('wa_conversation', self._wa_contact_key(chat), contact)
+                continue
             contact.pop('error_code', None)
-            fingerprint = hashlib.sha256(encoded(context).encode('utf-8')).hexdigest()
+            fingerprint = self._wa_fingerprint(chat)
             if contact.get('attempt_fingerprint') == fingerprint:
                 continue
             job_id = new_id('wa_job')
@@ -333,7 +363,7 @@ class WhatsAppMixin:
                    'created_at': now_ms(), 'started_at': None, 'completed_at': None}
             try:
                 self._queue.put((job_id, 'whatsapp_reply', {'chat_id': chat, 'account_id': self._wa_account, 'connection_epoch': self._wa_epoch,
-                                'context': context, 'fingerprint': fingerprint, 'pending_message_id': contact['pending_message_id']}, self._epoch, False))
+                                'context': context, 'fingerprint': fingerprint, 'model_snapshot': model_snapshot, 'pending_message_id': contact['pending_message_id']}, self._epoch, False))
             except ServiceError as exc:
                 if exc.code != 'task_queue_full':
                     raise
@@ -357,11 +387,35 @@ class WhatsAppMixin:
             if not self._wa_current(params):
                 raise ServiceError('cancelled', 'WhatsApp 来源已变化')
         self._ensure_identity(facade)
-        with self._job_phase(job_id, 'ai_elapsed_ms'):
-            answer = facade.generate_whatsapp(params['context'], job_id, cancel_event=self._generation_cancel_event(job_id))
+        if self.mode == 'live':
+            self._assert_reception_model(params['model_snapshot'])
+            facade.configure_whatsapp_image_resolver(self._wa_resolve_current_image)
+        from .model_attempts import AttemptLifecycle, claim_whatsapp
+        attempt_tokens = {}
+        def start_attempt():
+            with self._lock:
+                if attempt_tokens or self._generation_cancel_event(job_id).is_set() or not self._wa_current(params):
+                    raise ServiceError('cancelled', 'WhatsApp 来源已变化')
+                self._assert_reception_model(params['model_snapshot'])
+                attempt_tokens.update(claim_whatsapp(self.repo, seller_id=self.seller_id, account_id=params['account_id'],
+                    chat_id=params['chat_id'], pending_message_id=params['pending_message_id'],
+                    legacy_id=_key(self.seller_id, params['account_id'], params['chat_id'], params['pending_message_id'])))
+        attempt_lifecycle = AttemptLifecycle(self.repo, start_attempt, attempt_tokens)
+        try:
+            with self._job_phase(job_id, 'ai_elapsed_ms'):
+                answer = facade.generate_whatsapp(params['context'], job_id, cancel_event=self._generation_cancel_event(job_id),
+                                                  **({'on_call_start': attempt_lifecycle} if self.mode == 'live' else {}))
+        except BaseException:
+            attempt_lifecycle.fallback('unknown')
+            raise
+        attempt_lifecycle.fallback('completed')
         with self._lock, self.repo.transaction():
             if self._generation_cancel_event(job_id).is_set() or not self._wa_current(params):
                 raise ServiceError('cancelled', 'WhatsApp 来源已变化')
+            if self.mode == 'live':
+                self._verify_model_result(params['model_snapshot'], answer)
+                for ref in params['context'].get('model_image_refs', []):
+                    self._wa_resolve_image(ref, params['account_id'], params['connection_epoch'], params['chat_id'])
             try:
                 answer = normalize_reply_output(answer, allow_legacy=True)
             except (ValueError, TypeError) as exc:
@@ -382,6 +436,7 @@ class WhatsAppMixin:
             batch = freeze_reply_batch(answer['reply_messages'], seller_id=self.seller_id, account_id=params['account_id'],
                                        connection_epoch=params['connection_epoch'], chat_id=params['chat_id'],
                                        pending_message_id=params['pending_message_id'], fingerprint=self._wa_fingerprint(params['chat_id']))
+            batch['model_snapshot'] = params.get('model_snapshot')
             self.repo.put('wa_reply_batch', batch['batch_id'], batch, history=True)
             self.repo.put('wa_draft', batch['batch_id'], {'batch_id': batch['batch_id'], 'reply': answer['reply'],
                           'reply_messages': answer['reply_messages'], 'reply_sources': answer['reply_sources']}, history=True)
@@ -414,6 +469,8 @@ class WhatsAppMixin:
             params = {k: op[k] for k in ('account_id', 'connection_epoch', 'chat_id', 'pending_message_id', 'fingerprint')}
             batch = self.repo.get('wa_reply_batch', op.get('batch_id')) if op.get('batch_id') else None
             try:
+                if self.mode == 'live':
+                    self._assert_reception_model((batch or {}).get('model_snapshot'))
                 current = (not op.get('batch_id') or batch and batch.get('status') == 'prepared' and batch.get('next_index') == op.get('part_index')) and self._wa_current(params, batch)
             except ServiceError:
                 current = False

@@ -57,6 +57,36 @@ class MaintenanceTests(unittest.TestCase):
         path.write_text(content + suffix, encoding='utf8')
         return path
 
+    def test_prepare_reuses_validation_only_before_recovery_writes(self):
+        from reception_service.storage_guard import validate_database
+        from unittest.mock import Mock
+        counter = Mock(wraps=validate_database)
+        with patch('reception_service.storage_guard.validate_database', counter), \
+             patch('reception_service.storage_maintenance.validate_database', counter), \
+             patch('reception_service.storage_recovery.recover_wal', return_value=None):
+            run_maintenance('prepare', str(self.root), backup_dir=str(self.base))
+        existing = [call for call in counter.call_args_list if call.args[0].is_file()]
+        self.assertEqual(len(existing), 3)
+        counter.reset_mock()
+        with patch('reception_service.storage_guard.validate_database', counter), \
+             patch('reception_service.storage_maintenance.validate_database', counter), \
+             patch('reception_service.storage_recovery.recover_wal', return_value=self.base / 'recovery'):
+            run_maintenance('prepare', str(self.root), backup_dir=str(self.base))
+        existing = [call for call in counter.call_args_list if call.args[0].is_file()]
+        self.assertEqual(len(existing), 6)
+
+    def test_cancel_after_validation_releases_lock_without_changing_clean_marker(self):
+        stages = []
+        def progress(stage):
+            stages.append(stage)
+        with self.assertRaises(StorageError) as caught:
+            run_maintenance('prepare', str(self.root), backup_dir=str(self.base),
+                            progress=progress, cancel=lambda: 'validated' in stages)
+        self.assertEqual(caught.exception.code, 'storage_cancelled')
+        with WorkspaceLock(self.root) as lock:
+            self.assertTrue(lock.was_clean)
+            lock.mark_clean_shutdown()
+
     def test_whatsapp_ledger_roundtrip_and_snapshot_hash(self):
         path = self.wa_ledger(result={'message_id': 'exact-id', 'ack': 1})
         (self.root / 'host' / 'session').mkdir(parents=True)

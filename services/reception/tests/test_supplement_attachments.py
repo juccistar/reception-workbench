@@ -88,6 +88,7 @@ class SupplementAttachmentTests(unittest.TestCase):
         self.assertEqual(refs[0]['attachment_id'], item['id'])
         self.assertEqual(context['photo_context']['direct_images'], [])
         inputs = self.service._direct_photo_inputs(context)
+        self.addCleanup(inputs.owner.close_if_owned)
         self.assertEqual(inputs[0]['attachment']['origin'], 'business_supplement')
         self.assertNotIn('message', inputs[0])
         model = project_model_payload(context)
@@ -104,11 +105,15 @@ class SupplementAttachmentTests(unittest.TestCase):
         item = self.upload('sample.png', data.getvalue())['attachments'][0]
         entered, release = threading.Event(), threading.Event()
         self.addCleanup(release.set)
+        received_refs = []
         def generate(context, request_id, *, on_call_start=None, cancel_event=None, photo_inputs=None):
             on_call_start()
+            received_refs.append(context['supplement_image_refs'])
             entered.set()
             release.wait(5)
-            return {'reply': 'old reply', 'verified_image_reads': context['supplement_image_refs']}
+            body = 'old reply' if context['supplement_image_refs'] else 'current reply'
+            return {'reply_messages': [{'body': body, 'reply_sources': []}],
+                    'verified_image_reads': context['supplement_image_refs']}
         with patch.object(self.service.integrations, 'generate_manual', side_effect=generate):
             job_id = self.service.generate_manual_suggestion(self.cid, 'attachment-race')['job_id']
             self.assertTrue(entered.wait(5))
@@ -121,6 +126,17 @@ class SupplementAttachmentTests(unittest.TestCase):
                 time.sleep(.01)
             self.assertIn(job['status'], ('cancelled', 'stale'))
             self.assertIsNone(self.service.get_conversation(self.cid)['manual_suggestion'])
+            fresh_id = self.service.generate_manual_suggestion(self.cid, 'attachment-current')['job_id']
+            for _ in range(300):
+                fresh_job = self.service.repo.get('job', fresh_id)
+                if fresh_job['status'] not in ('queued', 'running'):
+                    break
+                time.sleep(.01)
+            self.assertEqual(fresh_job['status'], 'succeeded', fresh_job)
+            self.assertEqual(self.service.get_conversation(self.cid)['manual_suggestion']['body'], 'current reply')
+            self.assertEqual(len(received_refs), 2)
+            self.assertEqual(received_refs[0][0]['attachment_id'], item['id'])
+            self.assertEqual(received_refs[1], [])
 
     def test_pdf_extracts_text_and_corruption_is_shown_and_blocks_generation(self):
         note = self.upload('valid.pdf', pdf())

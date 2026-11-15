@@ -1,4 +1,5 @@
 vi.mock('../src/main/installation-guard', () => ({ acquireInstallationStartGuard: vi.fn(async () => async () => {}) }));
+vi.mock('../../../scripts/merchant-profiles.mjs', () => ({ consumeAutoLaunchContext: () => ({ synthetic: true }) }));
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/react';
 import { pathToFileURL } from 'node:url';
@@ -14,6 +15,9 @@ const host = vi.hoisted(() => ({
   window: undefined as any,
 }));
 vi.mock('../src/main/supplement-host', async original => ({ ...await original<typeof import('../src/main/supplement-host')>(), windowsClipboardPaths: vi.fn(async () => []) }));
+vi.mock('../src/main/model-settings-store', () => ({ createModelSettingsStore: vi.fn(async () => ({})), resolveModelSettingsDirectory: vi.fn(async () => 'C:/synthetic-host/models') }));
+vi.mock('../src/main/model-config-host', () => ({ ModelConfigHost: class { read = async () => ({ directory_revision: 0 }); synchronize = async () => {}; } }));
+vi.mock('../src/main/translation-activation-host', () => ({ TranslationActivationHost: class { get = host.translationGet; set = host.translationSave; } }));
 vi.mock('../src/main/translation-host', () => ({ TranslationHost: class {
   start = vi.fn(async () => {}); stop = vi.fn(); get = host.translationGet; save = host.translationSave;
 } }));
@@ -26,7 +30,7 @@ vi.mock('../../../scripts/data-location.mjs', () => ({
 }));
 vi.mock('../src/main/storage-host', async original => ({
   ...await original<typeof import('../src/main/storage-host')>(),
-  createArchiveParent: vi.fn(async () => {}), acquireStorageOperation: vi.fn(async () => async () => {}),
+  createArchiveParent: vi.fn(async () => {}), acquireStorageOperation: vi.fn(async () => async () => {}), safetyBackupParent: vi.fn(() => 'C:/synthetic-host/backup'),
   runMaintenance: vi.fn(async () => ({ status: 'completed', action: 'prepare', data_root: 'C:/synthetic-business', backup: null })),
 }));
 vi.mock('../src/main/service-client', () => ({
@@ -62,6 +66,7 @@ beforeAll(async () => {
   const previousArgs = process.argv;
   process.argv = [...previousArgs, '--live'];
   try { await import('../src/main/index'); } finally { process.argv = previousArgs; }
+  await waitFor(() => expect(host.invoke).toHaveBeenCalledWith('get_snapshot'));
   await waitFor(() => expect(host.handlers.has('reception:invoke')).toBe(true));
   await import('../src/preload/index');
 });
@@ -151,25 +156,30 @@ describe('native chat IPC boundary', () => {
     expect(host.ipcInvoke).toHaveBeenCalledWith('reception:update:settings', { feed_url: 'https://updates.example.test/stable/' });
   });
 
-  it('routes translation saves through the shared coordinator and preserves both revisions', async () => {
-    const settings = { enabled: false, base_url: 'http://127.0.0.1:3425/v1', model: 'sample', revision: 1, shared_revision: 4 };
-    const info = { ...settings, revision: 2, has_key: false };
-    host.invoke.mockClear(); host.translationSave.mockClear();
-    host.translationSave.mockResolvedValueOnce(info);
-    await expect(host.handlers.get('reception:translation:save')!(validEvent(), settings)).resolves.toEqual(info);
-    expect(host.translationSave).toHaveBeenCalledWith(settings);
-    expect(host.invoke).not.toHaveBeenCalled();
+  it('routes translation enablement through the dedicated coordinator and rejects foreign frames', async () => {
+    const enable = host.handlers.get('reception:translation:enable')!;
+    host.translationSave.mockClear().mockResolvedValueOnce({ enabled: true });
+    await expect(enable(validEvent(), true)).resolves.toEqual({ enabled: true });
+    expect(host.translationSave).toHaveBeenCalledWith(true);
+    await expect(enable({ ...validEvent(), sender: {} }, true)).rejects.toThrow('无效的操作来源');
+    expect(host.translationSave).toHaveBeenCalledTimes(1);
   });
 
-  it('returns coordinator errors on dedicated IPC and rejects foreign translation senders', async () => {
-    const save = host.handlers.get('reception:translation:save')!;
-    const settings = { enabled: false, base_url: 'http://remote.example.com/v1', model: 'sample', revision: 1 };
-    host.translationSave.mockClear();
-    host.translationSave.mockRejectedValueOnce(new Error('本机网关可使用 HTTP'));
-    await expect(save(validEvent(), settings)).rejects.toThrow('本机网关可使用 HTTP');
-    host.translationSave.mockClear();
-    expect(() => save({ ...validEvent(), sender: {} }, { ...settings, base_url: 'http://127.0.0.1:3425/v1' })).toThrow('无效的操作来源');
-    expect(host.translationSave).not.toHaveBeenCalled();
+  it('guards original image cancellation by main frame and unique request ID', async () => {
+    const original = host.handlers.get('reception:image:original')!;
+    const cancel = host.handlers.get('reception:image:cancel')!;
+    const id = '12345678-1234-4123-8123-123456789abc';
+    const reference = { kind: 'product', local_product_id: 'p', version: 1, sha256: 'a'.repeat(64) };
+    let finish!: (value: any) => void;
+    const prepare = new Promise(resolve => { finish = resolve; });
+    host.invoke.mockImplementationOnce(() => prepare as any);
+    const pending = original(validEvent(), reference, id);
+    await expect(original(validEvent(), reference, id)).rejects.toThrow('无效或繁忙');
+    expect(() => cancel({ ...validEvent(), senderFrame: {} }, id)).toThrow('无效的操作来源');
+    cancel(validEvent(), id);
+    await expect(pending).rejects.toThrow('取消');
+    finish({ token: 'a'.repeat(32) });
+    await expect(original(validEvent(), reference, id)).rejects.toThrow('无效或繁忙');
   });
 
   it('copies only host-generated launch instructions and never forwards renderer commands', async () => {
@@ -208,6 +218,6 @@ describe('native chat IPC boundary', () => {
     await expect(bridge.invoke('shell' as any, {})).rejects.toThrow('不允许');
     await expect(bridge.invoke('confirm_send', {})).rejects.toThrow('不允许');
     expect(host.ipcInvoke).not.toHaveBeenCalled();
-    expect(Object.keys(bridge).sort()).toEqual(['chooseWorkctl', 'chooseSupplementAttachment', 'chooseSupplementAttachments', 'uploadSupplementAttachments', 'pasteSupplementAttachments', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate', 'getTranslationSettings', 'saveTranslationSettings', 'checkTranslationProvider', 'clearTranslationCache', 'connectWhatsApp', 'disconnectWhatsApp', 'rebuildWhatsAppSession', 'getWhatsAppHostInfo', 'listWhatsAppChats', 'setWhatsAppView', 'copyProductText', 'openProductLink', 'getImageOriginal', 'showImageMenu'].sort());
+    expect(Object.keys(bridge).sort()).toEqual(['chooseWorkctl', 'chooseSupplementAttachment', 'chooseSupplementAttachments', 'uploadSupplementAttachments', 'pasteSupplementAttachments', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate', 'getTranslationSettings', 'setTranslationEnabled', 'importLegacyTranslation', 'getModelSummary', 'openModelLauncher', 'clearTranslationCache', 'connectWhatsApp', 'disconnectWhatsApp', 'rebuildWhatsAppSession', 'getWhatsAppHostInfo', 'listWhatsAppChats', 'setWhatsAppView', 'copyProductText', 'openProductLink', 'getImageOriginal', 'cancelImageOriginal', 'showImageMenu'].sort());
   });
 });

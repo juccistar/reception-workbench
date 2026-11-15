@@ -1,5 +1,4 @@
-import { spawn, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync, realpathSync, statSync, lstatSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
@@ -161,6 +160,23 @@ function writeLaunchDiagnostic(registry, seller, dataRoot, ownerStatus, code) {
   return file;
  } catch { return undefined; }
 }
+export function runRecoveryProcess(backend, args, timeoutMs = 30 * 60 * 1000) {
+ return new Promise((resolve, reject) => {
+  const child=spawn(backend.executable,[...backend.prefix,...args],{env:maintenanceEnvironment(backend.env),cwd:backend.cwd,windowsHide:true,stdio:['pipe','pipe','pipe']});
+  let output='', oversized=false, failed=false, timedOut=false;
+  child.stdin.on('error',()=>{});
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data',chunk=>{if(output.length+chunk.length>16384)oversized=true;else output+=chunk;});
+  child.stderr.on('data',()=>{});
+  child.once('error',()=>{failed=true;});
+  const timer=setTimeout(()=>{timedOut=true;child.stdin.write('{"command":"cancel"}\n');},timeoutMs);
+  child.once('close',code=>{
+   clearTimeout(timer);
+   if(failed||oversized||code!==0){reject(new Error(timedOut?'merchant_recovery_timeout':'merchant_initialization_incomplete'));return;}
+   try { resolve(JSON.parse(output.trim())); } catch { reject(new Error('merchant_initialization_incomplete')); }
+  });
+ });
+}
 async function recoverIncomplete(context, backend, recover) {
  const {dataDirectory,backupDirectory}=merchantSupportPaths(context.registry);
  const destination=path.join(dataDirectory,`${context.seller}-recovery-${randomUUID().slice(0,8)}`);
@@ -171,9 +187,9 @@ async function recoverIncomplete(context, backend, recover) {
  let result;
  try {
   if(recover) result=await recover(args);
-  else { const output=await promisify(execFile)(backend.executable,[...backend.prefix,...args],{env:maintenanceEnvironment(backend.env),cwd:backend.cwd,windowsHide:true,timeout:30*60*1000,maxBuffer:16384,encoding:'utf8'}); result=JSON.parse(output.stdout.trim()); }
+  else result=await runRecoveryProcess(backend,args);
  } catch(error) {
-  if(error.killed)throw new Error('merchant_recovery_timeout');
+  if(error.message==='merchant_recovery_timeout')throw error;
   throw new Error('merchant_initialization_incomplete');
  }
  if(result?.status!=='completed'||result.action!=='recover-profile'||!samePath(result.data_root,destination))throw new Error('merchant_initialization_incomplete');
@@ -229,9 +245,7 @@ async function main(){
   const child=spawn(plan.executable,plan.args,{cwd:path.dirname(plan.executable),env:plan.env,detached:true,stdio:'ignore',windowsHide:false});
   await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});
   child.unref();
-  console.log(JSON.stringify({status:'launched_read_check_pending',pid:child.pid,seller_id:plan.sellerId,workspace_auto_selected:true,workctl_auto_located:plan.workctlFound,ai_started:false,automatic_reception_started:false}));
-  if(!plan.workctlFound)console.log('Select the current account workctl.exe in Connection & Settings, save, then check reading.');
-  console.log('Verify the seller and reading first. Manual reception does not require AI; AI-assisted reception needs separate checks.');
+  console.log(JSON.stringify({status:'launched_read_check_pending'}));
  }catch(error){
   const codes={authorized_environment_missing:'Open this command in the current authorized Accio terminal.',runtime_component_missing:'The inherited Accio runtime component is unavailable.',release_missing:'Build or extract the complete desktop release first.',release_invalid:'The release entry is invalid.',workctl_invalid:'Choose a workctl.exe belonging to the current Accio account.',seller_invalid:'Expected seller ID must use positive ASCII digits.',arguments_invalid:'Use --workctl PATH, --expect-seller ID, or --data-dir PATH.'};
   Object.assign(codes,{
@@ -255,7 +269,7 @@ async function main(){
    merchant_recovery_timeout:'Recovery timed out; verify the recovery process and preserved directories before retrying.'
   });
   const code=Object.hasOwn(codes,error.message)?error.message:'launch_failed';
-  console.error(JSON.stringify({status:'blocked',code,message:codes[code]||'The desktop process could not be launched.',...(Array.isArray(error.missing)?{missing_variables:error.missing}:{}),...(error.diagnostic?{diagnostic:error.diagnostic}:{})}));
+  console.error(JSON.stringify({status:'blocked',code}));
   process.exitCode=2;
  }
 }

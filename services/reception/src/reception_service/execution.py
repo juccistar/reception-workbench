@@ -10,7 +10,7 @@ import time
 from .errors import ServiceError
 from .repository import now_ms
 
-AI_JOBS = frozenset({'generate_draft', 'manual_suggestion', 'organize_requirements', 'check_ai', 'product_lookup', 'source_product', 'whatsapp_reply'})
+AI_JOBS = frozenset({'generate_draft', 'manual_suggestion', 'check_ai', 'product_lookup', 'source_product', 'whatsapp_reply'})
 
 
 class BusinessQueue(queue.Queue):
@@ -18,6 +18,16 @@ class BusinessQueue(queue.Queue):
     def __init__(self, capacity=256):
         super().__init__(maxsize=capacity)
         self._claims = {}
+        self._deferred_completions = set()
+
+    def defer_completion(self, item):
+        with self.mutex:
+            self._deferred_completions.add(id(item))
+
+    def release_completion(self, item):
+        with self.mutex:
+            self._deferred_completions.discard(id(item))
+        return self.complete(item)
 
     def _claim(self, item):
         # A distinct tuple identifies this dequeue even if the same job tuple
@@ -32,6 +42,8 @@ class BusinessQueue(queue.Queue):
     def complete(self, item):
         """Settle only this dequeue, including exceptional outer cleanup."""
         with self.all_tasks_done:
+            if id(item) in self._deferred_completions:
+                return False
             if self._claims.pop(id(item), None) is None:
                 return False
             self._settle()
@@ -90,6 +102,7 @@ class ExecutionMixin:
     def _init_execution(self):
         self._generation_events = {}
         self._generation_active = {}
+        self._generation_kinds = {}
         self._generation_read_bindings = {}
         self._execution_local = threading.local()
         self._dispatch_turn = 0
@@ -140,7 +153,7 @@ class ExecutionMixin:
             return 0
         if kind in ('automatic_send', 'continuity_send', 'reconcile_operation', 'confirm_send'):
             return 1
-        if kind in ('check_connection', 'check_ai', 'manual_suggestion', 'organize_requirements'):
+        if kind in ('check_connection', 'check_ai', 'manual_suggestion'):
             return 2
         if kind == 'sync_messages':
             return 3 if params.get('conversation_id') else 5
@@ -153,7 +166,9 @@ class ExecutionMixin:
             self._dispatch_turn += 1
             return self._queue.take_ready(
                 lambda item: (item[1] != 'source_product' or self._source_product_ready(item[2]))
-                    and (item[1] not in AI_JOBS or not self._generation_active),
+                    and (item[1] not in AI_JOBS or not any(
+                        (kind == 'source_product') == (item[1] == 'source_product')
+                        for kind in self._generation_kinds.values())),
                 self._work_priority, fair=self._dispatch_turn % 8 == 0)
 
     def _dispatch_owned(self, item):
@@ -196,6 +211,8 @@ class ExecutionMixin:
                 if type(facade) is LiveIntegration and kind != 'check_ai':
                     original = facade
                     facade = LiveIntegration(self.data_root / self.mode, copy.deepcopy(self.settings))
+                    facade.configure_model_router(self._model_router)
+                    facade.configure_whatsapp_image_resolver(self._wa_resolve_current_image)
                     facade._visual_workspace_identity = copy.deepcopy(original._visual_workspace_identity)
                     self._generation_read_bindings[id(facade)] = (
                         facade, original, self._monitor_generation, self.repo, job_id)
@@ -203,11 +220,14 @@ class ExecutionMixin:
                                           args=(self._execute_generation, 'generation', item, facade),
                                           name='reception-ai-' + job_id[-8:], daemon=True)
                 self._generation_active[job_id] = (thread, event)
+                self._generation_kinds[job_id] = kind
+                self._queue.defer_completion(item)
                 thread.start()
             except Exception:
                 if kind == 'product_lookup':
                     self._finish_product_claim(job_id, 'task_start_failed')
                 self._generation_active.pop(job_id, None)
+                self._generation_kinds.pop(job_id, None)
                 self._generation_events.pop(job_id, None)
                 self._generation_read_bindings.pop(id(facade), None)
                 try:
@@ -215,7 +235,7 @@ class ExecutionMixin:
                                      message='后台生成任务未能启动，请重试',
                                      error={'code': 'task_failed', 'message': '后台生成任务未能启动'})
                 finally:
-                    self._queue.complete(item)
+                    self._queue.release_completion(item)
                     self._executor_health.finish_job(job_id)
                     self._changed()
 
@@ -228,11 +248,12 @@ class ExecutionMixin:
             self._executor_health.log('generation', job_id, error)
             self._executor_health.fail('failed', 'generation_cleanup_failed')
         finally:
-            self._queue.complete(item)
+            self._queue.release_completion(item)
             self._executor_health.finish_job(job_id)
             self._execution_local.job_id = None
             with self._lock:
                 self._generation_active.pop(job_id, None)
+                self._generation_kinds.pop(job_id, None)
                 self._generation_events.pop(job_id, None)
                 self._generation_read_bindings.pop(id(facade), None)
             # The business consumer owns scheduling and its retry policy.
@@ -262,6 +283,10 @@ class ExecutionMixin:
             active = list(self._generation_active.values())
             for _, event in active:
                 event.set()
+        deadline = time.monotonic() + 10
         for thread, _ in active:
             if thread is not threading.current_thread():
-                thread.join()
+                thread.join(timeout=max(0, deadline - time.monotonic()))
+        if any(thread.is_alive() for thread, _ in active):
+            self._executor_health.fail('stalled', 'generation_shutdown_timeout')
+            raise ServiceError('executor_unavailable', '生成任务尚未退出，无法安全关闭。', stage='shutdown')

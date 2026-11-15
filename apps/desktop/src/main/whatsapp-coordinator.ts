@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { WhatsAppContact, WhatsAppHostInfo, WhatsAppViewRequest } from '../shared/whatsapp';
 import type { WhatsAppEvent } from './whatsapp/host';
 import type { FrozenIntent, LedgerRecord, SendResult } from './whatsapp/ledger';
@@ -11,6 +12,7 @@ export interface WhatsAppTransportHost {
   sendFrozen(intent: FrozenIntent): Promise<SendResult>;
   readLedger(operationId: string): LedgerRecord | undefined;
   lookupMessage(messageId: string): Promise<SendResult | null>;
+  downloadImage?(account: string, epoch: string, chatId: string, messageId: string, consume: (mime: string, size: number, chunks: AsyncIterable<Buffer>) => Promise<void>): Promise<void>;
 }
 type Invoke = <T = unknown>(method: string, params?: Record<string, unknown>) => Promise<T>;
 interface Options {
@@ -39,6 +41,18 @@ export class WhatsAppCoordinator {
   private host: WhatsAppTransportHost | null = null;
   private creating: Promise<WhatsAppTransportHost> | null = null;
   private observations: Promise<void> = Promise.resolve();
+  private readonly mediaKeys = new Set<string>();
+  private readonly mediaSeen = new Set<string>();
+  private readonly cancelMedia = new Set<() => void>();
+  private readonly mediaQueue: Array<() => Promise<void>> = [];
+  private mediaActive = 0;
+  private pumpMedia(): void {
+    while (this.mediaActive < 2 && this.mediaQueue.length) {
+      const work = this.mediaQueue.shift()!;
+      this.mediaActive++;
+      void work().catch(() => {}).finally(() => { this.mediaActive--; this.pumpMedia(); });
+    }
+  }
   private readonly sends = new Map<string, Promise<void>>();
   private readonly reconciliations = new Set<Promise<void>>();
   private recovering = false;
@@ -78,6 +92,7 @@ export class WhatsAppCoordinator {
       const status = event.status === 'ready' ? 'connected' : ['disconnected', 'error'].includes(event.status) ? 'disconnected' : 'connecting';
       accountIdentity = JSON.stringify([status, event.account_id, event.connection_epoch]);
       if (accountIdentity === this.accountProjection) return;
+      for (const cancel of this.cancelMedia) cancel();
       this.accountProjection = accountIdentity;
     }
     void this.enqueue(async () => {
@@ -91,6 +106,56 @@ export class WhatsAppCoordinator {
         }
       } else if (event.type === 'messages') {
         await this.options.invoke('_wa_ingest', { account_id: event.account_id, connection_epoch: event.connection_epoch, messages: event.messages });
+        for (const message of event.messages) {
+          if (!message.has_image || message.metadata_only || message.is_group) continue;
+          const host = this.host;
+          if (!host?.downloadImage || this.stopping) continue;
+          const identity = { account_id: event.account_id, connection_epoch: event.connection_epoch, chat_id: message.chat_id, message_id: message.id,
+            source_version: createHash('sha256').update(JSON.stringify([event.account_id, event.connection_epoch, message.chat_id, message.id, String(message.timestamp_ms)])).digest('hex') };
+          const key = JSON.stringify(identity);
+          if (this.mediaKeys.has(key) || this.mediaSeen.has(key)) continue;
+          this.mediaKeys.add(key);
+          this.mediaSeen.add(key);
+          if (this.mediaSeen.size > 2048) this.mediaSeen.delete(this.mediaSeen.values().next().value!);
+          let transferId = '';
+          let expired = false;
+          const fail = () => { void this.options.invoke('_wa_media_fail', { ...identity, transfer_id: transferId, error_code: 'media_unavailable' }).catch(() => {}); };
+          const deadline = Date.now() + 60_000;
+          const cancel = () => { if (!expired) { expired = true; fail(); } };
+          this.cancelMedia.add(cancel);
+          const timer = setTimeout(cancel, 60_000);
+          timer.unref?.();
+          const check = () => {
+            const status = host.getStatus();
+            if (expired || Date.now() >= deadline || this.stopping || host !== this.host || status.status !== 'ready' || status.account_id !== event.account_id || status.connection_epoch !== event.connection_epoch) throw new Error('WhatsApp image source changed');
+          };
+          const work = async () => {
+            try {
+              check();
+              await host.downloadImage!(event.account_id, event.connection_epoch, message.chat_id, message.id, async (mime, size, chunks) => {
+                check();
+                const begin = await this.options.invoke<{ transfer_id: string }>('_wa_media_begin', { ...identity, mime_type: mime });
+                transferId = begin.transfer_id;
+                check();
+                const hash = createHash('sha256'); let offset = 0;
+                for await (const chunk of chunks) {
+                  check();
+                  if (!chunk.length || chunk.length > 256 * 1024 || offset + chunk.length > 6 * 1024 * 1024) throw new Error('WhatsApp image chunk invalid');
+                  hash.update(chunk);
+                  const result = await this.options.invoke<{ next_offset: number }>('_wa_media_chunk', { ...identity, transfer_id: transferId, offset, data_base64: chunk.toString('base64') });
+                  check();
+                  offset += chunk.length;
+                  if (result.next_offset !== offset) throw new Error('WhatsApp image offset mismatch');
+                }
+                check();
+                await this.options.invoke('_wa_media_finish', { ...identity, transfer_id: transferId, size, sha256: hash.digest('hex') });
+              });
+            } catch { fail(); }
+            finally { clearTimeout(timer); this.cancelMedia.delete(cancel); this.mediaKeys.delete(key); }
+          };
+          if (this.mediaQueue.length >= 64) { clearTimeout(timer); this.cancelMedia.delete(cancel); this.mediaKeys.delete(key); fail(); }
+          else { this.mediaQueue.push(work); this.pumpMedia(); }
+        }
       } else {
         await this.options.invoke('_wa_ack', { account_id: event.account_id, connection_epoch: event.connection_epoch, message_id: event.message_id, ack: event.ack });
       }
@@ -167,6 +232,7 @@ export class WhatsAppCoordinator {
   }
   async stop(): Promise<void> {
     this.stopping = true;
+    for (const cancel of this.cancelMedia) cancel();
     if (this.creating) await this.creating.catch(() => {});
     await this.enqueue(() => this.options.invoke('set_whatsapp_reception', { enabled: false }));
     const settled = await Promise.allSettled([...this.sends.values(), ...this.reconciliations]);

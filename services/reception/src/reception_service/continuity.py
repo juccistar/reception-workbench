@@ -21,13 +21,6 @@ def text_hash(text):
 
 
 class ContinuityMixin:
-    def _hydrate_demo_messages(self):
-        # The demo transport's authoritative message list is local too. Restore
-        # it from its own persisted demo history, never from a live workspace.
-        from .integrations.demo import DemoIntegration
-        if self.mode == 'demo' and isinstance(self.integrations, DemoIntegration) and not self.integrations.messages:
-            self.integrations.messages = copy.deepcopy(self.repo.list('message'))
-
     def _draft_basis_current(self, draft):
         """An unsubmitted attempt may wait only while its exact evidence still exists."""
         case = self.repo.get('case', draft['case_id'])

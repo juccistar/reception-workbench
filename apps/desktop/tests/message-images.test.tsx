@@ -160,8 +160,8 @@ it('按原图资产去重，并以真实引用在同一消息的图片间导航'
   await waitFor(() => expect(cards).toHaveLength(3));
   fireEvent.click(cards[2]);
   expect(await screen.findByText('1 / 2')).toBeInTheDocument();
-  expect(getImageOriginal).toHaveBeenCalledWith(refs[0]);
+  expect(getImageOriginal).toHaveBeenCalledWith(refs[0], expect.any(String));
   fireEvent.keyDown(document, { key: 'ArrowRight' });
-  await waitFor(() => expect(getImageOriginal).toHaveBeenCalledWith(refs[1]));
+  await waitFor(() => expect(getImageOriginal).toHaveBeenCalledWith(refs[1], expect.any(String)));
   expect(screen.getByText('2 / 2')).toBeInTheDocument();
 });

@@ -1,0 +1,22 @@
+{
+  "version": "0.4.0",
+  "date": "2026-11-15",
+  "scope": "synthetic_repository_message_pagination",
+  "source_report": "artifacts/verification/benchmark-040-final-001/report.json",
+  "platform": "Windows 10 19045; Python 3.12.2",
+  "repetitions_per_query_per_scenario": 200,
+  "order": "alternating",
+  "correctness": "All pages and newest 50 messages equal prior list/sort/slice; synthetic cases and unknown operations preserved",
+  "scenarios": [
+    {"conversations": 3, "messages": 240, "old_median_ms": 0.2637, "new_median_ms": 0.2841, "old_p95_ms": 0.3174, "new_p95_ms": 0.3519, "old_parsed_rows": 80, "new_parsed_rows": 50},
+    {"conversations": 100, "messages": 50000, "old_median_ms": 3.75045, "new_median_ms": 2.85445, "old_p95_ms": 4.2813, "new_p95_ms": 3.4506, "old_parsed_rows": 500, "new_parsed_rows": 50},
+    {"conversations": 500, "messages": 200000, "old_median_ms": 1.3448, "new_median_ms": 0.92505, "old_p95_ms": 1.7728, "new_p95_ms": 1.2249, "old_parsed_rows": 400, "new_parsed_rows": 50}
+  ],
+  "query_plan": ["entities_conversation index", "temporary B-tree for ORDER BY"],
+  "limitations": [
+    "Small scenario was slightly slower; this is a query measurement, not an application-wide speedup.",
+    "OS cache was uncontrolled. SQL scanned rows, lock duration and cold startup were not measured.",
+    "No image, real customer data, platform, model inference or whole-machine capacity was measured.",
+    "Only before/after process memory snapshots were recorded; they do not establish a peak or absence of leaks."
+  ]
+}

@@ -15,6 +15,7 @@ from reception_service import __version__
 from reception_service.errors import ServiceError
 from reception_service.repository import encoded, now_ms
 from reception_service.service import ReceptionService
+from reception_test_support.model import configure_synthetic_model, synthetic_snapshot
 
 
 class MonitorFacade(MockFacade):
@@ -26,6 +27,12 @@ class MonitorFacade(MockFacade):
         self.bodies = {}
         self.summary_hook = None
         self.body_hook = None
+
+    def generate(self, context, request_id):
+        snapshot = synthetic_snapshot(self.model_router)
+        result = super().generate(context, request_id)
+        result['model_snapshot'] = snapshot
+        return result
 
     @staticmethod
     def summary_page(items, more=False, cursor=None):
@@ -61,6 +68,8 @@ class MessageMonitorTests(unittest.TestCase):
         self.scheduler_patch = patch.object(ReceptionService, '_schedule', return_value=None)
         self.scheduler_patch.start()
         self.service = ReceptionService(self.root, 'live', seller_id='10001')
+        configure_synthetic_model(self.service, self.root / 'model-authority.json')
+        self.facade.model_router = self.service._model_router
         self.baseline_jobs = set()
 
     def tearDown(self):
@@ -282,7 +291,8 @@ class MessageMonitorTests(unittest.TestCase):
             started.set()
             if not release.wait(3):
                 raise AssertionError('synthetic AI release missing')
-            return {'reply': 'Thank you for your message.'}
+            return {'reply_messages': [{'body': 'Thank you for your message.', 'reply_sources': [context['recent_messages'][-1]['message_id']]}],
+                    'model_snapshot': synthetic_snapshot(self.service._model_router)}
         self.facade.generate_manual = generate_manual
         ack = self.service.generate_manual_suggestion('customer-a', 'manual-recheck', case['case_id'])
         try:
@@ -644,14 +654,14 @@ class MessageMonitorTests(unittest.TestCase):
         started, release = threading.Event(), threading.Event()
         ai_started, ai_release, other_read = threading.Event(), threading.Event(), threading.Event()
         events = []
-        generate = self.facade.generate
-        def ai(context, request_id):
+        resolve = self.service._model_router.resolve
+        def ai(purpose, required_capabilities=()):
             events.append('ai-check')
             ai_started.set()
             if not ai_release.wait(3):
                 raise AssertionError('synthetic AI release missing')
-            return generate(context, request_id)
-        self.facade.generate = ai
+            return resolve(purpose, required_capabilities)
+        self.service._model_router.resolve = ai
         def body(cid, cursor):
             events.append('read-' + cid)
             if cid == 'customer-a':
@@ -694,11 +704,28 @@ class MessageMonitorTests(unittest.TestCase):
             self.service._observe_message_activity(self.info(stamp=start + 2))
         self.facade.release.set()
         job = self.wait_job(ack)
-        self.assertEqual(job['status'], 'deferred', job)
-        self.assertEqual(job['retry_status'], 'replan')
+        self.assertEqual(job['status'], 'failed', job)
+        self.assertEqual(job['retry_status'], 'exhausted')
         self.assertEqual(job['last_error_code'], 'source_changed')
         self.assertIsNone(self.service.get_conversation('customer-a')['draft'])
         self.assertEqual(self.facade.send_calls, 0)
+        # The completed old request is not replayed. A genuinely new buyer
+        # message must still pass the monitor and automatic scheduler.
+        self.facade.block_generate = False
+        self.facade.bodies['customer-a'] = [self.message(),
+            self.message(stamp=start + 1, mid='fresh', text='I am interested in ceramic mugs.'),
+            self.message(stamp=start + 3, mid='new-buyer-source', text='I need 200 ceramic mugs.')]
+        self.facade.summaries[None] = self.facade.summary_page([self.info(stamp=start + 3)])
+        self.tick()
+        self.idle()
+        with patch('reception_service.service.now_ms', return_value=start + 2000):
+            self.schedule(self.service)
+        self.idle()
+        fresh_jobs = [row for row in self.service.repo.list('job')
+                      if row.get('kind') == 'generate_draft' and row.get('source_message_id') == 'new-buyer-source']
+        self.assertEqual(len(fresh_jobs), 1)
+        self.assertEqual(fresh_jobs[0]['status'], 'succeeded', fresh_jobs[0])
+        self.assertEqual(self.facade.generate_calls, 2)
 
     def test_demo_retains_existing_worker_full_poll(self):
         self.service.close()
@@ -768,8 +795,8 @@ class MessageMonitorTests(unittest.TestCase):
         try:
             self.until(lambda: self.service.repo.get('message_activity', 'customer-a', {}).get('latest_timestamp') == 2000)
             self.assertEqual(self.service.repo.get('job', ack['job_id'])['status'], 'running')
-            self.assertEqual(len(self.jobs()), 1)
-            self.assertEqual(self.jobs()[0]['status'], 'queued')
+            self.until(lambda: len(self.jobs()) == 1 and self.jobs()[0]['status'] == 'succeeded')
+            self.assertEqual(self.service.repo.get('job', ack['job_id'])['status'], 'running')
         finally:
             self.facade.release.set()
         self.idle()
