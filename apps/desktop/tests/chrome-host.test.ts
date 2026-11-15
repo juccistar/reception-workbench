@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { EventEmitter } from 'node:events';
+import { EventEmitter as PuppeteerEventEmitter } from 'puppeteer';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,8 +16,8 @@ async function setup(fail = false, shutdownGraceMs = 10000) {
   const instances: MockClient[] = [];
   class MockClient extends EventEmitter {
     info = { wid: { _serialized: '123@c.us' } };
-    pupPage = Object.assign(new EventEmitter(), { isClosed: () => false, bringToFront: vi.fn(async () => {}) });
-    pupBrowser = Object.assign(new EventEmitter(), { close: vi.fn(async () => { this.pupBrowser.emit('disconnected'); }), process: () => null });
+    pupPage = Object.assign(new PuppeteerEventEmitter() as any, { isClosed: () => false, bringToFront: vi.fn(async () => {}) });
+    pupBrowser = Object.assign(new PuppeteerEventEmitter() as any, { close: vi.fn(async () => { this.pupBrowser.emit('disconnected'); }), process: () => null });
     getChats = vi.fn(async () => []);
     sendMessage = vi.fn(async () => ({ id: { _serialized: 'msg1' }, ack: 1 }));
     getMessageById = vi.fn(async () => ({ id: { _serialized: 'msg1' }, ack: 1 }));
@@ -40,6 +41,16 @@ describe('Chrome WhatsApp host', () => {
     expect(client.sendMessage).toHaveBeenCalledTimes(1);
     await host.open(); expect(client.pupPage.bringToFront).toHaveBeenCalledOnce();
     await host.close(); expect(client.pupBrowser.close).toHaveBeenCalledOnce();
+  });
+  it('removes Puppeteer listeners through off without assuming Node removeListener', async () => {
+    const { host, instances } = await setup();
+    const client = instances[0];
+    expect(client.pupBrowser.removeListener).toBeUndefined();
+    expect(client.pupPage.removeListener).toBeUndefined();
+    await host.close();
+    expect(client.pupBrowser.listenerCount('disconnected')).toBe(0);
+    expect(client.pupPage.listenerCount('close')).toBe(0);
+    expect(client.pupPage.listenerCount('framenavigated')).toBe(0);
   });
   it('preserves the visible page on initialization failure and closes it before retry', async () => {
     const { host, instances } = await setup(true); const first = instances[0];

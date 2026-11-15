@@ -156,8 +156,8 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
     if (browser && !(browser as any).__arwWatched) {
       (browser as any).__arwWatched = true;
       const disconnected = () => this.retire(generation, 'disconnected', true);
-      browser.once('disconnected', disconnected);
-      this.browserListeners.push(() => browser.removeListener('disconnected', disconnected));
+      browser.on('disconnected', disconnected);
+      this.browserListeners.push(() => browser.off('disconnected', disconnected));
     }
     if (page && !(page as any).__arwWatched) {
       (page as any).__arwWatched = true;
@@ -170,9 +170,9 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
         const url = frame.url();
         if (url !== 'about:blank' && !this.allowedPage(url)) this.retire(generation, 'error');
       };
-      page.once('close', closed);
+      page.on('close', closed);
       page.on('framenavigated', navigated);
-      this.browserListeners.push(() => { page.removeListener('close', closed); page.removeListener('framenavigated', navigated); });
+      this.browserListeners.push(() => { page.off('close', closed); page.off('framenavigated', navigated); });
     }
   }
   async connect(): Promise<void> {

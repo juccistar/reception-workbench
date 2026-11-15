@@ -18,4 +18,4 @@ if (!temporary || !path.isAbsolute(temporary)) throw new Error('isolated fixture
 void app.whenReady().then(() => {
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => callback({ cancel: !details.url.startsWith('file:') && !details.url.startsWith('devtools:') }));
 });
-void runLauncher().catch(() => app.exit(1));
+void runLauncher().catch(error => { console.error(error instanceof Error ? error.message : 'isolated launcher failed'); app.exit(1); });

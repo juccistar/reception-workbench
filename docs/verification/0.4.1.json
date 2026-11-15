@@ -66,7 +66,8 @@
     "known_test_failures_resolved": ["Initial synthetic PNG fixture was invalid; replaced with Pillow-generated PNG and image generation test passed.", "Prepared-send fixture used a buyer source from a prior binding segment; changed it to a new buyer message in the active segment and core tests passed."],
     "typecheck": {"status": "passed", "command": "tsc --noEmit -p apps/desktop/tsconfig.json"},
     "previous_source_build": {"status": "passed", "stage": "development_snapshot_1", "commit": "10bd464", "desktop_only": true},
-    "source_build": {"status": "passed", "stage": "development_snapshot_2", "date": "2026-11-16", "command": "node scripts/build.mjs", "desktop_only": true, "output": "artifacts/app", "candidate_or_release": false, "window_verification": "pending", "immediate_local_commit": true},
+    "development_snapshot_2": {"status": "passed", "commit": "dc75c38", "date": "2026-11-16", "desktop_only": true},
+    "source_build": {"status": "passed", "stage": "development_snapshot_3", "date": "2026-11-16", "command": "node scripts/build.mjs", "desktop_only": true, "output": "artifacts/app", "candidate_or_release": false, "window_verification": "pending", "immediate_local_commit": true},
     "transparent_png_window": {
       "status": "passed",
       "source_commit": "10bd464",
@@ -84,6 +85,19 @@
       "normal_shutdown": true,
       "real_customer_or_model_calls": 0
     },
+    "production_chrome_host_initial": {
+      "status": "failed_cleanup_api",
+      "report": "artifacts/verification/chrome-host-public-041-source-002/report.json",
+      "normal_and_initialize_fault_page_retained": true,
+      "observations_ms": [65340, 65266],
+      "qr_refreshed_both": true,
+      "screenshots_viewed": ["normal-public-qr.png", "initialize-fault-public-qr.png"],
+      "failure": "Puppeteer Browser/Page use off, not Node removeListener; once wrappers also require matching removable handlers",
+      "correction": "use on/off and real Puppeteer EventEmitter in regression tests",
+      "retest": "pending"
+    },
+    "launcher_window_initial": {"status": "failed_driver_launch_timeout", "report": "artifacts/verification/launcher-041-source-002/report.json", "real_user_configuration_accessed": false, "retest": "pending"},
+    "chrome_exit_regression": {"files": 3, "passed": 31, "real_puppeteer_emitter": true, "historical_stage_not_additive": true},
     "context_order": {
       "status": "passed",
       "content_and_arrays_unchanged": true,
