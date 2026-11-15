@@ -222,7 +222,10 @@
     "github_cli_message": "You are not logged into any GitHub hosts.",
     "draft_created": false,
     "assets_uploaded": false,
-    "blockers": ["prior_intermittent_public_qr_sdk_timeout_root_cause_unconfirmed_latest_source_007_passed", "github_cli_not_authenticated"],
+    "blockers": ["github_cli_not_authenticated", "official_github_device_authorization_endpoint_connection_timeout"],
+    "known_limitations": ["prior_intermittent_public_qr_sdk_timeout_root_cause_unconfirmed_latest_source_007_passed", "windows_installer_unsigned", "real_account_paid_model_quality_and_actual_cache_rate_unverified"],
+    "explicit_publish_requested": "2026-11-16",
+    "publication_attempt": {"status": "blocked_authentication", "report": "artifacts/verification/publication-041-20261116-attempt-001.json", "preflight_report": "artifacts/verification/publication-041-20261116-preflight-001/report.json", "four_assets_hashes_and_fixed_signature": "passed", "public_release_notes": "artifacts/verification/publication-041-20261116-notes-001.md", "official_browser_login_attempted": true, "device_code_received": false, "authorization_endpoint": "https://github.com/login/device/code", "authorization_result": "connection_timeout", "public_latest_observed": "v0.3.21", "anonymous_public_api_read": true},
     "installed": false,
     "real_data_migrated": false
   }
