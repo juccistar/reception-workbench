@@ -74,11 +74,22 @@ try {
   await mkdir(userData);
   const launch = () => electron.launch({ executablePath: executable, args: [...(candidate ? [] : [root]), `--user-data-dir=${userData}`], cwd: root, env, timeout: 45000 });
   const inspect = async () => {
-    const value = await app.evaluate(({ app }) => ({ version: app.getVersion(), userData: app.getPath('userData'), packaged: app.isPackaged, exe: process.execPath, modules: Object.keys(process.getBuiltinModule('module')._cache).filter(x => /(?:whatsapp-web\.js|puppeteer|whatsapp-runtime\.asar)/i.test(x)), children: process._getActiveHandles().filter(x => x && x.constructor && x.constructor.name === 'ChildProcess').length }));
+    const snapshot = () => app.evaluate(async ({ app }) => {
+      await new Promise(resolve => setImmediate(resolve));
+      const children = process._getActiveHandles().filter(x => x?.constructor?.name === 'ChildProcess' && x.exitCode === null && x.signalCode === null);
+      return { version: app.getVersion(), userData: app.getPath('userData'), packaged: app.isPackaged, exe: process.execPath, modules: Object.keys(process.getBuiltinModule('module')._cache).filter(x => /(?:whatsapp-web\.js|puppeteer|whatsapp-runtime\.asar)/i.test(x)), children: children.length, child_programs: children.map(child => process.getBuiltinModule('path').basename(child.spawnfile || '')) };
+    });
+    let value = await snapshot();
+    const settleUntil = Date.now() + 15000;
+    while (value.children && Date.now() < settleUntil) {
+      assert(value.child_programs.every(program => program.toLowerCase() === 'powershell.exe'), 'Unexpected startup child process');
+      await new Promise(resolve => setTimeout(resolve, 50));
+      value = await snapshot();
+    }
     assert.equal(value.version, '0.4.0'); assert.equal(value.packaged, candidate);
     assert.equal(path.resolve(value.exe).toLowerCase(), path.resolve(executable).toLowerCase());
     assert.equal(path.resolve(value.userData).toLowerCase(), path.resolve(userData).toLowerCase(), 'Electron cache was not isolated');
-    assert.deepEqual(value.modules, [], 'WhatsApp SDK was loaded'); assert.equal(value.children, 0, 'Main has an active child process');
+    assert.deepEqual(value.modules, [], 'WhatsApp SDK was loaded'); assert.equal(value.children, 0, `Main has active child programs: ${value.child_programs.join(', ')}`);
     return value;
   };
   for (const run of ['first', 'restart']) {
@@ -88,7 +99,10 @@ try {
     const page = await app.firstWindow();
     await page.getByText('添加第一个商家').waitFor({ timeout: 45000 });
     report.timings_ms[run] = Date.now() - started;
+    // Wait for real launcher IPC, including the asynchronous KnownFolder resolver.
+    assert.deepEqual(await page.evaluate(() => window.launcher.merchants()), []);
     await inspect();
+    report.timings_ms[`${run}_ready`] = Date.now() - started;
     assert.deepEqual(await page.evaluate(() => ({ reception: typeof window.reception, launcher: typeof window.launcher })), { reception: 'undefined', launcher: 'object' });
     if (run === 'first') {
       report.production_main = true; report.actual_exe_entry = candidate;

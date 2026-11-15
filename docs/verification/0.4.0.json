@@ -1,7 +1,7 @@
 {
   "version": "0.4.0",
   "date": "2026-11-15",
-  "status": "source_rebuilt_final_windows_pending",
+  "status": "candidate_built_verification_pending",
   "base_commit": "c6be2c575a4d235ac2f1b42fa1ad035064c16740",
   "branch": "feat/launcher-multimodal-0.4.0",
   "plan": "docs/0.4.0开发方案.md",
@@ -87,19 +87,22 @@
       "command": "node scripts/build.mjs",
       "output": "artifacts/app",
       "change": "launcher IPC accepts the same Windows file after drive-letter normalization",
-      "immediate_local_commit": true
+      "immediate_local_commit": true,
+      "commit": "97fe7c2a794b2ac714219da533831e5fc45a45d4"
     },
     "source_window": {
-      "status": "failed_pending_rebuild",
-      "reason": "Windows drive-letter normalization rejected valid launcher IPC; isolated fixture drivers also require repair.",
-      "initial_reports": [
-        "artifacts/verification/launcher-entry-040-source-final-001/report.json",
-        "artifacts/verification/launcher-entry-040-source-final-002/report.json",
-        "artifacts/verification/launcher-040-source-final-001/result.json",
-        "artifacts/verification/workbench-040-source-window-agent-001/report.json"
-      ]
+      "status": "passed",
+      "screenshots_viewed": 11,
+      "record": "docs/verification/0.4.0-windows.json",
+      "production_entry": true,
+      "business_workbench": "isolated_synthetic_fixture"
     },
-    "candidate_build": null,
+    "candidate_build": {
+      "status": "passed",
+      "record": "docs/verification/0.4.0-candidate.json",
+      "output": "relase/release-0.4.0-candidate-a",
+      "immediate_local_commit": true
+    },
     "candidate_window": null,
     "update_signature": null,
     "anonymous_release_downloads": null,
@@ -113,6 +116,18 @@
         "output": "artifacts/app",
         "immediate_local_commit": true,
         "commit": "dbc5e2818336237e46470b10ac39b93a43e2b3f2"
+      }
+    ],
+    "source_window_history": [
+      {
+        "status": "failed_pending_rebuild",
+        "reason": "Windows drive-letter normalization rejected valid launcher IPC; isolated fixture drivers also require repair.",
+        "initial_reports": [
+          "artifacts/verification/launcher-entry-040-source-final-001/report.json",
+          "artifacts/verification/launcher-entry-040-source-final-002/report.json",
+          "artifacts/verification/launcher-040-source-final-001/result.json",
+          "artifacts/verification/workbench-040-source-window-agent-001/report.json"
+        ]
       }
     ]
   },

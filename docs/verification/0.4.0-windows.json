@@ -1,0 +1,145 @@
+{
+  "version": "0.4.0",
+  "source": {
+    "status": "passed",
+    "reports": {
+      "production_entry": {
+        "report": "artifacts/verification/launcher-entry-040-source-verified-003/report.json",
+        "result": {
+          "status": "passed",
+          "production_main": true,
+          "actual_exe_entry": false,
+          "no_model_calls": true,
+          "no_business_open": true,
+          "screenshots": [
+            "01-empty-launcher.png",
+            "02-empty-models.png"
+          ],
+          "checks": {
+            "empty_launcher": true,
+            "empty_models": true,
+            "no_reception_bridge": true,
+            "no_active_business_child": true,
+            "no_whatsapp_sdk_in_module_cache": true,
+            "normal_exit_and_restart": true,
+            "isolated_electron_user_data": true
+          },
+          "timings_ms": {
+            "first": 343,
+            "first_ready": 4058,
+            "restart": 364,
+            "restart_ready": 4104
+          },
+          "files": {
+            "before": {
+              "settings": {
+                "exists": false
+              },
+              "initialized": {
+                "exists": false
+              },
+              "registry": {
+                "exists": false
+              }
+            },
+            "after": {
+              "settings": {
+                "exists": false
+              },
+              "initialized": {
+                "exists": false
+              },
+              "registry": {
+                "exists": false
+              }
+            }
+          },
+          "limitations": [
+            "Timings are launch-to-window observations, not OS cold-start or performance measurements.",
+            "No real authorization, customer session, or model quality is tested.",
+            "Child process and module checks are snapshots; no model-check or business-opening action is invoked."
+          ]
+        }
+      },
+      "launcher_fixture": {
+        "report": "artifacts/verification/launcher-040-source-verified-001/result.json",
+        "result": {
+          "status": "passed",
+          "actual_exe_entry": false,
+          "candidate_assets": false,
+          "production_launcher_host": false,
+          "production_launcher_preload": true,
+          "production_renderer": true,
+          "synthetic_registry": true,
+          "synthetic_model_checker": true,
+          "synthetic_encryption": true,
+          "model_network_calls": 0,
+          "screenshots": [
+            "01-empty.png",
+            "02-merchants.png",
+            "03-models.png",
+            "04-checked.png"
+          ],
+          "checks": {
+            "empty": true,
+            "merchants": true,
+            "multiple_profiles_and_routes": true,
+            "cancel": true,
+            "synthetic_check": true,
+            "stale_check_rejected": true
+          }
+        }
+      },
+      "workbench_fixture": {
+        "report": "artifacts/verification/workbench-040-source-verified-001/report.json",
+        "result": {
+          "status": "passed",
+          "actual_window": true,
+          "actual_exe_entry": false,
+          "production_main": false,
+          "fixture_host": true,
+          "synthetic_launch_and_update_info": true,
+          "production_service_client": true,
+          "real_service_rpc": true,
+          "synthetic_python_integration": true,
+          "production_renderer_and_preload": true,
+          "candidate_assets": false,
+          "real_ai_calls": 0,
+          "real_customer_sends": 0,
+          "screenshots": [
+            "01-conversation.png",
+            "02-draft.png",
+            "03-receipt.png",
+            "04-suggestion-requirements.png",
+            "05-model-summary.png"
+          ],
+          "checks": {
+            "selection": true,
+            "edit_and_save": true,
+            "synthetic_send_accepted": true,
+            "suggestion_summary_requirements": true,
+            "model_summary": true,
+            "normal_shutdown": true
+          },
+          "renderer_errors": []
+        }
+      }
+    },
+    "screenshots_viewed": [
+      "artifacts/verification/launcher-entry-040-source-verified-003/01-empty-launcher.png",
+      "artifacts/verification/launcher-entry-040-source-verified-003/02-empty-models.png",
+      "artifacts/verification/launcher-040-source-verified-001/01-empty.png",
+      "artifacts/verification/launcher-040-source-verified-001/02-merchants.png",
+      "artifacts/verification/launcher-040-source-verified-001/03-models.png",
+      "artifacts/verification/launcher-040-source-verified-001/04-checked.png",
+      "artifacts/verification/workbench-040-source-verified-001/01-conversation.png",
+      "artifacts/verification/workbench-040-source-verified-001/02-draft.png",
+      "artifacts/verification/workbench-040-source-verified-001/03-receipt.png",
+      "artifacts/verification/workbench-040-source-verified-001/04-suggestion-requirements.png",
+      "artifacts/verification/workbench-040-source-verified-001/05-model-summary.png"
+    ],
+    "scope": "production launcher entry plus isolated launcher/workbench fixtures"
+  },
+  "candidate": null,
+  "public_whatsapp": null
+}

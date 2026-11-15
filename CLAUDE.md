@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 客户接待工作台是面向 Windows 的 Electron + React/TypeScript 桌面应用，Python 服务承载业务，SQLite 保存本地状态。0.4.0 普通入口为轻量启动台，同一 Windows 用户统一管理多个 API 并分别选择接待和翻译模型；需求、摘要及回复使用所选接待 API，相关受控原图与文字同轮提交。Accio Work 继续提供商家身份、平台读取、发送和采购工具。自动接待与普通人工聊天并存；飞书是可选的异步登记渠道。
 
-0.4.0 当前处于最终整合验证阶段，尚未构建候选或公开发布；用户已授权完成后直接打包发布。以[说明](docs/0.4.0发布说明.md)和[验证记录](docs/verification/0.4.0.json)记录实际结果。正式版拒绝 Demo 启动，合成支持位于独立 test_support/fixtures，不进入发行闭包。商家索引不保存 Accio 令牌，已有窗口经本机双向握手核验后才能激活，新窗口仍需受支持的授权启动。以下 0.3.x 段落保留历史发行证据，当前模型与入口语义以 0.4.0 实现为准。
+0.4.0 已完成源码构建，428项后端、92项桌面/宿主和6项工具定向验证通过；正式启动台与隔离业务窗口共11张图已逐张查看。用户已授权完成后直接打包发布，候选及公开发行实际状态以[说明](docs/0.4.0发布说明.md)和[验证记录](docs/verification/0.4.0.json)为准。正式版拒绝 Demo 启动，合成支持位于独立 test_support/fixtures，不进入发行闭包。商家索引不保存 Accio 令牌，已有窗口经本机双向握手核验后才能激活，新窗口仍需受支持的授权启动。以下 0.3.x 段落保留历史发行证据，当前模型与入口语义以 0.4.0 实现为准。
 
 源码在独立私有仓库 `juccistar/reception-workbench` 维护，默认分支为 `main`。安装包与客户端更新继续使用公开仓库 `juccistar/reception-workbench-releases`；旧 Qt 工程及导出分支仅是历史来源，运行时不导入旧工程。仓库、应用标识、数据命名空间与固定签名公钥的约定见 [PROJECT.md](docs/PROJECT.md)。
 

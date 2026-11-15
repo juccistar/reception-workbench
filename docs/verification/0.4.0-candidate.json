@@ -1,0 +1,20 @@
+{
+  "version": "0.4.0",
+  "status": "built_verification_pending",
+  "source_commit": "97fe7c2a794b2ac714219da533831e5fc45a45d4",
+  "output": "relase/release-0.4.0-candidate-a",
+  "delivery": {
+    "executable": "relase/release-0.4.0-candidate-a/win-unpacked/ReceptionWorkbench.exe",
+    "archive": "relase/release-0.4.0-candidate-a/ReceptionWorkbench-0.4.0.zip",
+    "archive_sha256": "870c10535b7d72bf689902b8d5c6e5e246a6066f8da68a0a675ecd4df19beedc",
+    "files": 173,
+    "bytes": 446430666,
+    "signed": false,
+    "release_signature": "ed25519",
+    "installer": "relase/release-0.4.0-candidate-a/ReceptionWorkbench-Setup-0.4.0.exe",
+    "installer_signed": false,
+    "release_feed": "relase/release-0.4.0-candidate-a/release-feed"
+  },
+  "default_entry_promoted": false,
+  "installed": false
+}
