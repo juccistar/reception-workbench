@@ -10,7 +10,7 @@ from .reception_context import shared_context
 from .model_payload import model_json
 from .photos import with_direct_photo_reads
 from .integrations.generation_metadata import checked_metadata
-from .requirement_media import get_product_source_images
+from .requirement_media import get_reception_source_images
 from .repository import encoded, new_id, now_ms
 from .reply_messages import normalize_reply_output
 from .supplement_attachments import parse_attachment, attachment_rows, public_attachment, MAX_TOTAL, MAX_COUNT
@@ -232,9 +232,8 @@ class ConversationAssistanceMixin:
         with self._lock:
             case = self.repo.get('case', context.get('case_id')) if context.get('case_id') else None
             messages = self.repo.list('message', conversation_id=cid)
-            has_photos = any(get_product_source_images(self.repo, candidate, messages)
-                             for candidate in self.repo.list('case', conversation_id=cid)
-                             if candidate.get('seller_id') == self.seller_id and candidate.get('buyer_id') == context['buyer_id'])
+            owner = self._require('conversation', cid)
+            has_photos = bool(get_reception_source_images(self.repo, owner, case, messages))
         if context.get('unsent_reply') or not has_photos:
             with self._lock:
                 token = self._read_token(facade)

@@ -39,6 +39,18 @@ it('requires a known workspace and holds one consumer lock across accounts', asy
   const releaseB = await store.acquire(b.id);
   await releaseB();
 });
+it('does not let a new environment bypass the original account ledger and hides its account digest', async () => {
+  const { store } = await fixture();
+  const first = await store.create('First'), second = await store.create('Second');
+  await store.bindAccount(first.id, '123456789@c.us');
+  await store.bindAccount(first.id, '123456789@c.us');
+  await expect(store.bindAccount(second.id, '123456789@c.us')).rejects.toThrow('原环境');
+  await expect(store.bindAccount(first.id, '987654321@c.us')).rejects.toThrow('原账号不同');
+  const listed = await store.list();
+  expect(listed[0].account_tail).toBe('6789');
+  expect(Object.keys(listed[0]).sort()).toEqual(['account_tail', 'id', 'label', 'selected']);
+  expect(JSON.stringify(listed)).not.toContain('123456789');
+});
 it('fails closed on malformed metadata', async () => {
   const { root, store } = await fixture();
   await store.create('a');

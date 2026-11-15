@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { LauncherRegistry, listLauncherCandidates, readHistoricalMerchants } from '../src/main/launcher-registry';
+import { LauncherRegistry, listLauncherCandidates, readHistoricalMerchants, assertCompleteLauncherSources } from '../src/main/launcher-registry';
 import { createLauncherActivation } from '../src/main/launcher-activation';
 
 const dirs: string[] = [];
@@ -80,6 +80,23 @@ it('keeps historical hints inactive until the matching verified window completes
     expect(await activation.activate(changed)).toBe(false);
     expect(activations).toBe(1);
   } finally { await close(); }
+});
+it('does not treat corrupted or missing known sources as an empty reception scope', async () => {
+  const { base, directory, index } = await fixture();
+  await expect(assertCompleteLauncherSources(index, [directory, path.join(base, 'unused')])).resolves.toBeUndefined();
+  const [hint] = await readHistoricalMerchants(directory);
+  await index.importHistorical(hint);
+  await writeFile(path.join(directory, 'merchants.json'), '{broken');
+  await expect(assertCompleteLauncherSources(index, [directory])).rejects.toThrow('完整核查');
+  await rm(path.join(directory, 'merchants.json'));
+  expect(await listLauncherCandidates(index, [])).toEqual([]);
+  await expect(assertCompleteLauncherSources(index, [])).rejects.toThrow('完整核查');
+});
+it('blocks reception scope when a declared profile is skipped by read-only discovery', async () => {
+  const { directory, state, index } = await fixture();
+  await rm(path.join(state, 'storage.json'));
+  expect(await readHistoricalMerchants(directory)).toEqual([]);
+  await expect(assertCompleteLauncherSources(index, [directory])).rejects.toThrow('完整核查');
 });
 it('ignores broken records and linked metadata', async () => {
   const { base, directory, root, state, record } = await fixture();

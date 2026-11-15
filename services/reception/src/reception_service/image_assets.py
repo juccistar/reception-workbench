@@ -218,22 +218,40 @@ class _PinnedHTTPS(http.client.HTTPSConnection):
     def __init__(self, host: str, address: str, deadline: float):
         super().__init__(host, 443, timeout=_remaining(deadline), context=ssl.create_default_context())
         self.address = address
+        self.addresses = [address]
         self.deadline = deadline
 
     def connect(self):
-        ip = ipaddress.ip_address(self.address)
-        family = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
-        raw = socket.socket(family, socket.SOCK_STREAM)
-        self.sock = raw
-        raw.settimeout(_remaining(self.deadline))
-        raw.connect((self.address, 443))
-        self.sock = self._context.wrap_socket(raw, server_hostname=self.host, do_handshake_on_connect=False)
-        self.sock.settimeout(_remaining(self.deadline))
-        self.sock.do_handshake()
+        # DNS can return an unreachable IPv6/edge address before a working one.
+        # Retry only connection establishment, against the already validated IPs,
+        # with the same hostname/SNI and the original total deadline.
+        for index, address in enumerate(self.addresses):
+            _remaining(self.deadline)
+            ip = ipaddress.ip_address(address)
+            family = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
+            raw = socket.socket(family, socket.SOCK_STREAM)
+            self.sock = raw
+            try:
+                raw.settimeout(min(3.0, _remaining(self.deadline)))
+                raw.connect((address, 443))
+                self.sock = self._context.wrap_socket(raw, server_hostname=self.host, do_handshake_on_connect=False)
+                self.sock.settimeout(min(3.0, _remaining(self.deadline)))
+                self.sock.do_handshake()
+                self.sock.settimeout(_remaining(self.deadline))
+                return
+            except ssl.SSLError:
+                self.close()
+                raise
+            except OSError:
+                self.close()
+                if index + 1 == len(self.addresses):
+                    raise
+                _remaining(self.deadline)
 
 
 def _transport(host: str, path: str, addresses: list[str], deadline: float) -> tuple[str, bytes]:
     connection = _PinnedHTTPS(host, addresses[0], deadline)
+    connection.addresses = list(dict.fromkeys(addresses))[:8]
 
     def abort():
         sock = connection.sock

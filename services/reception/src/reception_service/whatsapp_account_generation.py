@@ -66,7 +66,7 @@ class AccountGenerationMixin:
             return False
         binding = self.repo.get('binding', self._account_key(job['account_id'], job['chat_id']))
         row = self.repo.get('conversation', self._account_key(job['account_id'], job['chat_id']))
-        return bool(binding and row and not row.get('human_owned') and row.get('pending')
+        return bool(binding and row and not row.get('human_owned') and not row.get('reception_paused') and row.get('pending')
                     and row.get('pending_message_id') == job['pending_message_id']
                     and binding.get('merchant_id') == job['merchant_id']
                     and binding.get('revision') == job['binding_revision']
@@ -88,7 +88,7 @@ class AccountGenerationMixin:
             self._arm_account_schedule()
             return
         for row in sorted(self.repo.list('conversation'), key=lambda row: row.get('last_attempt_at_ms', 0)):
-            if row.get('account_id') != self.account or not row.get('pending') or row.get('human_owned'):
+            if row.get('account_id') != self.account or not row.get('pending') or row.get('human_owned') or row.get('reception_paused'):
                 continue
             chat = row['chat_id']
             binding = self.repo.get('binding', self._account_key(self.account, chat))

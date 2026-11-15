@@ -57,13 +57,51 @@ MODEL_CONTEXT_CHARS = 120_000
 MODEL_REQUEST_CHARS = 140_000
 
 
+# Keep task/settings and selected merchant material ahead of conversation data.
+# Existing messages can retain their prefix when the target or summary changes.
+# Case-selected material remains inside its owning case; arrays are never sorted.
+_MODEL_FIELD_ORDER = (
+    'payload_version', 'task_mode', 'collection_rules', 'knowledge', 'guidance', 'style',
+    'seller_id', 'binding_revision', 'product_context', 'supplier_context',
+    'international_background', 'current_case_ref', 'selected_case_ref',
+    'message_view', 'whatsapp_messages', 'case_catalog', 'case', 'requirements',
+    'supplement', 'continuation', 'followup_context', 'required_fields',
+    'conversation_intent', 'conversation_summary', 'wa_summary', 'message_semantics',
+    'reply_target', 'unsent_reply', 'image_manifest', 'image_transport',
+)
+
+
+def _order_keys(row, fields):
+    if not isinstance(row, dict):
+        return row
+    ordered = {key: row[key] for key in fields if key in row}
+    ordered.update((key, value) for key, value in row.items() if key not in ordered)
+    return ordered
+
+
+def _ordered_model_projection(projected):
+    """Order only the wire projection, leaving the authoritative context untouched."""
+    if not isinstance(projected, dict):
+        return projected
+    ordered = _order_keys(projected, _MODEL_FIELD_ORDER)
+    if isinstance(ordered.get('case_catalog'), list):
+        ordered['case_catalog'] = [
+            _order_keys(row, ('case_ref', 'knowledge', 'guidance', 'style'))
+            for row in ordered['case_catalog']
+        ]
+    if 'international_background' in ordered:
+        ordered['international_background'] = _order_keys(
+            ordered['international_background'], ('messages', 'requirements', 'supplement', 'summary'))
+    return ordered
+
+
 def model_json(context):
     """Budget the actual projection while preserving the full local evidence."""
     try:
         encoder = json.JSONEncoder(ensure_ascii=False, allow_nan=False)
         parts = []
         size = 0
-        for part in encoder.iterencode(project_model_payload(context)):
+        for part in encoder.iterencode(_ordered_model_projection(project_model_payload(context))):
             size += len(part)
             if size > MODEL_CONTEXT_CHARS:
                 raise ServiceError('context_too_long', '模型输入超出单次预算，未截断证据', stage='context')

@@ -22,6 +22,11 @@ class _Parser(argparse.ArgumentParser):
 
 
 def main():
+    # Offline account maintenance has a separate, strict command line and never
+    # constructs either an account service or a merchant workspace service.
+    if any(arg == '--whatsapp-maintenance' or arg.startswith('--whatsapp-maintenance=') for arg in sys.argv[1:]):
+        from .whatsapp_account_maintenance_cli import run_cli
+        raise SystemExit(run_cli(sys.argv[1:]))
     # The checker has its own bounded protocol and must never initialize a workspace.
     if sys.argv[1:] == ['--model-check']:
         from .model_providers.checker import run_check_from_stdin

@@ -271,6 +271,50 @@ class ProductMainImageTests(unittest.TestCase):
         self.assertTrue(all(len(row['data_url']) <= 175_000 for row in preview['images']))
         self.assertEqual(self.service.repo.get('image_asset', asset['sha256']), asset)
 
+    def test_large_transparent_gallery_preview_preserves_alpha(self):
+        import base64
+        import random
+        from reception_service.product_presentation import _gallery_preview
+        image = Image.frombytes('RGBA', (500, 500), random.Random(41).randbytes(1_000_000))
+        output = io.BytesIO()
+        image.save(output, format='PNG')
+        preview = 'data:image/png;base64,' + base64.b64encode(output.getvalue()).decode('ascii')
+        self.assertGreater(len(preview), 175_000)
+        resized = _gallery_preview(preview)
+        self.assertTrue(resized.startswith('data:image/png;base64,'))
+        with Image.open(io.BytesIO(base64.b64decode(resized.split(',')[1]))) as actual:
+            self.assertLess(actual.convert('RGBA').getchannel('A').getextrema()[0], 255)
+
+    def test_changed_product_during_lookup_does_not_store_or_download_old_image(self):
+        self.demand()
+        identifier = self.product()['local_product_id']
+        entered, release = threading.Event(), threading.Event()
+        def lookup(*args, **kwargs):
+            entered.set()
+            release.wait(3)
+            return {'product_id': '1600000000123', 'source': 'product_images',
+                    'images': [{'image_index': 0, 'url': 'https://sc04.alicdn.com/a.png'}]}
+        self.service.mode = 'live'
+        try:
+            with patch.object(self.service.integrations, 'read_product_display', side_effect=lookup), \
+                    patch('reception_service.product_presentation.fetch_image') as fetch:
+                self.service.request_product_images('changed-product', local_product_id=identifier)
+                self.assertTrue(entered.wait(2))
+                with self.service._lock, self.service.repo.transaction():
+                    product = self.service.repo.get('library_product', identifier)
+                    product['product_id'] = '1600000000999'
+                    self.service.repo.put('library_product', identifier, product)
+                release.set()
+                deadline = time.monotonic() + 3
+                while identifier in self.service._product_main_image_active and time.monotonic() < deadline:
+                    threading.Event().wait(.01)
+                self.assertNotIn(identifier, self.service._product_main_image_active)
+                fetch.assert_not_called()
+                self.assertEqual(self.service.get_product_main_image(identifier)['status'], 'not_loaded')
+        finally:
+            release.set()
+            self.service.mode = 'demo'
+
     def test_group_partial_failure_and_legacy_backfill_once(self):
         self.demand()
         identifier = self.product()['local_product_id']

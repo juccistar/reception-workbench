@@ -3,7 +3,7 @@ import io
 import os
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from PIL import Image
 from reception_service import image_assets as assets
@@ -66,6 +66,37 @@ class ImageAssetsTests(unittest.TestCase):
         asset['original_b64'] = base64.b64encode(image_bytes()).decode('ascii')
         with self.assertRaises(assets.ImageAssetError):
             assets.derived_preview(asset)
+
+    def test_unreachable_first_cdn_address_uses_next_validated_address(self):
+        first, second, tls, context = Mock(), Mock(), Mock(), Mock()
+        first.connect.side_effect = OSError('IPv6 route unavailable')
+        context.wrap_socket.return_value = tls
+        deadline = time.monotonic() + 15
+        with patch.object(assets.socket, 'socket', side_effect=[first, second]), \
+                patch.object(assets.ssl, 'create_default_context', return_value=context):
+            connection = assets._PinnedHTTPS('sc04.alicdn.com', '2606:4700:4700::1111', deadline)
+            connection.addresses = ['2606:4700:4700::1111', '93.184.216.34']
+            connection.connect()
+            first.connect.assert_called_once_with(('2606:4700:4700::1111', 443))
+            second.connect.assert_called_once_with(('93.184.216.34', 443))
+            first.close.assert_called_once()
+            context.wrap_socket.assert_called_once_with(second, server_hostname='sc04.alicdn.com', do_handshake_on_connect=False)
+            self.assertIs(connection.sock, tls)
+            self.assertEqual(connection.deadline, deadline)
+            self.assertLessEqual(first.settimeout.call_args.args[0], 3)
+            connection.close()
+
+    def test_certificate_failure_never_falls_back_to_another_cdn_address(self):
+        raw, context = Mock(), Mock()
+        context.wrap_socket.side_effect = assets.ssl.SSLCertVerificationError(1, 'certificate invalid')
+        with patch.object(assets.socket, 'socket', return_value=raw) as sockets, \
+                patch.object(assets.ssl, 'create_default_context', return_value=context):
+            connection = assets._PinnedHTTPS('sc04.alicdn.com', '93.184.216.34', time.monotonic() + 15)
+            connection.addresses = ['93.184.216.34', '1.1.1.1']
+            with self.assertRaises(assets.ssl.SSLCertVerificationError):
+                connection.connect()
+            self.assertEqual(sockets.call_count, 1)
+            raw.close.assert_called_once()
 
     def test_binary_mime_requires_supported_magic_and_complete_image(self):
         for fmt, mime in (("PNG", "image/png"), ("JPEG", "image/jpeg"), ("WEBP", "image/webp")):

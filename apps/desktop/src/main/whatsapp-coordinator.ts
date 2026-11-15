@@ -19,6 +19,7 @@ interface Options {
   invoke: Invoke;
   createHost: (receive: (event: WhatsAppEvent) => void) => Promise<WhatsAppTransportHost>;
   notify: (event: { event: string; data: unknown }) => void;
+  shutdownGraceMs?: number;
 }
 const disconnected: WhatsAppHostInfo = { status: 'disconnected', account_id: '', connection_epoch: '' };
 
@@ -56,7 +57,7 @@ export class WhatsAppCoordinator {
   private readonly sends = new Map<string, Promise<void>>();
   private readonly reconciliations = new Set<Promise<void>>();
   private recovering = false;
-  private settlementFailed = false;
+  private readonly unsettled = new Set<string>();
   private stopping = false;
   private generation = 0;
   private accountProjection = '';
@@ -183,6 +184,7 @@ export class WhatsAppCoordinator {
   }
   private submit(operationId: string): void {
     if (this.sends.has(operationId) || this.stopping) return;
+    let transportStarted = false;
     const task = (async () => {
       await this.observations;
       const host = this.host;
@@ -190,12 +192,19 @@ export class WhatsAppCoordinator {
       // The service freezes and durably marks the operation before revealing its body.
       const intent = await this.options.invoke<FrozenIntent>('_wa_prepare_send', { operation_id: operationId });
       let result: SendResult | undefined;
+      transportStarted = true;
       try { result = await host.sendFrozen(intent); }
       catch { /* Unknown means reconcile this operation; never submit another key. */ }
       await this.enqueue(() => this.options.invoke('_wa_transport_result', { operation_id: intent.operation_id, account_id: intent.account_id, connection_epoch: intent.connection_epoch, status: result ? 'submitted' : 'unknown', ...(result ?? {}) }));
-    })();
+      this.unsettled.delete(operationId);
+    })().catch(error => {
+      this.error();
+      // Rejected preparation never entered Chrome. Its preserved service record
+      // is sufficient for normal shutdown; receipt persistence failures differ.
+      if (transportStarted) { this.unsettled.add(operationId); throw error; }
+    });
     this.sends.set(operationId, task);
-    void task.catch(() => { this.settlementFailed = true; this.error(); }).finally(() => { this.sends.delete(operationId); });
+    void task.catch(() => {}).finally(() => { this.sends.delete(operationId); });
   }
   async reconcile(operationId: string): Promise<void> {
     if (this.stopping || this.recovering) return;
@@ -206,7 +215,10 @@ export class WhatsAppCoordinator {
   private async reconcileExisting(operationId: string): Promise<void> {
     const host = this.host;
     if (!host) return;
-    const record = host.readLedger(operationId);
+    let record = host.readLedger(operationId);
+    if (!record?.result?.message_id) {
+      record = await this.options.invoke<LedgerRecord | undefined>('_wa_get_reconcile_record', { operation_id: operationId }).catch(() => undefined);
+    }
     if (!record?.result?.message_id) return;
     const identity = host.getStatus();
     if (identity.status !== 'ready' || identity.account_id !== record.intent.account_id) return;
@@ -215,7 +227,9 @@ export class WhatsAppCoordinator {
     if (host !== this.host || host.getStatus().account_id !== identity.account_id || host.getStatus().connection_epoch !== identity.connection_epoch) return;
     if (result && result.message_id !== record.result.message_id) throw new Error('WhatsApp 回执来源无效。');
     const evidence = result && result.ack > record.result.ack ? result : record.result;
-    await this.enqueue(() => this.options.invoke('_wa_transport_result', { operation_id: record.intent.operation_id, account_id: record.intent.account_id, connection_epoch: record.intent.connection_epoch, status: 'submitted', ...evidence }));
+    const intent = record.intent;
+    await this.enqueue(() => this.options.invoke('_wa_transport_result', { operation_id: intent.operation_id, account_id: intent.account_id, connection_epoch: intent.connection_epoch, status: 'submitted', ...evidence }));
+    this.unsettled.delete(operationId);
   }
   async rebuild(commit: () => Promise<void>): Promise<WhatsAppHostInfo> {
     if (this.recovering) throw new Error('WhatsApp 登录环境正在重建。');
@@ -235,11 +249,18 @@ export class WhatsAppCoordinator {
     for (const cancel of this.cancelMedia) cancel();
     if (this.creating) await this.creating.catch(() => {});
     await this.enqueue(() => this.options.invoke('set_whatsapp_reception', { enabled: false }));
-    const settled = await Promise.allSettled([...this.sends.values(), ...this.reconciliations]);
-    await this.observations;
-    if (this.settlementFailed || settled.some(result => result.status === 'rejected')) throw new Error('WhatsApp 在途操作收尾未完成，请保留原环境。');
+    const pending = Promise.allSettled([...this.sends.values(), ...this.reconciliations]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    try {
+      await Promise.race([pending, new Promise<void>(resolve => { timer = setTimeout(() => { timedOut = true; resolve(); }, this.options.shutdownGraceMs ?? 10000); })]);
+    } finally { if (timer) clearTimeout(timer); }
     const host = this.host;
-    if (host) { host.setVisible(false); await host.close(); }
+    if (timedOut && host) { host.setVisible(false); await host.close(); }
+    const settled = await pending;
+    await this.observations;
+    if (this.unsettled.size || settled.some(result => result.status === 'rejected')) throw new Error('WhatsApp 在途操作收尾未完成，请保留原环境。');
+    if (!timedOut && host) { host.setVisible(false); await host.close(); }
     await this.observations;
     this.host = null;
     ++this.generation;

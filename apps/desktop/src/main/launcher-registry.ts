@@ -134,6 +134,31 @@ export async function listLauncherCandidates(registry: LauncherRegistry, directo
   return [...merged.values()];
 }
 
+/** Automatic reception needs a complete declared scope, including malformed hints. */
+export async function assertCompleteLauncherSources(registry: LauncherRegistry, directories: string[]): Promise<void> {
+  const records = await registry.list();
+  const key = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
+  const known = new Set(records.map(record => key(record.registry_directory)));
+  const sources = new Map([...directories, ...records.map(record => record.registry_directory)].map(directory => [key(directory), directory]));
+  for (const [sourceKey, directory] of sources) {
+    try {
+      if (!validPath(directory)) throw new Error('invalid');
+      await checkParents(directory);
+      const file = path.join(directory, 'merchants.json');
+      let st;
+      try { st = await lstat(file); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !known.has(sourceKey)) continue; throw error; }
+      if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size > 1024 * 1024) throw new Error('invalid');
+      const bytes = await readFile(file);
+      if (bytes.length > 1024 * 1024) throw new Error('invalid');
+      const data = JSON.parse(bytes.toString('utf8'));
+      if (!data || data.format !== 1 || Object.keys(data).sort().join(',') !== 'format,profiles' || !data.profiles || typeof data.profiles !== 'object' || Array.isArray(data.profiles)) throw new Error('invalid');
+      const rows = await readHistoricalMerchants(directory);
+      if (rows.length !== Object.keys(data.profiles).length) throw new Error('incomplete');
+    } catch { throw new Error('旧商家登记未能完整核查，请保留原目录并重新导入登记；自动接待继续暂停。'); }
+  }
+}
+
 export async function createLauncherRegistry(): Promise<LauncherRegistry> {
   const base = await resolveModelSettingsDirectory(); const directory = path.join(path.dirname(base), 'launcher');
   return new LauncherRegistry(directory, () => acquireMerchantRegistryMutex(directory, 10000));

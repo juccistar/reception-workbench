@@ -27,6 +27,9 @@ export class ServiceClient extends EventEmitter {
     lines.on('line', line => this.receive(line));
     this.child.on('error', () => this.disconnected('服务未能启动，请检查 Python 运行环境或程序文件。'));
     this.child.on('exit', () => this.disconnected(this.closing ? '后台服务已结束。' : '后台服务已断开；未确认的操作需要核查。'));
+    // An error makes RPC unavailable, but only close proves that the owned
+    // process and its stdio have ended (including a failed spawn).
+    this.child.once('close', () => this.resolveExit());
   }
   private receive(line: string) {
     if (line.length > 8 * 1024 * 1024) { this.emit('protocol-error', '后台返回超过通信预算。'); return; }
@@ -47,7 +50,7 @@ export class ServiceClient extends EventEmitter {
     if (this.exited) return;
     this.exited = true;
     for (const item of this.pending.values()) { clearTimeout(item.timer); item.reject(new BackendError('backend_unavailable', message)); }
-    this.pending.clear(); this.resolveExit();
+    this.pending.clear();
     this.emit('event', { event: 'backend.disconnected', data: { message, expected: this.closing } });
   }
   invoke<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
@@ -63,7 +66,7 @@ export class ServiceClient extends EventEmitter {
     });
   }
   async shutdown(): Promise<void> {
-    if (this.exited) return;
+    if (this.exited) return this.exitPromise;
     if (!this.closing) {
       this.closing = true;
       try { await this.invoke('shutdown'); } catch { /* stdin EOF also requests revocation and shutdown */ }

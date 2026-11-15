@@ -41,7 +41,7 @@ from .sync_activity import visible_jobs
 from . import unread
 from .reception_state import ReceptionProjection
 from .business_progress import apply_progress, project_progress
-from .requirement_media import RequirementMediaMixin, get_product_source_images
+from .requirement_media import RequirementMediaMixin, get_reception_source_images
 from .photos import is_photo_placeholder, photo_fingerprint, with_direct_photo_reads
 from .message_photos import MessagePhotosMixin
 from .storage_guard import preflight_workspace
@@ -2434,9 +2434,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                     self._queue_outbox(case)
                 return {'message': '客户已要求停止联系；未调用 AI 或发送'}
             messages = self.repo.list('message', conversation_id=case['conversation_id'])
-            has_photos = any(get_product_source_images(self.repo, candidate, messages)
-                             for candidate in self.repo.list('case', conversation_id=case['conversation_id'])
-                             if candidate.get('seller_id') == self.seller_id and candidate.get('buyer_id') == case['buyer_id'])
+            has_photos = bool(get_reception_source_images(self.repo, conversation, case, messages))
         with self._job_phase(job_id, 'photo_prepare_ms'):
             photo_guard = self._prepare_direct_photos(case['conversation_id'], job_id, epoch, facade) if has_photos else None
         with self._lock:

@@ -2,11 +2,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { WhatsAppCoordinator, validateWhatsAppView, type WhatsAppTransportHost } from '../src/main/whatsapp-coordinator';
 const intent = { operation_id: 'operation', account_id: 'self@c.us', connection_epoch: 'epoch-old', chat_id: 'customer@lid', body: 'Frozen reply' };
-function setup() {
+function setup(shutdownGraceMs = 10000) {
   const invoke = vi.fn(async (method: string, _params?: Record<string, unknown>): Promise<unknown> => method === '_wa_prepare_send' ? intent : method === 'get_whatsapp_state' ? { pending_operations: [] } : {});
   const host = { connect: vi.fn(async () => {}), close: vi.fn(async () => {}), getStatus: vi.fn(() => ({ status: 'ready', account_id: intent.account_id, connection_epoch: intent.connection_epoch })), setVisible: vi.fn(), listChats: vi.fn(async () => [{ chat_id: intent.chat_id, name: 'Synthetic customer' }]), sendFrozen: vi.fn(async () => ({ message_id: 'exact-id', ack: 0 })), readLedger: vi.fn(() => undefined as ReturnType<WhatsAppTransportHost['readLedger']>), lookupMessage: vi.fn(async () => ({ message_id: 'exact-id', ack: 1 })) };
   const notify = vi.fn();
-  const coordinator = new WhatsAppCoordinator({ invoke: invoke as never, createHost: async () => host, notify });
+  const coordinator = new WhatsAppCoordinator({ invoke: invoke as never, createHost: async () => host, notify, shutdownGraceMs });
   return { coordinator, host, invoke, notify };
 }
 const request = { event: 'whatsapp.send.requested', data: { operation_id: intent.operation_id } };
@@ -43,6 +43,42 @@ describe('WhatsApp host/service coordination', () => {
     await coordinator.reconcile(intent.operation_id);
     expect(host.lookupMessage).toHaveBeenCalledTimes(1);
   });
+  it('closes normally after fresh model or merchant preflight rejects before Chrome submission', async () => {
+    const { coordinator, host, invoke } = setup(); await coordinator.connect();
+    invoke.mockImplementation(async method => { if (method === '_wa_prepare_send') throw new Error('source changed'); return {}; });
+    coordinator.handleServiceEvent(request);
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('_wa_prepare_send', expect.anything()));
+    await coordinator.stop();
+    expect(host.sendFrozen).not.toHaveBeenCalled();
+    expect(host.close).toHaveBeenCalledOnce();
+  });
+  it('uses the verified archived receipt when the new native ledger has no copy', async () => {
+    const { coordinator, host, invoke } = setup(); await coordinator.connect();
+    invoke.mockImplementation(async method => method === '_wa_get_reconcile_record' ? { intent, result: { message_id: 'exact-id', ack: 0 } } : {});
+    await coordinator.reconcile(intent.operation_id);
+    expect(host.lookupMessage).toHaveBeenCalledWith('exact-id');
+    expect(host.sendFrozen).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledWith('_wa_transport_result', expect.objectContaining({ operation_id: intent.operation_id, connection_epoch: 'epoch-old', ack: 1 }));
+  });
+  it('allows shutdown after a failed receipt is durably reconciled', async () => {
+    const { coordinator, host, invoke } = setup(); await coordinator.connect();
+    let fail = true;
+    invoke.mockImplementation(async method => {
+      if (method === '_wa_prepare_send') return intent;
+      if (method === '_wa_transport_result' && fail) throw new Error('temporary persistence failure');
+      return {};
+    });
+    coordinator.handleServiceEvent(request);
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('_wa_transport_result', expect.anything()));
+    await expect(coordinator.stop()).rejects.toThrow('收尾未完成');
+    fail = false;
+    // A rejected close can be retried after the exact durable result is restored.
+    await coordinator.connect();
+    host.readLedger.mockReturnValue({ intent, result: { message_id: 'exact-id', ack: 0 } });
+    await coordinator.reconcile(intent.operation_id);
+    await coordinator.stop();
+    expect(host.close).toHaveBeenCalledOnce();
+  });
   it('revokes first, waits for a submitted result, then closes the native connection', async () => {
     const { coordinator, host, invoke } = setup(); await coordinator.connect();
     let finish!: (result: { message_id: string; ack: number }) => void;
@@ -55,6 +91,22 @@ describe('WhatsApp host/service coordination', () => {
     finish({ message_id: 'exact-id', ack: 1 }); await stopped;
     expect(invoke).toHaveBeenCalledWith('_wa_transport_result', expect.objectContaining({ message_id: 'exact-id', ack: 1 }));
     expect(host.close).toHaveBeenCalledTimes(1);
+  });
+  it('closes a stuck transport after grace and persists unknown before shutdown finishes', async () => {
+    const { coordinator, host, invoke } = setup(5); await coordinator.connect();
+    let rejectSend!: (error: Error) => void;
+    host.sendFrozen.mockImplementation(() => new Promise((_resolve, reject) => { rejectSend = reject; }));
+    let exit!: () => void;
+    host.close.mockImplementation(() => new Promise<void>(resolve => { exit = () => { rejectSend(new Error('transport closed')); resolve(); }; }));
+    coordinator.handleServiceEvent(request);
+    await vi.waitFor(() => expect(host.sendFrozen).toHaveBeenCalled());
+    let stopped = false;
+    const closing = coordinator.stop().then(() => { stopped = true; });
+    await vi.waitFor(() => expect(host.close).toHaveBeenCalledOnce());
+    expect(stopped).toBe(false);
+    exit(); await closing;
+    expect(invoke).toHaveBeenCalledWith('_wa_transport_result', expect.objectContaining({ operation_id: intent.operation_id, status: 'unknown' }));
+    expect(host.sendFrozen).toHaveBeenCalledOnce();
   });
   it('waits for the in-flight result and closes the old host before committing a new generation', async () => {
     const { coordinator, host, invoke } = setup(); await coordinator.connect();

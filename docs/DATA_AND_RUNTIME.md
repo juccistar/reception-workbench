@@ -14,6 +14,24 @@
 
 宿主提交账本在`<demo|live>/whatsapp-ledgers/<商家SHA256>/send-ledger/<operation SHA256>.jsonl`，调用SDK前写冻结意图并同步落盘。该固定层级纳入完整备份、恢复及源哈希检查，旧备份不能丢弃既有提交/回执；同消息编号可记录更高ACK。Electron持久partition在host配置目录内，登录会话和Cookie不进入业务备份或发行物；恢复到新业务根后须重新连接账号和明确开启自动接待。Windows深层账本文件在备份I/O使用扩展长度路径，存档相对路径保持固定白名单。
 
+## 0.4.1独立WhatsApp账号目录与离线恢复
+
+0.4.1开发实现从真实Windows用户KnownFolder定位共享根，不继承Accio重定向的同名目录。账号登记位于`<LocalAppData>/ARWData/whatsapp/accounts.json`，只保存环境名、workspace_id、尾号和私有账号摘要，不保存平台令牌。账号业务根为`<LocalAppData>/ARWData/whatsapp/workspaces/<workspace_id>`，账号SQLite实际位于其下`whatsapp-accounts/<workspace_id>/account.sqlite3`；消息、媒体、分段、摘要、绑定、模型尝试与发送记录都归该账号环境。宿主发送账本位于同根`send-ledger/<operation SHA256>.jsonl`，已核验旧商家完整快照保存在`legacy-archives/<内容摘要>`。独立账号库使用records/metadata表，不混入原商家entities/revisions。
+
+Chrome登录目录为`<LocalAppData>/ARWBrowser/wa/<去横杠workspace_id>`，与业务根分开，不复用日常Chrome或旧Electron Cookie。一个Windows用户同时只允许一个受管账号消费者；只有自有Chrome及后台实际结束后才释放锁。异常退出不补造正常关闭证据、不清unknown，重新启动不恢复自动接待授权。
+
+账号离线维护在创建账号或商家服务之前执行。先从托盘正常退出WhatsApp和启动台；备份源必须正常关闭，目标必须为空或不存在。开发环境从仓库根执行，参数中的目录必须是操作者明确选择的账号根或归档，不能指向Chrome profile：
+
+```powershell
+$env:PYTHONPATH = 'services/reception/src'
+.\services\reception\.venv\Scripts\python.exe -B -m reception_service --whatsapp-maintenance backup --source <账号业务根> --destination <空备份目录>
+.\services\reception\.venv\Scripts\python.exe -B -m reception_service --whatsapp-maintenance restore --archive <账号备份目录> --destination <空账号目标>
+```
+
+发行包后台可使用相同的`--whatsapp-maintenance`参数。此入口返回一行受限JSON，不打开商家业务、连接Accio、调用模型或发送客户消息。恢复保全原workspace身份、源归档和unknown，自动接待保持关闭。账号索引和独立商家当前业务根不在此备份内；使用原登记环境恢复时必须保留对应账号索引。不能将一个账号归档改名后当作另一workspace打开，也不能用旧备份覆盖已有新发送历史。恢复到其他位置的结果不会自动改写启动台索引或迁移原根。
+
+合成升级/回退演练已覆盖真实商家完整backup_workspace、旧来源核验、重复导入及账号备份恢复；源库与旧账本哈希保持一致，恢复后旧unknown仍形成围栏。此结果不代表已迁移本机真实数据，实际交付状态见[0.4.1验证记录](verification/0.4.1.json)。
+
 ## 数据目录
 
 按已核验商家选择独立profile：默认registry为`%LOCALAPPDATA%\AlibabaReceptionWorkbenchHost\merchants.json`，state保存在`profiles/<SHA256 seller>/state`。0.2.21新商家的默认业务根改为registry同级`ARWData/<registry规范路径SHA256前16位>/<sellerId>`，避免两次嵌套seller哈希形成过长SQLite日志路径；旧版已登记根、自定义目录与迁移后的根继续以profile的`state/storage.json`为准，不自动搬移。实际位置以设置页显示为准，支持自定义本机目录、完整迁移、备份和恢复。安全备份使用registry同级`ARWBackups/<相同namespace>`；无商家registry的演示环境按state路径生成独立namespace。

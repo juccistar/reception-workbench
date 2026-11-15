@@ -212,7 +212,7 @@ class MessagePhotosMixin:
             original_conversation = copy.deepcopy(self._require('conversation', cid))
             original_chat = self.repo.get('chat_draft', cid)
             original_note = self._supplement(cid)
-            from .requirement_media import get_product_source_images
+            from .requirement_media import get_reception_source_images
             job_case_id = self._require('job', job_id).get('case_id')
             case = self.repo.get('case', job_case_id, {}) if job_case_id else {}
             if any(case.get(key) != original_conversation.get(key) for key in ('seller_id', 'buyer_id', 'conversation_id')):
@@ -220,11 +220,7 @@ class MessagePhotosMixin:
             cases = [c for c in self.repo.list('case', conversation_id=cid)
                      if all(c.get(key) == original_conversation.get(key) for key in ('seller_id', 'buyer_id', 'conversation_id'))]
             def selected_images(rows):
-                selected = {}
-                for candidate_case in cases:
-                    for candidate in get_product_source_images(self.repo, candidate_case, rows):
-                        selected[candidate['message_id']] = candidate
-                return list(selected.values())
+                return get_reception_source_images(self.repo, original_conversation, case, rows)
             candidates = copy.deepcopy(selected_images(original_messages))
             seconds = self.settings.get('image_prepare_seconds', 60)
             seconds = min(seconds, 60) if type(seconds) is int and seconds >= 1 else 60

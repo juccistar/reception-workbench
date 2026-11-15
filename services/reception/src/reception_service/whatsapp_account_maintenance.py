@@ -12,7 +12,7 @@ import time
 
 from .storage_guard import StorageError
 from .workspace_lock import WorkspaceLock, reject_links, LOCK, MARKER
-from .workspace_backup import backup_workspace, _hash, _target, _separate, _publish, _unique, _normal_path, _validate_archive
+from .workspace_backup import backup_workspace, _hash, _target, _separate, _publish, _unique, _normal_path, _long_path, _validate_archive
 
 MAX_FILES = 100000
 MAX_BYTES = 4 * 1024 * 1024 * 1024
@@ -28,6 +28,7 @@ def _digest(value):
 
 
 def _inventory(root, *, archive=False):
+    root = _long_path(root)
     entries = []
     total = 0
     for directory, dirs, files in os.walk(root, followlinks=False):
@@ -68,6 +69,7 @@ def _inventory(root, *, archive=False):
 
 
 def _validate(root):
+    root = _long_path(root)
     reject_links(root)
     manifest = json.loads((root / MANIFEST).read_text(encoding='utf-8'), object_pairs_hook=_unique)
     if not isinstance(manifest, dict) or set(manifest) != {'format', 'files'} or manifest['format'] != 'wa-account-backup-v1':
@@ -92,9 +94,9 @@ def backup_account(root, destination):
         stage = Path(tempfile.mkdtemp(prefix='.wa-backup-', dir=target.parent))
         try:
             for item in before:
-                dest = stage / item['path']
+                dest = _long_path(stage / item['path'])
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(root / item['path'], dest)
+                shutil.copyfile(_long_path(root / item['path']), dest)
             manifest = {'format': 'wa-account-backup-v1', 'files': before}
             (stage / MANIFEST).write_bytes(_canonical(manifest))
             if _inventory(root) != before:
@@ -103,7 +105,7 @@ def backup_account(root, destination):
             _publish(stage, target)
         finally:
             if stage.exists():
-                shutil.rmtree(stage)
+                shutil.rmtree(_long_path(stage))
         return manifest
     finally:
         lock.release()
@@ -117,9 +119,9 @@ def restore_account(archive, destination):
     stage = Path(tempfile.mkdtemp(prefix='.wa-restore-', dir=target.parent))
     try:
         for item in manifest['files']:
-            dest = stage / item['path']
+            dest = _long_path(stage / item['path'])
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source / item['path'], dest)
+            shutil.copyfile(_long_path(source / item['path']), dest)
         if _inventory(stage) != manifest['files'] or _validate(source) != manifest:
             raise StorageError('Account archive changed during restore')
         with WorkspaceLock(stage) as lock:
@@ -127,11 +129,12 @@ def restore_account(archive, destination):
         _publish(stage, target)
     finally:
         if stage.exists():
-            shutil.rmtree(stage)
+            shutil.rmtree(_long_path(stage))
     return {'destination': str(target), 'reception_enabled': False}
 
 
 def _legacy_operations(snapshot, seller, account):
+    snapshot = _long_path(snapshot)
     seller_hash = hashlib.sha256(seller.encode('utf-8')).hexdigest()
     dbpath = snapshot / 'live' / 'sellers' / seller_hash / 'workspace.sqlite3'
     if not dbpath.is_file():
@@ -178,6 +181,7 @@ def _legacy_operations(snapshot, seller, account):
                         raise StorageError('Invalid ledger result')
                     if op.get('message_id') and op['message_id'] != result['message_id']:
                         raise StorageError('Ledger result conflict')
+                    op = dict(op, legacy_receipt={'message_id': result['message_id'], 'ack': result['ack']})
             elif op.get('submission_started') is True:
                 raise StorageError('Submitted operation ledger missing')
             if op['status'] in ('prepared', 'sending', 'unknown'):
@@ -223,14 +227,14 @@ def verify_legacy_sources(account_id, sources, archive_directory):
                 if [{'path': e['path'], 'sha256': e['sha256'], 'size': e['size']} for e in old['files']] != files:
                     raise StorageError('Archived source conflict')
             else:
-                os.rename(snapshot, dest)
+                os.rename(_long_path(snapshot), _long_path(dest))
             inventories.append({'source_id': sid, 'archive_hash': digest})
             result.update(status='verified', pending_operations=ops)
         except (StorageError, OSError, ValueError, TypeError, KeyError, sqlite3.Error):
             pass
         finally:
             if snapshot is not None and snapshot.exists():
-                shutil.rmtree(snapshot)
+                shutil.rmtree(_long_path(snapshot))
     by_op = {}
     for result in results:
         for op in result['pending_operations']:

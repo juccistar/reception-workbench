@@ -101,6 +101,34 @@ def get_product_source_images(repo, case, messages):
     return images if len(images) == 1 and images[0].get('role') == 'buyer' and len(cases) == 1 and not competing else []
 
 
+def get_reception_source_images(repo, owner, case, messages):
+    """Select same-conversation originals for the selected/current reception case."""
+    owned = [m for m in messages if isinstance(m, dict) and _owned(m, owner)]
+    cases = [c for c in repo.list('case', conversation_id=owner['conversation_id']) if _owned(c, owner)]
+    if not case:
+        current_id = owner.get('case_id')
+        case = next((c for c in cases if c.get('case_id') == current_id), None)
+    if case and _owned(case, owner):
+        selected = {m['message_id']: m for m in get_product_source_images(repo, case, owned)}
+        requirements = case.get('requirements') or {}
+        evidence = set(_quote_ids(requirements))
+        settings = repo.get('requirement_media', case['case_id'], {})
+        bindings = settings.get('sources', {}) if _owned(settings, case) else {}
+        for message in owned:
+            mid = message.get('message_id')
+            binding = bindings.get(mid, {}) if isinstance(bindings, dict) else {}
+            disabled = binding.get('enabled') is False and binding.get('source_version') == photo_version(message)
+            if message.get('role') == 'buyer' and has_photo(message) and mid in evidence and not disabled:
+                selected[mid] = message
+        return list(selected.values())
+    if cases:
+        return []
+    from .reception_context import dialogue_window
+    recent, _ = dialogue_window(sorted(owned, key=lambda m: (m.get('timestamp_ms') or -1, m['message_id'])), {})
+    images = [m for m in recent if m.get('role') in ('buyer', 'seller') and has_photo(m)]
+    return images if len(images) == 1 and images[0].get('role') == 'buyer' else []
+
+
 def _valid_product_url(url):
     try:
         parts = urlsplit(url)

@@ -26,8 +26,18 @@ def _gallery_preview(data_url):
             return None
         with Image.open(io.BytesIO(base64.b64decode(encoded_image, validate=True))) as source:
             source.load()
-            image = source.convert('RGB')
+            image = source.convert('RGBA') if 'A' in source.getbands() else source.convert('RGB')
         image.thumbnail((512, 512), Image.Resampling.LANCZOS)
+        if image.mode == 'RGBA' and image.getchannel('A').getextrema()[0] < 255:
+            while True:
+                output = io.BytesIO()
+                image.save(output, format='PNG', optimize=True)
+                if output.tell() <= 128 * 1024:
+                    return 'data:image/png;base64,' + base64.b64encode(output.getvalue()).decode('ascii')
+                if max(image.size) <= 1:
+                    return None
+                image.thumbnail((max(1, image.width * 3 // 4), max(1, image.height * 3 // 4)), Image.Resampling.LANCZOS)
+        image = image.convert('RGB')
         for quality in (80, 60, 40):
             output = io.BytesIO()
             image.save(output, format='JPEG', quality=quality, optimize=True)
@@ -277,11 +287,14 @@ class ProductPresentationMixin:
                 raise ServiceError('product_display_invalid_response', '商品图片响应结构无法识别', stage='product_metadata')
             if result.get('source') == 'unavailable':
                 raise ServiceError('product_display_invalid_response', '商品图片响应结构无法识别', stage='product_metadata')
-            if rows:
-                with self._lock, repo.transaction():
-                    record = repo.get('product_main_image', identifier) or {}
-                    if self.repo is not repo or record.get('job_id') != job_id:
-                        return
+            with self._lock, repo.transaction():
+                record = repo.get('product_main_image', identifier) or {}
+                current = repo.get('library_product', identifier) or {}
+                if (self.repo is not repo or record.get('job_id') != job_id
+                        or current.get('seller_id') != product.get('seller_id')
+                        or current.get('product_id') != product.get('product_id')):
+                    return
+                if rows:
                     record['stage'] = 'download'
                     repo.put('product_main_image', identifier, record)
             downloaded = []
@@ -302,7 +315,10 @@ class ProductPresentationMixin:
                 downloaded.append((entry, source_url, asset))
             with self._lock, repo.transaction():
                 record = repo.get('product_main_image', identifier) or {}
-                if self.repo is not repo or record.get('job_id') != job_id:
+                current = repo.get('library_product', identifier) or {}
+                if (self.repo is not repo or record.get('job_id') != job_id
+                        or current.get('seller_id') != product.get('seller_id')
+                        or current.get('product_id') != product.get('product_id')):
                     return
                 cancelled = self._closing or self._stop.is_set() or self._requirement_media_stopped
                 if cancelled:
@@ -351,7 +367,10 @@ class ProductPresentationMixin:
         except Exception as exc:
             with self._lock, repo.transaction():
                 record = repo.get('product_main_image', identifier) or {}
-                if self.repo is repo and record.get('job_id') == job_id:
+                current = repo.get('library_product', identifier) or {}
+                if (self.repo is repo and record.get('job_id') == job_id
+                        and current.get('seller_id') == product.get('seller_id')
+                        and current.get('product_id') == product.get('product_id')):
                     record.update(status=('unknown' if self._stop.is_set() else
                                           'ready' if record.get('asset_sha256') and repo.get('image_asset', record['asset_sha256']) else 'failed'),
                                   message='商品主图读取失败，客户图片及接待不受影响',

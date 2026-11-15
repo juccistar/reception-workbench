@@ -85,13 +85,10 @@ def shared_context(repo, owner, case, *, task_mode, continuation=None, settings=
     raw = [m for m in repo.list('message', conversation_id=owner['conversation_id'])
            if all(m.get(key) == owner.get(key) for key in ('seller_id', 'buyer_id', 'conversation_id'))]
     messages = sorted((with_photo_notice(m) for m in raw), key=lambda m: (m.get('timestamp_ms') or -1, m['message_id']))
-    from .requirement_media import get_product_source_images
+    from .requirement_media import get_reception_source_images
     from .requirement_changes import case_catalog
     catalogue = case_catalog(repo, owner) if task_mode != 'polish' else []
-    sources = []
-    for entry in catalogue:
-        candidate = repo.get('case', entry['case_id'])
-        sources.extend(get_product_source_images(repo, candidate, raw))
+    sources = get_reception_source_images(repo, owner, case, raw) if task_mode != 'polish' else []
     source_ids = {m['message_id'] for m in sources}
     recent, historical = dialogue_window(messages, {'selected': case or {}, 'catalogue': catalogue}, continuation, source_ids)
     policies = select_policy_inputs(repo.list('policy'), case or {'facts': {}, 'procurement_key': ''})

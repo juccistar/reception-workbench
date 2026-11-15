@@ -30,6 +30,7 @@ export interface WhatsAppAccountBinding {
 }
 export interface WhatsAppAccountConversation extends WhatsAppContact {
   human_owned: boolean;
+  reception_paused?: boolean;
   pending: boolean;
   last_message_at?: number;
   error_code?: string | null;
@@ -88,6 +89,57 @@ export interface WhatsAppReceptionInput extends WhatsAppIdentityInput {
 export interface WhatsAppTakeoverInput extends WhatsAppIdentityInput {
   chat_id: string;
   enabled: boolean;
+}
+export interface WhatsAppWritebackSource {
+  account_id: string;
+  chat_id: string;
+  message_ids: string[];
+  source_versions: Record<string, string>;
+  segment_id: string;
+  merchant_id: string;
+  binding_revision: number;
+  content_sha256: string;
+}
+export interface WhatsAppWritebackTarget {
+  destination: 'merchant_workbench' | 'international_platform';
+  merchant_id: string;
+  seller_id: string;
+  data_root: string;
+  conversation_id: string;
+  object_kind: 'summary' | 'requirement_changes' | 'note' | 'message_reference';
+  expected_revision: string;
+}
+/** Reserved contract. No preview, confirmation or mutation is enabled in 0.4.1. */
+export interface WhatsAppWritebackPlanRequest {
+  format: 'wa-writeback-plan-v1';
+  source: WhatsAppWritebackSource;
+  target: WhatsAppWritebackTarget;
+  payload: Record<string, unknown>;
+  payload_sha256: string;
+  idempotency_key: string;
+}
+export interface WhatsAppWritebackPreview {
+  format: 'wa-writeback-preview-v1';
+  preview_id: string;
+  source_sha256: string;
+  target_revision: string;
+  payload_sha256: string;
+  expires_at_ms: number;
+}
+export interface WhatsAppWritebackSubmit {
+  format: 'wa-writeback-submit-v1';
+  preview_id: string;
+  native_approval_id: string;
+  payload_sha256: string;
+  idempotency_key: string;
+}
+export interface WhatsAppWritebackReceipt {
+  format: 'wa-writeback-receipt-v1';
+  operation_id: string;
+  destination: WhatsAppWritebackTarget['destination'];
+  status: 'unavailable' | 'prepared' | 'unknown' | 'accepted' | 'rejected';
+  target_object_id: string | null;
+  evidence_id: string | null;
 }
 export interface WhatsAppWritebackCapabilities {
   format: 'wa-writeback-capabilities-v1';

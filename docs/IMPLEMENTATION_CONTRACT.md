@@ -2,6 +2,22 @@
 
 本文维护0.4.0源码的进程、接口和业务约束；统一启动台、全局多API及同轮图文调用见[0.4.0方案](0.4.0开发方案.md)，实际实施、构建及公开状态见[0.4.0记录](verification/0.4.0.json)。真人聊天式自动分条、单条人工输入及独立发送记录沿用[0.3.21方案](0.3.21开发方案.md)和[发布说明](0.3.21发布说明.md)。沿用0.3.20分条同步等待、防重及登录恢复基础。需求增量、多事项及原图交互继续沿用0.3.16基础。0.3.13的需求、摘要、产品及采购契约继续沿用，见[基础开发说明](0.3.13开发说明.md)。精确字段同时核对[TypeScript契约](../apps/desktop/src/shared/api.ts)、[服务分派](../services/reception/src/reception_service/service.py)及对应测试。历史版本字段不能覆盖当前实现。
 
+## 0.4.1开发新增契约
+
+实际构建和发行状态见[0.4.1记录](verification/0.4.1.json)。本节约束新账号入口；下述旧版本内嵌WhatsApp条目仅用于原账本和历史行为说明，不能重新启用商家窗口的旧发送通道。
+
+普通启动台首页不启动商家或WhatsApp后台。账号管理通过独立冻结的window.launcher和明确的launcher:wa:* IPC调用，公开类型见[whatsapp-account.ts](../apps/desktop/src/shared/whatsapp-account.ts)。`--whatsapp-account --workspace-id <UUID> --data-dir <账号根>`只创建独立账号服务，不伪造seller、不构造Accio商家执行器。真实系统Google Chrome以专用profile、可见窗口和私有pipe运行，不开放调试TCP端口；账号持有者核验完成之前不读取联系人和历史。商家工作台不再创建内嵌WA入口。
+
+账号与workspace的私有摘要映射防止同号换环境绕过原账本。同一Windows用户持有单消费者锁；关闭先撤新任务资格，保全在途结果并关闭明确自有Chrome，等待模型同步、上下文和后台实际结束后释放。后台错误使RPC立即不可用，子进程close才构成释放所有权的结束证据。异常关闭不伪造clean标记。
+
+默认商家只在首条有效实时买家消息时冻结；历史、联系人metadata和人工外发不提前选择。显式绑定/解绑优先。切换原子生成新segment及binding_revision，清除旧段pending并设置独立reception_paused；恢复必须明确操作。旧prepared/sending/unknown不因切换清除，待切换意向在原操作结果明确后才能生效。
+
+提交正文前，账号服务先持久写submission_started和unknown；宿主另在SDK调用前持久冻结意图。accepted需要确切平台消息编号和ACK≥1，unknown仅核查原操作。后台退出后的本地SDK结果可以沿原宿主账本保全，不伪称已写回账号库。真实商家背景经私有双向HMAC通道获得，绑定seller、实际根、实例、账号、聊天及绑定修订；发送前重新取得短租约并核对语义修订，不能用过期缓存继续发送。接待模型变化撤权，独立翻译配置变化不撤销无关接待。
+
+消息图片与业务补充原图同轮提交。选图、准备和上下文使用同一当前事项/会话选源结果；有效定制等需求字段也可引用买家图，无事项只允许当前窗口无竞争的单张买家图。明确禁用、未被买家引用的商家图片、其他客户和独立商品展示图排除。原生P05-A只随实际编码的附件追加，正文沿用审核稿；聊天记录和附件按确切来源在单次请求去重。上下文排序只在最终JSON对象键上调整，保留正文、数组、角色、语义指纹、预算及原图；既有聊天记录先于本轮目标和滚动摘要。
+
+反写的版本化来源、目标、预览、提交及回执DTO已预留，能力固定available=false、enabled=false。私有预览/提交入口在关闭状态直接拒绝，不创建任务、不改库、不调用国际站。离线账号维护通过独立`--whatsapp-maintenance backup|restore`分派，在任何服务实例化前执行，保全unknown与源档案，恢复至空目标后自动接待关闭；目录和范围见[数据与运行](DATA_AND_RUNTIME.md)。
+
 ## 1. 进程与协议
 
 Electron main管理窗口、受限IPC、原生确认、后台及离线存储维护；preload只暴露冻结window.reception。renderer没有Node、SQLite、shell、任意文件、令牌或通用URL打开接口。Python 3.12服务经自有stdin/stdout UTF-8 JSON Lines通信，不开本地HTTP业务端口，不在运行时导入旧Qt工程。

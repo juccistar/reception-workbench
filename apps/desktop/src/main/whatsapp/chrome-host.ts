@@ -24,6 +24,7 @@ export interface ChromeWhatsAppHostOptions {
   /** Test seams; production always resolves and validates the installed Chrome. */
   resolveExecutable?: () => Promise<string>;
   loadSdk?: () => Promise<Sdk>;
+  shutdownGraceMs?: number;
 }
 
 async function noLinks(file: string): Promise<void> {
@@ -68,6 +69,10 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
   private closing?: Promise<void>;
   private closed = false;
   private tasks = new Set<Promise<unknown>>();
+  private readonly lifetime = new AbortController();
+  private browserAssigned?: Promise<void>;
+  private signalBrowserAssigned?: () => void;
+  private browserListeners: Array<() => void> = [];
   private pending = new Map<string, number>();
   private outgoing: Array<{ account: string; epoch: string; message: WhatsAppMessage }> = [];
   constructor(private readonly options: ChromeWhatsAppHostOptions) {
@@ -82,9 +87,16 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
     return this.current(generation) && this.status.status === 'ready' && !!account && !!epoch && this.status.account_id === account && this.status.connection_epoch === epoch;
   }
   private track<T>(work: Promise<T>): Promise<T> {
-    this.tasks.add(work);
-    void work.then(() => this.tasks.delete(work), () => this.tasks.delete(work));
-    return work;
+    const signal = this.lifetime.signal;
+    const wrapped = new Promise<T>((resolve, reject) => {
+      const abort = () => reject(new Error('WhatsApp transport closed'));
+      if (signal.aborted) { abort(); return; }
+      signal.addEventListener('abort', abort, { once: true });
+      work.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort)).catch(() => {});
+    });
+    this.tasks.add(wrapped);
+    void wrapped.then(() => this.tasks.delete(wrapped), () => this.tasks.delete(wrapped));
+    return wrapped;
   }
   private retire(generation: number, status: 'error' | 'disconnected', closed = false, errorCode: WhatsAppHostInfo['error_code'] = 'sdk_error'): void {
     if (!this.current(generation)) return;
@@ -139,22 +151,28 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
     try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.hostname === 'web.whatsapp.com'; } catch { return false; }
   }
   private watchBrowser(client: any, generation: number): void {
+    if (client.__arwReleased) return;
     const browser = client.pupBrowser, page = client.pupPage;
     if (browser && !(browser as any).__arwWatched) {
       (browser as any).__arwWatched = true;
-      browser.once('disconnected', () => this.retire(generation, 'disconnected', true));
+      const disconnected = () => this.retire(generation, 'disconnected', true);
+      browser.once('disconnected', disconnected);
+      this.browserListeners.push(() => browser.removeListener('disconnected', disconnected));
     }
     if (page && !(page as any).__arwWatched) {
       (page as any).__arwWatched = true;
-      page.once('close', () => {
+      const closed = () => {
         if (this.current(generation)) this.retire(generation, 'disconnected', true);
         else if (!this.closed && this.client === client && this.status.page_state !== 'closed') this.update(this.status.status, { account_id: '', connection_epoch: '', page_state: 'closed' });
-      });
-      page.on('framenavigated', (frame: any) => {
+      };
+      const navigated = (frame: any) => {
         if (!this.current(generation) || frame.parentFrame() !== null) return;
         const url = frame.url();
         if (url !== 'about:blank' && !this.allowedPage(url)) this.retire(generation, 'error');
-      });
+      };
+      page.once('close', closed);
+      page.on('framenavigated', navigated);
+      this.browserListeners.push(() => { page.removeListener('close', closed); page.removeListener('framenavigated', navigated); });
     }
   }
   async connect(): Promise<void> {
@@ -175,24 +193,18 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
         const executablePath = await (this.options.resolveExecutable ?? resolveGoogleChrome)();
         const sdk = await (this.options.loadSdk ?? (async () => ({ Client: require('whatsapp-web.js').Client })))();
         if (!this.current(generation)) return;
-        const client = this.client = new sdk.Client({ userAgent: false, puppeteer: { executablePath, headless: false, pipe: true, userDataDir: this.options.profileDirectory, defaultViewport: null }, webVersionCache: { type: 'none' } });
+        const browserEnv: NodeJS.ProcessEnv = {};
+        for (const [key, value] of Object.entries(process.env)) if (/^(SystemRoot|WINDIR|SystemDrive|PATH|PATHEXT|ComSpec|TEMP|TMP|USERPROFILE|LOCALAPPDATA|APPDATA|ProgramFiles|ProgramFiles\(x86\)|ProgramW6432)$/i.test(key)) browserEnv[key] = value;
+        const client = this.client = new sdk.Client({ userAgent: false, puppeteer: { executablePath, headless: false, pipe: true, userDataDir: this.options.profileDirectory, defaultViewport: null, env: browserEnv }, webVersionCache: { type: 'none' } });
         this.observe(client, generation);
+        this.browserAssigned = new Promise(resolve => { this.signalBrowserAssigned = resolve; });
         // Observe the assignments themselves so a close cannot slip through a polling gap.
         for (const key of ['pupBrowser', 'pupPage']) {
           let value = client[key];
-          Object.defineProperty(client, key, { configurable: true, enumerable: true, get: () => value, set: next => { value = next; this.watchBrowser(client, generation); } });
+          Object.defineProperty(client, key, { configurable: true, enumerable: true, get: () => value, set: next => { value = next; if (key === 'pupBrowser' && next) this.signalBrowserAssigned?.(); this.watchBrowser(client, generation); } });
         }
         this.watchBrowser(client, generation);
-        // A close can race the SDK launching its browser.
-        const watch = setInterval(() => {
-          this.watchBrowser(client, generation);
-          if (this.closed && client.pupBrowser && !client.__arwCloseStarted) {
-            client.__arwCloseStarted = true;
-            void client.pupBrowser.close().catch(() => {});
-          }
-        }, 25);
-        watch.unref?.();
-        try { await client.initialize(); } finally { clearInterval(watch); this.watchBrowser(client, generation); }
+        try { await client.initialize(); } finally { this.watchBrowser(client, generation); }
       } catch (error) { this.retire(generation, 'error', !this.client?.pupPage || this.client.pupPage.isClosed(), error instanceof Error && error.message === 'chrome_unavailable' ? 'browser_unsupported' : 'sdk_error'); }
     })();
     this.initializing = task;
@@ -224,6 +236,7 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
       try {
         if (!this.active(generation, account, epoch)) throw new Error('WhatsApp identity changed');
         const message = await this.client.sendMessage(intent.chat_id, intent.body, { sendSeen: false });
+        if (this.lifetime.signal.aborted) throw new Error('WhatsApp transport closed');
         const id = serial(message?.id);
         if (!id) throw new Error('WhatsApp send outcome unknown');
         const result = { message_id: id, ack: typeof message.ack === 'number' ? message.ack : 0 };
@@ -285,18 +298,24 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
   }
   private async release(): Promise<void> {
     const client = this.client;
-    if (!client) { await this.initializing; return; }
+    if (!client) return;
     client.removeAllListeners();
     try { client._injectAbort?.abort(); } catch { /* best effort */ }
-    if (!client.pupBrowser) await this.initializing;
+    if (!client.pupBrowser && this.initializing) await Promise.race([this.initializing, this.browserAssigned!]);
     const browser = client.pupBrowser;
     if (browser) {
-      const process = browser.process?.();
-      const exited = process && process.exitCode === null && process.signalCode === null ? new Promise<void>(resolve => process.once('exit', () => resolve())) : Promise.resolve();
-      await browser.close();
-      await exited;
+      const child = browser.process?.();
+      if (child && child.exitCode === null && child.signalCode === null) {
+        let onExit!: () => void;
+        const exited = new Promise<void>(resolve => { onExit = resolve; child.once('exit', onExit); });
+        try {
+          const closing = Promise.resolve().then(() => browser.close());
+          await Promise.race([exited, closing.then(() => exited)]);
+        } finally { child.removeListener('exit', onExit); }
+      } else if (!child) await browser.close();
     }
-    await this.initializing;
+    client.__arwReleased = true;
+    for (const remove of this.browserListeners.splice(0)) remove();
     if (this.client === client) this.client = undefined;
   }
   async close(): Promise<void> {
@@ -304,9 +323,13 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
     this.closed = true; ++this.generation;
     this.update('disconnected', { account_id: '', connection_epoch: '', page_state: 'closed' });
     this.closing = (async () => {
-      await Promise.allSettled([...this.tasks]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([Promise.allSettled([...this.tasks]), new Promise<void>(resolve => { timer = setTimeout(resolve, this.options.shutdownGraceMs ?? 10000); })]);
+      } finally { if (timer) clearTimeout(timer); }
       await this.connecting?.catch(() => {});
       await this.release();
+      this.lifetime.abort();
     })();
     return this.closing;
   }

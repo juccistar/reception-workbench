@@ -16,6 +16,7 @@ interface Options {
   store: WhatsAppAccountStore;
   broker: Broker;
   merchants(): Promise<LauncherMerchant[]>;
+  verifyDeclaredScope?(): Promise<void>;
   available(record: LauncherMerchant): Promise<boolean>;
   service(workspaceId: string, directory: string): ServiceClient;
   models(invoke: (method: string, params: Record<string, unknown>) => Promise<unknown>): Promise<ModelConfigHost>;
@@ -29,11 +30,13 @@ interface Active {
   coordinator: WhatsAppCoordinator;
   chrome: ChromeWhatsAppHost | null;
   models: ModelConfigHost;
+  modelTasks: Set<Promise<void>>;
   release(): Promise<void>;
   timer: ReturnType<typeof setInterval>;
   closing: boolean;
   contexts: Map<string, Promise<void>>;
   legacyDeclaration: string | null;
+  emergencyClose?: Promise<void>;
 }
 const uuid = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 const text = (value: unknown): value is string => typeof value === 'string' && !!value.trim() && value.length <= 300 && !/[\x00-\x1f\x7f]/.test(value);
@@ -51,6 +54,7 @@ export class WhatsAppAccountManager {
   private starting: Promise<Active> | null = null;
   private mutations: Promise<unknown> = Promise.resolve();
   private stopping = false;
+  private cleanup: Promise<void> | null = null;
   constructor(private readonly options: Options) {}
   private exclusive<T>(action: () => Promise<T>): Promise<T> {
     const result = this.mutations.then(action);
@@ -63,6 +67,11 @@ export class WhatsAppAccountManager {
     if (this.stopping) throw new Error('WhatsApp 正在退出，请等待完成。');
     const selected = await this.options.store.selected();
     if (!selected) throw new Error('请先创建并选择 WhatsApp 账号环境。');
+    if (this.starting) {
+      const active = await this.starting;
+      if (active.workspaceId !== selected.id || active.closing || active.backend.hasExited()) throw new Error('账号后台不可用，请先关闭当前连接后重试。');
+      return active;
+    }
     if (this.active) {
       if (this.active.workspaceId !== selected.id || this.active.closing || this.active.backend.hasExited()) throw new Error('账号后台不可用，请先关闭当前连接后重试。');
       return this.active;
@@ -73,22 +82,34 @@ export class WhatsAppAccountManager {
   private async start(workspaceId: string): Promise<Active> {
     const release = await this.options.store.acquire(workspaceId);
     let backend: ServiceClient | undefined;
+    let ownedActive: Active | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
     try {
       const directory = await this.options.store.directory(workspaceId);
       backend = this.options.service(workspaceId, directory);
       const service = backend;
-      const models = await this.options.models((method, params) => service.invoke(method, params));
+      const models = await this.options.models((method, params) => {
+        if (ownedActive?.closing) return Promise.reject(new Error('WhatsApp 正在关闭。'));
+        return service.invoke(method, params);
+      });
       let active: Active;
       const invoke = async <T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> => {
         if (method === '_wa_prepare_send') {
           if (active.closing) throw new Error('WhatsApp 正在关闭。');
           await this.requireLegacyDeclaration(active);
-          await models.synchronize();
+          await this.synchronizeModels(active);
           const request = await service.invoke<WhatsAppContextRequest>('_wa_get_context_request', { operation_id: params.operation_id });
           await this.supplyContext(active, request);
         }
-        return service.invoke<T>(method, params);
+        // After process death there is no live grant to revoke and no service to
+        // receive a result. The frozen service intent and native ledger remain
+        // the evidence for reconciliation on the next start.
+        if (service.hasExited() && (method === 'set_whatsapp_reception' || method === '_wa_transport_result')) return undefined as T;
+        try { return await service.invoke<T>(method, params); }
+        catch (error) {
+          if (service.hasExited() && (method === 'set_whatsapp_reception' || method === '_wa_transport_result')) return undefined as T;
+          throw error;
+        }
       };
       const coordinator = new WhatsAppCoordinator({ invoke,
         notify: value => this.notify(value),
@@ -102,34 +123,47 @@ export class WhatsAppAccountManager {
       timer = setInterval(() => {
         if (syncing || active.closing) return;
         syncing = true;
-        void models.synchronize().catch(async () => {
-          await service.invoke('set_whatsapp_reception', { enabled: false }).catch(() => {});
+        void this.synchronizeModels(active).catch(async () => {
+          if (!active.closing) await service.invoke('set_whatsapp_reception', { enabled: false }).catch(() => {});
         }).finally(() => { syncing = false; });
       }, 3000);
       timer.unref?.();
-      active = { workspaceId, backend: service, coordinator, chrome: null, models, release, timer, closing: false, contexts: new Map(), legacyDeclaration: null };
+      active = { workspaceId, backend: service, coordinator, chrome: null, models, modelTasks: new Set(), release, timer, closing: false, contexts: new Map(), legacyDeclaration: null };
+      this.active = ownedActive = active;
       service.on('event', (value: ServiceEvent) => {
+        if (value.event === 'backend.disconnected') {
+          active.closing = true;
+          clearInterval(active.timer);
+          if (active.chrome && !active.emergencyClose) {
+            active.emergencyClose = active.chrome.close();
+            void active.emergencyClose.catch(() => {});
+          }
+          void this.cleanupActive(active).catch(() => {});
+          this.notify(value);
+          return;
+        }
+        if (active.closing) return;
         if (value.event === 'whatsapp.context.requested') {
           const request = value.data as WhatsAppContextRequest;
           void this.supplyContext(active, request).catch(() => {});
           return;
         }
         if (coordinator.handleServiceEvent(value)) return;
-        if (value.event === 'backend.disconnected') {
-          void active.chrome?.close().catch(() => {});
-        }
         if (!value.event.startsWith('whatsapp.') && value.event !== 'state.changed' && value.event !== 'backend.disconnected') return;
         this.notify(value);
       });
       await service.invoke('get_whatsapp_state');
-      await models.synchronize();
-      if (this.stopping) throw new Error('WhatsApp 正在退出。');
-      this.active = active;
+      await this.synchronizeModels(active);
+      if (this.stopping || active.closing || service.hasExited()) throw new Error('WhatsApp 正在退出。');
       return active;
     } catch (error) {
       if (timer) clearInterval(timer);
-      await backend?.shutdown().catch(() => {});
-      await release();
+      if (ownedActive) {
+        if (this.active === ownedActive) await this.cleanupActive(ownedActive);
+      } else {
+        await backend?.shutdown();
+        await release();
+      }
       throw error;
     }
   }
@@ -141,7 +175,7 @@ export class WhatsAppAccountManager {
     const work = (async () => {
       try {
         await this.requireLegacyDeclaration(active);
-        await active.models.synchronize();
+        await this.synchronizeModels(active);
         const merchant = (await this.options.merchants()).find(item => item.record_id === request.merchant_id && item.verified_at > 0);
         if (!merchant || active.closing) throw new Error('merchant_unavailable');
         const context = await this.options.broker.request(merchant, request);
@@ -191,6 +225,7 @@ export class WhatsAppAccountManager {
   disconnect(): Promise<WhatsAppLauncherSnapshot> { return this.exclusive(async () => { const active = await this.current(); await active.coordinator.stop(); active.chrome = null; return this.snapshot(); }); }
   async contacts(): Promise<WhatsAppLauncherSnapshot> { const active = await this.current(); await active.coordinator.listChats(); return this.snapshot(); }
   private async declaredSources() {
+    await this.options.verifyDeclaredScope?.();
     const records = await this.options.merchants();
     return records.map(record => ({ source_id: createHash('sha256').update(JSON.stringify([record.seller_id, record.registry_directory, record.state_directory, record.data_root])).digest('hex'), merchant_id: record.record_id, seller_id: record.seller_id, data_root: record.data_root, state_directory: record.state_directory, registry_directory: record.registry_directory })).sort((a, b) => a.source_id.localeCompare(b.source_id));
   }
@@ -257,7 +292,7 @@ export class WhatsAppAccountManager {
         const names = available.merchants.filter(item => input.allowed_merchant_ids.includes(item.merchant_id)).map(item => `${item.name}（${item.account_tail}）`).join('、');
         if (!await this.options.confirm('开启 WhatsApp 自动接待？', `账号尾号：${input.expected_account_id.split('@')[0].slice(-4)}\n允许商家：${names}\n仅已绑定这些商家的单聊可自动回复。历史加载不补答，未决发送只核查，不重发。`)) return this.snapshot();
         await this.assertIdentity(active, input);
-        await active.models.synchronize();
+        await this.synchronizeModels(active);
       }
       await active.backend.invoke('set_whatsapp_reception', input as unknown as Record<string, unknown>);
       return this.snapshot();
@@ -286,24 +321,37 @@ export class WhatsAppAccountManager {
   async writebackCapabilities(): Promise<WhatsAppWritebackCapabilities> {
     return { format: 'wa-writeback-capabilities-v1', available: false, enabled: false, reason: 'WhatsApp 内容反写尚未开放。', destinations: ['merchant_workbench', 'international_platform'], content_kinds: ['summary', 'requirement_changes', 'note', 'message_reference'] };
   }
-  async modelsChanged(): Promise<void> {
-    if (!this.active || this.active.closing) return;
-    try { await this.active.models.synchronize(); }
-    catch { await this.active.backend.invoke('set_whatsapp_reception', { enabled: false }).catch(() => {}); }
+  private async synchronizeModels(active: Active): Promise<void> {
+    if (active.closing) throw new Error('WhatsApp 正在关闭。');
+    const work = active.models.synchronize();
+    active.modelTasks.add(work);
+    try { await work; } finally { active.modelTasks.delete(work); }
   }
-  private async stopActive(): Promise<void> {
-    if (this.starting) await this.starting;
+  async modelsChanged(): Promise<void> {
     const active = this.active;
-    if (!active) return;
+    if (!active || active.closing) return;
+    try { await this.synchronizeModels(active); }
+    catch { if (!active.closing) await active.backend.invoke('set_whatsapp_reception', { enabled: false }).catch(() => {}); }
+  }
+  private cleanupActive(active: Active): Promise<void> {
+    if (this.cleanup) return this.cleanup;
     active.closing = true;
     clearInterval(active.timer);
-    try {
+    const work = (async () => {
       await active.coordinator.stop();
-      await Promise.allSettled(active.contexts.values());
+      await active.emergencyClose;
+      await Promise.allSettled([...active.contexts.values(), ...active.modelTasks]);
       await active.backend.shutdown();
       await active.release();
-      this.active = null;
-    } catch (error) { active.closing = false; throw error; }
+      if (this.active === active) this.active = null;
+    })();
+    this.cleanup = work;
+    void work.finally(() => { if (this.cleanup === work) this.cleanup = null; }).catch(() => {});
+    return work;
+  }
+  private async stopActive(): Promise<void> {
+    if (this.starting) await this.starting.catch(() => {});
+    if (this.active) await this.cleanupActive(this.active);
   }
   async close(): Promise<void> {
     this.stopping = true;

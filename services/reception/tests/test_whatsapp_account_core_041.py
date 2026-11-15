@@ -39,6 +39,43 @@ class AccountCoreTest(unittest.TestCase):
         self.assertIsNone(bindings['chat']['merchant_id'])
         self.assertEqual(bindings['new']['merchant_id'], 'merchant-b')
 
+    def test_history_does_not_freeze_default_before_first_live_buyer_message(self):
+        s = self.service
+        s.save_whatsapp_default_merchant('old', 0, 'account', 'epoch')
+        self.ingest(history=True)
+        self.assertIsNone(s.get_whatsapp_state()['bindings'][0]['merchant_id'])
+        s.save_whatsapp_default_merchant('new', 1, 'account', 'epoch')
+        self.ingest(mid='live')
+        self.assertEqual(s.get_whatsapp_state()['bindings'][0]['merchant_id'], 'new')
+        s.save_whatsapp_default_merchant('later', 2, 'account', 'epoch')
+        self.ingest(mid='another-live')
+        self.assertEqual(s.get_whatsapp_state()['bindings'][0]['merchant_id'], 'new')
+
+    def test_metadata_discovery_and_manual_outgoing_do_not_assign_default(self):
+        s = self.service
+        s.save_whatsapp_default_merchant('old', 0, 'account', 'epoch')
+        s._wa_ingest('account', 'epoch', [{'id': 'metadata:chat', 'chat_id': 'chat', 'body': '', 'timestamp_ms': 0,
+            'is_history': True, 'is_group': False, 'from_me': False, 'metadata_only': True}])
+        self.ingest(mid='manual', outgoing=True)
+        s.save_whatsapp_default_merchant('new', 1, 'account', 'epoch')
+        self.assertIsNone(s.get_whatsapp_state()['bindings'][0]['merchant_id'])
+        self.ingest(mid='live')
+        self.assertEqual(s.get_whatsapp_state()['bindings'][0]['merchant_id'], 'new')
+        self.assertTrue(s.get_whatsapp_state()['conversations'][0]['human_owned'])
+
+    def test_rebinding_pauses_contact_until_explicit_resume(self):
+        s = self.service
+        self.ingest()
+        s.save_whatsapp_binding('chat', 'new', None, 0, 'account', 'epoch')
+        row = s.get_whatsapp_state()['conversations'][0]
+        self.assertFalse(row['pending'])
+        self.assertTrue(row['reception_paused'])
+        self.assertFalse(row['human_owned'])
+        self.ingest(mid='after-binding')
+        self.assertTrue(s.get_whatsapp_state()['conversations'][0]['reception_paused'])
+        s.takeover_whatsapp('chat', False, 'account', 'epoch')
+        self.assertFalse(s.get_whatsapp_state()['conversations'][0]['reception_paused'])
+
     def test_segment_does_not_include_previous_messages(self):
         self.ingest()
         self.service.save_whatsapp_binding('chat', 'new-merchant', None, 0, 'account', 'epoch')
@@ -87,6 +124,7 @@ class AccountCoreTest(unittest.TestCase):
         self.ingest()
         s = self.service
         binding = s.save_whatsapp_binding('chat', 'merchant', None, 0, 'account', 'epoch')
+        s.takeover_whatsapp('chat', False, 'account', 'epoch')
         self.ingest(mid='new-segment-message')
         s.enabled, s.allowed = True, ['merchant']
         class Router:
@@ -152,6 +190,19 @@ class AccountCoreTest(unittest.TestCase):
             self.service._configure_models(format='synthetic', bad=True)
         self.assertFalse(self.service.enabled)
         self.assertEqual(self.service.allowed, [])
+
+    def test_writeback_contract_cannot_be_enabled_or_create_records(self):
+        changes = self.service.repo.db.total_changes
+        capabilities = self.service.get_whatsapp_writeback_capabilities()
+        self.assertFalse(capabilities['available'])
+        self.assertFalse(capabilities['enabled'])
+        for method in ('_wa_writeback_preview', '_wa_writeback_submit'):
+            for request in ({}, {'enabled': True}, {'format': 'wa-writeback-plan-v1', 'target': {'merchant_id': 'other'}}, {'format': 'old-protocol', 'preview_id': 'expired'}):
+                with self.assertRaises(ServiceError) as caught:
+                    self.service.call(method, request)
+                self.assertEqual(caught.exception.code, 'capability_unavailable')
+        self.assertEqual(self.service.repo.db.total_changes, changes)
+        self.assertEqual(self.service.repo.list('operation'), [])
 
     def test_private_revoke_needs_no_identity(self):
         self.service.enabled = True

@@ -11,7 +11,7 @@ import { ModelCheckHost } from './model-check-host';
 import { MODEL_CAPABILITIES, type ModelCapability, type ModelCapabilityState } from '../shared/model-settings';
 import path from 'node:path';
 import { isWorkbenchPage } from './trusted-page';
-import { createLauncherRegistry, historicalRegistryDirectories, listLauncherCandidates, readHistoricalMerchants } from './launcher-registry';
+import { createLauncherRegistry, historicalRegistryDirectories, listLauncherCandidates, readHistoricalMerchants, assertCompleteLauncherSources } from './launcher-registry';
 import { createWindowsLauncherActivation } from './launcher-activation';
 import { launcherCompanyName } from './launcher-company-name';
 import { createModelSettingsStore } from './model-settings-store';
@@ -64,6 +64,7 @@ export async function runLauncher(): Promise<void> {
   })();
   const accounts = () => accountPromise ??= (async () => {
     const manager = new WhatsAppAccountManager({ store: await createWhatsAppAccountStore(), broker: await createWindowsWhatsAppMerchantBroker(), merchants: candidates,
+      verifyDeclaredScope: async () => assertCompleteLauncherSources(await registry(), await (historicalDirectories ??= historicalRegistryDirectories())),
       available: async record => (await activationHost()).probe(record), version: programVersion,
       service: (workspaceId, directory) => {
         if (!executable) throw new Error('WhatsApp 后台组件缺失，请重新安装完整程序。');

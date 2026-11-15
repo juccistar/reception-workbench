@@ -148,6 +148,20 @@ class AccountGenerationTest(unittest.TestCase):
         self.service.call('_wa_set_merchant_context', {'request': request, 'context': self.lease(request)})
         self.prepare(self.event('whatsapp.send.requested')['operation_id'])
 
+    def test_translation_only_configuration_does_not_revoke_reception(self):
+        from copy import deepcopy
+        packet = deepcopy(self.packet)
+        packet['settings']['directory_revision'] += 1
+        translation = dict(packet['settings']['profiles'][0], profile_id='translation', credential_ref='translation-credential', name='Translation API')
+        packet['settings']['profiles'].append(translation)
+        packet['settings']['routes']['translation'] = {'profile_id': 'translation', 'route_revision': 1}
+        packet['credentials']['translation'] = 'synthetic-translation-only'
+        Path(packet['authority_file']).write_text(json.dumps({**packet['settings'], 'encrypted_keys': {}}), encoding='utf-8')
+        self.service.call('_configure_models', packet)
+        self.assertTrue(self.service.enabled)
+        self.assertEqual(self.service.allowed, [MERCHANT])
+        self.assertEqual(self.provider.calls, [])
+
     def test_new_merchant_revision_stops_unsent_operation(self):
         self.ingest()
         operation = self.generate()
@@ -180,6 +194,24 @@ class AccountGenerationTest(unittest.TestCase):
             active['thread'].join(5)
             self.assertFalse(active['thread'].is_alive())
         self.assertEqual(self.service.repo.list('operation'), [])
+
+    def test_cancelling_unsent_part_then_rebinding_does_not_reuse_old_pending_source(self):
+        other = '22222222-2222-4222-8222-222222222222'
+        self.service.set_whatsapp_reception(True, [MERCHANT, other], ACCOUNT, 'epoch')
+        self.ingest()
+        operation = self.generate()
+        self.ingest('next-buyer')
+        self.service.call('save_whatsapp_binding', {'chat_id': CHAT, 'merchant_id': other, 'conversation_id': None,
+                          'expected_revision': 0, 'expected_account_id': ACCOUNT, 'expected_connection_epoch': 'epoch'})
+        state = self.service.get_whatsapp_state()
+        self.assertEqual(state['bindings'][0]['merchant_id'], other)
+        self.assertTrue(state['conversations'][0]['reception_paused'])
+        self.assertFalse(state['conversations'][0]['pending'])
+        self.assertEqual(self.service.get_whatsapp_context(CHAT)['whatsapp_messages'], [])
+        self.assertEqual(self.service.repo.get('operation', operation)['status'], 'cancelled')
+        self.assertEqual(state['reply_batches'][0]['pending_operation_ids'], [])
+        self.service._schedule_account_replies()
+        self.assertEqual(len(self.provider.calls), 1)
 
     def test_related_original_image_and_text_use_the_same_encoded_request(self):
         self.ingest(image=True)

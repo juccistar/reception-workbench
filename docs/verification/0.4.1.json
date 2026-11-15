@@ -1,6 +1,7 @@
 {
   "version": "0.4.1",
   "date": "2026-11-15",
+  "updated": "2026-11-16",
   "status": "in_development",
   "branch": "feat/whatsapp-chrome-0.4.1",
   "base_commit": "626fe07",
@@ -24,11 +25,14 @@
     "independent_account_service": "implemented_synthetic_generation_and_core_verified_integration_pending",
     "cross_merchant_binding": "implemented_segment_and_uncertainty_tests_passed",
     "merchant_context_broker": "implemented_targeted_tests_passed_production_handshake_pending",
-    "account_ledger_and_legacy_preservation": "implementation_in_progress_full_source_rehearsal_pending",
+    "account_ledger_and_legacy_preservation": "offline_cli_and_real_synthetic_workspace_backup_import_restore_fence_verified",
     "launcher_account_management_and_tray": "wired_actual_window_verification_pending",
-    "writeback_contract_disabled": "capability_closed_full_versioned_plan_contract_pending",
+    "writeback_contract_disabled": "versioned_dto_and_closed_private_entry_no_write_tests_passed",
     "embedded_merchant_whatsapp_retirement": "merchant_ui_preload_and_runtime_path_retired_historical_modules_cleanup_pending",
-    "transparent_white_png": "alpha_preview_legacy_read_only_upgrade_and_checkerboard_implemented_gui_pending"
+    "transparent_white_png": "implemented_actual_electron_window_4_screenshots_viewed_original_bytes_unchanged",
+    "context_order": "wire_object_key_order_only_five_modes_two_protocols_equivalent",
+    "message_image_injection": "current_case_or_unambiguous_no_case_source_selection_preparation_and_wire_verified",
+    "same_request_source_deduplication": "five_targeted_tests_passed_no_production_change_required"
   },
   "verification": {
     "chrome_public_qr": {
@@ -51,16 +55,68 @@
     },
     "targeted_tests": [
       {"scope": "initial_company_name_chain", "files": 4, "passed": 24, "log": "artifacts/verification/company-names-041/ui.log", "historical_stage_not_additive": true},
-      {"scope": "current_desktop_account_launcher_and_company_names", "files": 7, "passed": 33, "long_unicode_company_name_400": "passed", "includes": ["launcher-company-name.test.ts", "launcher-registry-legacy.test.ts", "launcher-host-trust.test.ts", "whatsapp-account-store.test.ts", "whatsapp-merchant-broker.test.ts", "chrome-host.test.ts", "whatsapp-accounts.test.tsx"]},
-      {"scope": "current_account_related_backend", "pattern": "test_whatsapp_account*_041.py", "files": 6, "passed": 37, "includes_core_and_generation_below": true},
-      {"scope": "account_core_041", "file": "test_whatsapp_account_core_041.py", "passed": 13},
-      {"scope": "account_generation_041", "file": "test_whatsapp_account_generation_041.py", "passed": 8, "real_model_router": true, "synthetic_provider_and_receipts": true, "image_and_text_same_call": true},
-      {"scope": "transparent_preview_and_original_integrity", "file": "test_image_assets.py", "passed": 11},
-      {"scope": "message_images_and_legacy_read_only_preview", "file": "test_message_photos.py", "passed": 17}
+      {"scope": "current_desktop_account_launcher_and_company_names", "files": 11, "passed": 64, "long_unicode_company_name_400": "passed", "includes": ["launcher-company-name.test.ts", "launcher-registry-legacy.test.ts", "launcher-host-trust.test.ts", "whatsapp-account-store.test.ts", "whatsapp-merchant-broker.test.ts", "chrome-host.test.ts", "whatsapp-coordinator.test.ts", "whatsapp-account-manager.test.ts", "whatsapp-accounts.test.tsx", "service-client-lifecycle.test.ts", "chat-service-client.test.ts"]},
+      {"scope": "current_account_related_backend", "pattern": "test_whatsapp_account*_041.py", "files": 7, "passed": 46, "file_isolated_processes": true, "report": "artifacts/verification/041-source-002/account-tests.json", "includes_core_and_generation_below": true},
+      {"scope": "account_core_041", "file": "test_whatsapp_account_core_041.py", "passed": 17, "included_in_account_total": true},
+      {"scope": "account_generation_041", "file": "test_whatsapp_account_generation_041.py", "passed": 10, "included_in_account_total": true, "real_model_router": true, "synthetic_provider_and_receipts": true, "image_and_text_same_call": true},
+      {"scope": "image_and_context_backend", "files": 8, "passed": 74, "file_isolated_processes": true, "report": "artifacts/verification/041-source-002/image-context-tests.json", "includes": ["test_model_context_order.py", "test_model_inputs_040.py", "test_native_image_requests_041.py", "test_reception_image_selection_041.py", "test_context_deduplication_041.py", "test_image_assets.py", "test_product_main_image_0313.py", "test_product_display_0313.py"]},
+      {"scope": "message_images_and_legacy_read_only_preview", "file": "test_message_photos.py", "passed": 17, "runner": "scripts/test-backend.mjs"},
+      {"scope": "requirement_model_wiring", "file": "test_requirement_model_040.py", "passed": 1}
     ],
     "known_test_failures_resolved": ["Initial synthetic PNG fixture was invalid; replaced with Pillow-generated PNG and image generation test passed.", "Prepared-send fixture used a buyer source from a prior binding segment; changed it to a new buyer message in the active segment and core tests passed."],
     "typecheck": {"status": "passed", "command": "tsc --noEmit -p apps/desktop/tsconfig.json"},
-    "source_build": {"status": "passed", "stage": "development_snapshot_1", "command": "node scripts/build.mjs", "desktop_only": true, "output": "artifacts/app", "candidate_or_release": false, "window_verification": "pending", "immediate_local_commit": true},
+    "previous_source_build": {"status": "passed", "stage": "development_snapshot_1", "commit": "10bd464", "desktop_only": true},
+    "source_build": {"status": "passed", "stage": "development_snapshot_2", "date": "2026-11-16", "command": "node scripts/build.mjs", "desktop_only": true, "output": "artifacts/app", "candidate_or_release": false, "window_verification": "pending", "immediate_local_commit": true},
+    "transparent_png_window": {
+      "status": "passed",
+      "source_commit": "10bd464",
+      "report": "artifacts/verification/transparent-images-041-source-001/report.json",
+      "actual_window": true,
+      "production_renderer_preload_service_client_and_media_rpc": true,
+      "synthetic_merchant_and_fixture_host": true,
+      "actual_release_exe": false,
+      "legacy_flattened_preview_recovered": true,
+      "thumbnail_alpha": [0, 255],
+      "original_sha256": "edabbce9c46ac0883eaa7b2bcb5151a4911444595e9733c43e537725cb4b2159",
+      "original_bytes_unchanged": true,
+      "persisted_legacy_cache_unchanged": true,
+      "screenshots_viewed": ["01-white-transparent-thumbnail.png", "02-original-fit.png", "03-original-size.png", "04-narrow-dialog.png"],
+      "normal_shutdown": true,
+      "real_customer_or_model_calls": 0
+    },
+    "context_order": {
+      "status": "passed",
+      "content_and_arrays_unchanged": true,
+      "roles_and_image_blocks_unchanged": true,
+      "semantic_fingerprint_and_limits_unchanged": true,
+      "five_modes_two_protocols_before_after_pairs": 10,
+      "synthetic_automatic_common_prefix_characters": {"before": 113, "after": 18413},
+      "synthetic_automatic_common_prefix_utf8_bytes": {"before": 113, "after": 54413},
+      "real_api_cache_rate": "not_measured",
+      "baseline_failure_check": {"test_file": "test_requirement_media_0311.py", "current_and_head_module_same": true, "failures": 1, "errors": 7, "counted_as_passed": false, "artifacts": "artifacts/verification/context-order-baseline-041-20261116a"}
+    },
+    "message_images": {
+      "status": "passed_synthetic_selection_to_wire",
+      "confirmed_omissions": ["no_case_excluded_all_message_images", "non_product_images_requirement_references_ignored"],
+      "cached_original_preparation_and_context_use_same_selection": true,
+      "no_case_current_window_sole_buyer_image": true,
+      "current_case_customization_image_with_old_case_present": true,
+      "explicit_disabled_source_and_foreign_owner_excluded": true,
+      "native_prompt_exactly_matches_reviewed_P05_A": true,
+      "two_protocols_original_bytes_and_sha_verified": true,
+      "same_request_history_and_image_source_deduplication": true,
+      "paid_or_real_customer_calls": 0
+    },
+    "product_images": {
+      "dns_checked_address_fallback": "passed",
+      "identity_changed_during_collection": "late_result_rejected",
+      "transparent_gallery_preview": "alpha_preserved",
+      "additional_failure_stage_ui": false,
+      "public_cdn_sample": {"status": "passed", "bytes": 190830, "mime": "image/webp", "width": 1000, "height": 1000, "different_from_reported_product": true},
+      "reported_product_1601993586845_live_platform_response": "not_obtained"
+    },
+    "offline_account_maintenance": {"status": "passed_synthetic", "strict_cli_before_service_construction": true, "real_workspace_backup_and_legacy_import": true, "source_db_and_ledger_hashes_preserved": true, "duplicate_import_idempotent": true, "restored_unknown_fence_preserved": true, "automatic_reception_after_restore": false, "chrome_profile_in_business_backup": false},
+    "verification_corrections": ["Direct invocation of legacy product main-image tests lacked explicit synthetic support; rerun with scripts/test-backend.mjs passed all 18. Both logs retained."],
     "candidate": null,
     "real_account_send_receive": "not_verified",
     "real_model_quality": "not_verified"
