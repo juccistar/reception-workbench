@@ -28,6 +28,24 @@ it('reads historical routing hints without persisting or claiming verification',
   expect(await index.list()).toEqual([]);
   expect(await readFile(path.join(directory, 'merchants.json'), 'utf8')).toBe(before);
 });
+it('persists imported hints, revalidates their source and never replaces a verified entry', async () => {
+  const { directory, root, state, index } = await fixture();
+  const [hint] = await readHistoricalMerchants(directory);
+  await index.importHistorical(hint);
+  expect((await listLauncherCandidates(index, []))[0]).toMatchObject({ seller_id: '123456', verified_at: 0 });
+  const verified = await index.registerVerified({ seller_id: '123456', name: '商家', registry_directory: directory, state_directory: state, data_root: root, verified_at: 123 });
+  await index.importHistorical(hint);
+  expect((await index.list())[0]).toEqual(verified);
+  await rm(path.join(directory, 'merchants.json'));
+  expect((await listLauncherCandidates(index, []))[0]).toEqual(verified);
+});
+it('hides imported hints whose source disappears', async () => {
+  const { directory, index } = await fixture();
+  const [hint] = await readHistoricalMerchants(directory);
+  await index.importHistorical(hint);
+  await rm(path.join(directory, 'merchants.json'));
+  expect(await listLauncherCandidates(index, [])).toEqual([]);
+});
 it('uses verified identity for matching current roots and invalidates it on a move', async () => {
   const { base, directory, root, state, index } = await fixture();
   const verified = await index.registerVerified({ seller_id: '123456', name: '商家', registry_directory: directory, state_directory: state, data_root: root, verified_at: 123 });

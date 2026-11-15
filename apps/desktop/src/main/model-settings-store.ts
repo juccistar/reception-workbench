@@ -1,8 +1,7 @@
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { lstat, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { resolveWindowsUserLocalAppData } from './windows-user-directories';
 // @ts-ignore Existing mutex implementation has no declaration.
 import { acquireMerchantRegistryMutex } from '../../../../scripts/merchant-mutex.mjs';
 import { MODEL_CAPABILITIES, type ModelCapability, type ModelCapabilityState, type ModelProfile, type ModelRuntimePacket, type ModelSettingsSaveInput, type ModelSettingsSnapshot } from '../shared/model-settings';
@@ -139,13 +138,12 @@ export class ModelSettingsStore {
     } finally { await release(); }
   }
 }
-export async function resolveModelSettingsDirectory(): Promise<string> {
-  if (process.platform !== 'win32') throw new Error('model_settings_unavailable');
-  const script = "$ErrorActionPreference='Stop';[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);[Console]::Out.Write([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData))";
-  const executable = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
-  const { stdout } = await promisify(execFile)(executable, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, timeout: 10000, maxBuffer: 4096, encoding: 'utf8' });
-  if (!path.isAbsolute(stdout) || /^(?:\\\\|\/\/)/.test(stdout)) fail();
-  return path.join(stdout, 'AlibabaReceptionWorkbenchShared', 'models');
+let modelDirectoryPromise: Promise<string> | undefined;
+export function resolveModelSettingsDirectory(): Promise<string> {
+  return modelDirectoryPromise ??= (async () => {
+    try { return path.join(await resolveWindowsUserLocalAppData(), 'AlibabaReceptionWorkbenchShared', 'models'); }
+    catch { modelDirectoryPromise = undefined; throw new Error('model_settings_unavailable'); }
+  })();
 }
 export async function createModelSettingsStore(): Promise<ModelSettingsStore> {
   const directory = await resolveModelSettingsDirectory(); return new ModelSettingsStore(directory, createWindowsUserEncryption(), () => acquireMerchantRegistryMutex(directory, 10000));

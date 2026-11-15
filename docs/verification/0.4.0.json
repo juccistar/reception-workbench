@@ -1,7 +1,7 @@
 {
   "version": "0.4.0",
   "date": "2026-11-15",
-  "status": "current_merchant_discovery_unresolved_whatsapp_independence_design_review",
+  "status": "candidate_c_built_verification_pending",
   "base_commit": "c6be2c575a4d235ac2f1b42fa1ad035064c16740",
   "branch": "feat/launcher-multimodal-0.4.0",
   "plan": "docs/0.4.0开发方案.md",
@@ -41,8 +41,8 @@
     },
     "targeted_desktop_host": {
       "status": "passed",
-      "files": 21,
-      "tests": 125,
+      "files": 23,
+      "tests": 138,
       "targets": [
         "chat-host",
         "media-host",
@@ -64,7 +64,9 @@
         "trusted-page",
         "whatsapp-connection",
         "whatsapp-native-hook",
-        "launcher-registry-legacy"
+        "launcher-registry-legacy",
+        "windows-user-directories",
+        "shared-translation"
       ],
       "final_fixture_regression": {
         "status": "passed",
@@ -91,6 +93,14 @@
         "additional_unique_tests": 4,
         "repeated_tests_not_added_to_total": 10,
         "log": "artifacts/verification/launcher-legacy-040-fix/targeted-final.log"
+      },
+      "redirected_directory_and_import_regression": {
+        "files": 6,
+        "tests": 31,
+        "additional_unique_tests": 13,
+        "repeated_baseline_tests": 18,
+        "log": "artifacts/verification/redirected-models-040-final/tests.log",
+        "post_cache_log": "artifacts/verification/redirected-models-040-final/post-cache-tests.log"
       }
     },
     "targeted_tools": {
@@ -113,12 +123,11 @@
     "performance": "docs/verification/0.4.0-performance.json",
     "source_build": {
       "status": "passed",
-      "command": "node scripts/package.mjs --installer --candidate --output relase/release-0.4.0-candidate-b",
+      "command": "node scripts/package.mjs --installer --candidate --output relase/release-0.4.0-candidate-c",
       "output": "artifacts/app",
-      "change": "Discover prior merchant registration metadata and refresh the launcher list.",
       "included_in_candidate_build": true,
       "immediate_local_commit": true,
-      "commit": "b79a395"
+      "change": "Correct shared directory under redirected Accio environment and add native directory import."
     },
     "source_window": {
       "status": "passed",
@@ -132,19 +141,13 @@
     "candidate_build": {
       "status": "passed",
       "record": "docs/verification/0.4.0-candidate.json",
-      "output": "relase/release-0.4.0-candidate-b",
+      "output": "relase/release-0.4.0-candidate-c",
       "immediate_local_commit": true,
-      "log": "artifacts/verification/build-040-candidate-b/package.log",
-      "commit": "b79a395"
+      "log": "artifacts/verification/build-040-candidate-c/package.log"
     },
     "candidate_window": {
-      "status": "passed",
-      "candidate": "b",
-      "record": "docs/verification/0.4.0-windows.json",
-      "ui_screenshots_viewed": 7,
-      "public_page_screenshots_viewed": 2,
-      "production_exe_read_only_home": true,
-      "real_merchant_authorization": "not_verified"
+      "status": "pending",
+      "candidate": "c"
     },
     "update_signature": {
       "status": "passed",
@@ -173,6 +176,15 @@
         "change": "launcher IPC accepts the same Windows file after drive-letter normalization",
         "immediate_local_commit": true,
         "commit": "97fe7c2a794b2ac714219da533831e5fc45a45d4"
+      },
+      {
+        "status": "passed",
+        "command": "node scripts/package.mjs --installer --candidate --output relase/release-0.4.0-candidate-b",
+        "output": "artifacts/app",
+        "change": "Discover prior merchant registration metadata and refresh the launcher list.",
+        "included_in_candidate_build": true,
+        "immediate_local_commit": true,
+        "commit": "b79a395"
       }
     ],
     "source_window_history": [
@@ -262,6 +274,14 @@
         "output": "relase/release-0.4.0-candidate-a",
         "immediate_local_commit": true,
         "commit": "228983295ef885cc6895aa0b5c52a29be82a944a"
+      },
+      {
+        "status": "passed",
+        "record": "docs/verification/0.4.0-candidate.json",
+        "output": "relase/release-0.4.0-candidate-b",
+        "immediate_local_commit": true,
+        "log": "artifacts/verification/build-040-candidate-b/package.log",
+        "commit": "b79a395"
       }
     ],
     "candidate_window_history": [
@@ -270,8 +290,24 @@
         "record": "docs/verification/0.4.0-windows.json",
         "ui_screenshots_viewed": 11,
         "public_page_screenshots_viewed": 2
+      },
+      {
+        "status": "passed",
+        "candidate": "b",
+        "record": "docs/verification/0.4.0-windows.json",
+        "ui_screenshots_viewed": 7,
+        "public_page_screenshots_viewed": 2,
+        "production_exe_read_only_home": true,
+        "real_merchant_authorization": "not_verified"
       }
-    ]
+    ],
+    "redirected_merchant_and_models": {
+      "status": "source_fixed_targeted_passed_candidate_pending",
+      "record": "docs/verification/0.4.0-redirected-merchant.json",
+      "actual_isolated_seller_tail": "8987",
+      "shared_directory_defect_reproduced_and_fixed_in_simulation": true,
+      "model_key_or_capability_state_confirmed": false
+    }
   },
   "release": {
     "repository": "juccistar/reception-workbench-releases",
@@ -300,7 +336,10 @@
     "cross_merchant_binding": true,
     "status": "feasible_architecture_assessed_not_implemented",
     "implemented": false,
-    "recommended_window": "independent_Electron_Chromium_top_level",
+    "recommended_window": "external_system_Google_Chrome",
+    "selection_source": "explicit_user_correction_to_real_Chrome",
+    "prior_plan": "docs/WhatsApp真实Chrome与内嵌路线评估.md",
+    "chrome_runtime_verification": "not_run",
     "binding_unit": "WhatsApp_account_and_single_chat_one_active_merchant",
     "whatsapp_qr_requires_accio_merchant": false,
     "old_data_and_unknown_preserved": true,

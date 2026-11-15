@@ -1,0 +1,87 @@
+{
+  "version": "0.4.0",
+  "status": "candidate_c_built_verification_pending",
+  "user_report": "The currently used merchant is absent from the launcher and the AI readiness panel reports the reception model configuration is unavailable or changed.",
+  "screenshot_observations": {
+    "seller_tail": "8987",
+    "platform_identity_and_message_read": "passed",
+    "ai_readiness": "not_ready_model_configuration_unavailable_or_changed",
+    "business_root_source": "Accio isolated instance A LocalAppData",
+    "default_business_root": "AlibabaReceptionWorkbenchV2",
+    "current_root_kind": "ARWData seller-hash directory"
+  },
+  "read_only_metadata_observations": {
+    "source": "User-provided isolated instance A LocalAppData / AlibabaReceptionWorkbenchHost / merchants.json",
+    "format": 1,
+    "profiles": 1,
+    "target_seller_tail_present": "8987",
+    "target_status": "verified",
+    "referenced_storage_format": 1,
+    "referenced_data_root_exists": true,
+    "business_sqlite_opened": false,
+    "model_settings_contents_read": false,
+    "credentials_read": false,
+    "other_instances_scanned": false
+  },
+  "confirmed_discovery_gap": "A normally launched desktop process does not inherit the isolated Accio process registry directory; the standard Windows-user legacy record is a different merchant.",
+  "model_readiness_root_cause": "Shared model and launcher directory resolution is demonstrably environment-dependent. Actual selected profile, capability results and current process loaded settings are not inspected, so this is not claimed to be the only AI failure cause.",
+  "implementation": {
+    "native_import_of_user_selected_registry_metadata": "implemented_targeted_tests_passed_window_pending",
+    "public_registration_feedback_and_bounded_retry": "implemented_build_and_window_pending",
+    "whatsapp_external_chrome": "separate_planned_work_not_implemented",
+    "real_windows_user_shared_directory": "implemented_current_token_and_normalized_knownfolder_probe_passed",
+    "source_file_preservation": "No existing model settings, keys, merchant indexes or business data were copied, merged, deleted or migrated."
+  },
+  "real_business_data_changed": false,
+  "real_model_calls": 0,
+  "real_customer_sends": 0,
+  "published": false,
+  "model_directory_probe": {
+    "report": "artifacts/verification/model-directory-isolation-040/report.json",
+    "normal_result": "Windows-user LocalAppData",
+    "redirected_environment_result": "Accio instance A LocalAppData",
+    "same_parser_changes_with_process_environment": true,
+    "actual_model_settings_contents_read": false,
+    "empty_runtime_format_bytes": 202,
+    "empty_content_of_isolated_file_proven": false
+  },
+  "targeted_import_regression": {
+    "files": 3,
+    "tests": 20,
+    "status": "passed",
+    "new_unique_tests_since_candidate_b": 6,
+    "native_picker_path_not_renderer_path": true,
+    "sanitized_storage_errors": true,
+    "import_is_directory_scoped_user_choice": true
+  },
+  "targeted_regression": {
+    "status": "passed",
+    "files": 6,
+    "tests": 31,
+    "log": "artifacts/verification/redirected-models-040-final/tests.log",
+    "post_directory_reuse_regression": {
+      "files": 2,
+      "tests": 5,
+      "log": "artifacts/verification/redirected-models-040-final/post-cache-tests.log"
+    },
+    "typecheck": "passed",
+    "actual_real_settings_contents_read": false
+  },
+  "fixed_directory_probe": {
+    "report": "artifacts/verification/model-directory-fixed-040/report.json",
+    "current_token_profile_stable": true,
+    "same_actual_localappdata_after_profile_env_redirect": true,
+    "scope": "Normal and simulated redirected child environment; not a real Accio-hosted merchant session."
+  },
+  "remaining_acceptance": [
+    "Build and package candidate C, then verify native import flow using isolated fixtures.",
+    "User must relaunch the merchant from its authorized Accio session with the corrected build before real AI readiness can be checked.",
+    "Actual selected model, key validity and capability status have not been read or tested."
+  ],
+  "candidate": "relase/release-0.4.0-candidate-c",
+  "synthetic_dpapi_probe": {
+    "status": "passed",
+    "report": "artifacts/verification/dpapi-isolation-040/report.json",
+    "real_model_keys_read": false
+  }
+}

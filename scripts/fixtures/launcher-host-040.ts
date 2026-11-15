@@ -4,7 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { isWorkbenchPage } from '../../apps/desktop/src/main/trusted-page';
 import { ModelSettingsStore } from '../../apps/desktop/src/main/model-settings-store';
-import { LauncherRegistry, listLauncherCandidates } from '../../apps/desktop/src/main/launcher-registry';
+import { LauncherRegistry, listLauncherCandidates, readHistoricalMerchants } from '../../apps/desktop/src/main/launcher-registry';
 
 const root = process.env.HARNESS_ROOT!;
 const temporary = process.env.HARNESS_TEMP!;
@@ -43,6 +43,19 @@ async function start() {
   win.webContents.on('will-navigate', (event, url) => { if (!isWorkbenchPage(url, file)) event.preventDefault(); });
   const bind = (name: string, fn: (...args: any[]) => any) => ipcMain.handle(name, (event, ...args) => { if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || !isWorkbenchPage(event.senderFrame.url, file)) throw new Error('invalid sender'); return fn(...args); });
   bind('launcher:merchants', async () => (await listLauncherCandidates(registry, [legacy])).map(m => ({ id: m.record_id, name: m.name, account_tail: m.seller_id.slice(-4), status: 'reauthorize', data_root: m.data_root, verified_at: m.verified_at })));
+  bind('launcher:import-merchants', async () => {
+    // Synthetic native folder choice: only this isolated fixture directory is imported.
+    const source = path.join(temporary, 'isolated-merchant-registry');
+    const seller = '4008987';
+    const state = path.join(source, 'profiles', createHash('sha256').update(seller).digest('hex'), 'state');
+    const data = path.join(temporary, 'isolated-merchant-data');
+    await mkdir(state, { recursive: true }); await mkdir(data, { recursive: true });
+    await writeFile(path.join(state, 'storage.json'), JSON.stringify({ version: 1, dataRoot: data }));
+    await writeFile(path.join(source, 'merchants.json'), JSON.stringify({ format: 1, profiles: { [seller]: { sellerId: seller, stateDirectory: state, initialDataRoot: data, status: 'verified' } } }));
+    const items = await readHistoricalMerchants(source);
+    for (const item of items) await registry.importHistorical(item);
+    return items.length;
+  });
   bind('launcher:open', () => { throw new Error('合成宿主不打开商家'); });
   bind('launcher:authorization', () => '合成授权说明');
   bind('launcher:copy-authorization', () => {});

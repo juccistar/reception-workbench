@@ -1,155 +1,23 @@
 {
   "version": "0.4.0",
-  "status": "local_checks_passed_current_merchant_discovery_unresolved",
-  "source_base_commit": "81c9dc1",
-  "output": "relase/release-0.4.0-candidate-b",
+  "status": "built_verification_pending",
+  "source_base_commit": "c1222a1",
+  "output": "relase/release-0.4.0-candidate-c",
   "delivery": {
-    "executable": "relase/release-0.4.0-candidate-b/win-unpacked/ReceptionWorkbench.exe",
-    "archive": "relase/release-0.4.0-candidate-b/ReceptionWorkbench-0.4.0.zip",
-    "archive_sha256": "858cb2dd86a422ec16c56689d4e911433b450b16921b14a543e3a32ecd50520b",
+    "executable": "relase/release-0.4.0-candidate-c/win-unpacked/ReceptionWorkbench.exe",
+    "archive": "relase/release-0.4.0-candidate-c/ReceptionWorkbench-0.4.0.zip",
+    "archive_sha256": "f954cf1a380f64b62acd283ca96206941b283f40159c99b986244f893bce800e",
     "files": 173,
-    "bytes": 446435995,
+    "bytes": 446442819,
     "signed": false,
     "release_signature": "ed25519",
-    "installer": "relase/release-0.4.0-candidate-b/ReceptionWorkbench-Setup-0.4.0.exe",
+    "installer": "relase/release-0.4.0-candidate-c/ReceptionWorkbench-Setup-0.4.0.exe",
     "installer_signed": false,
-    "release_feed": "relase/release-0.4.0-candidate-b/release-feed"
+    "release_feed": "relase/release-0.4.0-candidate-c/release-feed"
   },
-  "change": "Discover existing merchant registration metadata and refresh the launcher list.",
-  "prior_candidate_record": "docs/verification/0.4.0-candidate-a.json",
-  "default_entry_promoted": false,
-  "installed": false,
+  "change": "Resolve shared model and launcher directories from the real current Windows user, and import explicit isolated merchant metadata.",
+  "prior_candidate_record": "docs/verification/0.4.0-candidate-b.json",
   "immediate_local_commit": true,
-  "build_commit": "b79a395",
-  "verification": {
-    "integrity": {
-      "report": "artifacts/verification/package-040-candidate-b/integrity.json",
-      "result": {
-        "passed": true,
-        "version": "0.4.0",
-        "files": 173,
-        "asar_entries": 16,
-        "archive_sha256": "858cb2dd86a422ec16c56689d4e911433b450b16921b14a543e3a32ecd50520b",
-        "customer_databases": 0,
-        "development_dependencies": 0,
-        "signed": false
-      }
-    },
-    "update": {
-      "report": "artifacts/verification/package-040-candidate-b/update.json",
-      "result": {
-        "status": "passed",
-        "version": "0.4.0",
-        "installer_bytes": 144927188,
-        "installer_sha256": "4875f73338d90cfa48cd3b435b1eedaa3499e27522c607a4db497e38fee83dfd",
-        "installer_sha512": "pAHTYPqwV4l4SChFiK5U8aF914Ao9Is4o7+z21Ive1E9gcLmYWXtuRP2itz690TExsHpWPKPOOwrSZTD0mvKmw==",
-        "release_signature": "ed25519",
-        "windows_signed": false,
-        "feed_files": 3,
-        "public_key_fingerprint": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
-        "python_inputs": 103,
-        "source_manifest": "artifacts/build/package-input-1794746922690/source-manifest.json",
-        "compiled_host_matches_stage": true,
-        "installed_marker_baked_in": false,
-        "merchant_launch_inputs": 7,
-        "merchant_launch_inputs_match_source": true,
-        "update_source_preconfigured": true,
-        "update_source_type": "github",
-        "update_source_url": "https://github.com/juccistar/reception-workbench-releases/",
-        "actual_installer_executed": false
-      }
-    },
-    "zip": {
-      "report": "artifacts/verification/package-040-candidate-b/zip.json",
-      "result": {
-        "passed": true,
-        "version": "0.4.0",
-        "entries": 174,
-        "manifest_files": 173,
-        "all_crcs_verified": true,
-        "all_file_hashes_verified": true,
-        "archive_bytes": 188767141,
-        "archive_sha256": "858cb2dd86a422ec16c56689d4e911433b450b16921b14a543e3a32ecd50520b"
-      }
-    },
-    "source": {
-      "report": "artifacts/verification/package-040-candidate-b/source.json",
-      "result": {
-        "status": "passed",
-        "version": "0.4.0",
-        "delivery": "relase/release-0.4.0-candidate-b/delivery.json",
-        "staging": "artifacts/build/package-input-1794746922690",
-        "python_inputs": 103,
-        "frozen_backend_files": 83,
-        "compiled_app_files": 11,
-        "external_launch_modules": 7,
-        "asar_sha256": "633b4db046e64a9fc90c512e3b2d8858f03b36c509d4c58c459ef3b55c638c60",
-        "source_manifest_sha256": "49d4cb88c4be41b6d9493a78a9bec7f3cab28dff962c7ede7514e55bad4a0195",
-        "production_workspace_accessed": false
-      }
-    },
-    "frozen_models": {
-      "report": "artifacts/verification/packaged-models-040-candidate-b-001/report.json",
-      "status": "passed",
-      "frozen_backend": true,
-      "provider": "synthetic_loopback_http",
-      "real_model_calls": 0,
-      "merchant_database_opened": false,
-      "checks": [
-        {
-          "protocol": "chat-completions",
-          "purpose": "reception",
-          "requests": 7,
-          "image_attachments": 7,
-          "status": "passed"
-        },
-        {
-          "protocol": "chat-completions",
-          "purpose": "translation",
-          "requests": 2,
-          "image_attachments": 0,
-          "status": "passed"
-        },
-        {
-          "protocol": "anthropic",
-          "purpose": "reception",
-          "requests": 7,
-          "image_attachments": 7,
-          "status": "passed"
-        },
-        {
-          "protocol": "anthropic",
-          "purpose": "translation",
-          "requests": 2,
-          "image_attachments": 0,
-          "status": "passed"
-        }
-      ],
-      "total_requests": 18,
-      "total_image_attachments": 14
-    },
-    "windows": {
-      "status": "passed",
-      "record": "docs/verification/0.4.0-windows.json",
-      "production_exe_home": true,
-      "legacy_merchants_visible": 1,
-      "ui_screenshots_viewed": 7,
-      "public_whatsapp_screenshots_viewed": 2,
-      "real_business_connection_verified": false
-    }
-  },
-  "public_release": {
-    "status": "paused_current_merchant_discovery_unresolved",
-    "repository": "juccistar/reception-workbench-releases",
-    "draft_created": false,
-    "published": false,
-    "assets_uploaded": false
-  },
-  "limitations": [
-    "The real merchant authorization and business connection were not performed.",
-    "Existing global model settings were observed by lstat metadata only; the model page was not opened and file contents were not read.",
-    "Prior A workbench interaction evidence references identical business frontend assets; B was not run with an authenticated merchant business service.",
-    "Windows Authenticode is NotSigned; the fixed Ed25519 update signature passed.",
-    "User reports the active merchant is still absent; default-directory legacy discovery alone does not satisfy the current merchant discovery requirement."
-  ]
+  "installed": false,
+  "default_entry_promoted": false
 }

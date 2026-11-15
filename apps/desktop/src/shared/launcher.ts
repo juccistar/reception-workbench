@@ -9,6 +9,7 @@ export interface LauncherMerchant {
 
 export interface LauncherBridge {
   merchants(): Promise<LauncherMerchant[]>;
+  importMerchants(): Promise<number>;
   openMerchant(id: string): Promise<void>;
   authorization(): Promise<string>;
   copyAuthorization(): Promise<void>;

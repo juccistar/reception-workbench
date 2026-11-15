@@ -4,6 +4,8 @@ import { lstat, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { resolveModelSettingsDirectory } from './model-settings-store';
 // @ts-ignore Existing Windows mutex helper.
 import { acquireMerchantRegistryMutex } from '../../../../scripts/merchant-mutex.mjs';
+// @ts-ignore Existing Windows path budget helper.
+import { workspacePathUnits } from '../../../../scripts/merchant-profiles.mjs';
 
 /** Routing metadata only; it never grants authority or contains an Accio token. */
 export interface LauncherMerchant {
@@ -22,7 +24,7 @@ async function checkParents(directory: string): Promise<void> {
 }
 const validPath = (v: unknown): v is string => typeof v === 'string' && path.isAbsolute(v) && path.resolve(v) === v && !/^(?:\\\\|\/\/)/.test(v) && !/[\x00-\x1f]/.test(v) && v !== path.parse(v).root;
 function validate(item: LauncherMerchant): void {
-  if (!item || !/^[a-f0-9-]{36}$/.test(item.record_id) || !/^[1-9][0-9]{0,127}$/.test(item.seller_id) || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200 || /[\x00-\x1f]/.test(item.name) || !validPath(item.registry_directory) || !validPath(item.state_directory) || !validPath(item.data_root) || !Number.isSafeInteger(item.verified_at) || item.verified_at < 1 || Object.keys(item).sort().join(',') !== 'data_root,name,record_id,registry_directory,seller_id,state_directory,verified_at') throw new Error('launcher_registry_invalid');
+  if (!item || !/^[a-f0-9-]{36}$/.test(item.record_id) || !/^[1-9][0-9]{0,127}$/.test(item.seller_id) || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200 || /[\x00-\x1f]/.test(item.name) || !validPath(item.registry_directory) || !validPath(item.state_directory) || !validPath(item.data_root) || !Number.isSafeInteger(item.verified_at) || item.verified_at < 0 || Object.keys(item).sort().join(',') !== 'data_root,name,record_id,registry_directory,seller_id,state_directory,verified_at') throw new Error('launcher_registry_invalid');
 }
 export class LauncherRegistry {
   private readonly file: string;
@@ -37,10 +39,21 @@ export class LauncherRegistry {
   }
   /** Call only after native identity and registry/data-root ownership verification. */
   async registerVerified(input: Omit<LauncherMerchant, 'record_id'>): Promise<LauncherMerchant> {
+    if (!Number.isSafeInteger(input.verified_at) || input.verified_at < 1) throw new Error('launcher_registry_invalid');
+    return this.save(input, false);
+  }
+  /** Store an untrusted historical routing hint without replacing a verified record. */
+  async importHistorical(item: LauncherMerchant): Promise<void> {
+    if (item.verified_at !== 0) throw new Error('launcher_registry_invalid');
+    validate(item);
+    await this.save(item, true);
+  }
+  private async save(input: Omit<LauncherMerchant, 'record_id'>, historical: boolean): Promise<LauncherMerchant> {
     await checkParents(this.directory); await mkdir(this.directory, { recursive: true, mode: 0o700 }); await checkParents(this.directory); const st = await lstat(this.directory); if (!st.isDirectory() || st.isSymbolicLink()) throw new Error('launcher_registry_invalid');
     const release = await this.acquireLock();
     try { const merchants = await this.list(); const old = merchants.find(m => m.seller_id === input.seller_id && m.registry_directory === input.registry_directory);
-      const item: LauncherMerchant = { ...input, record_id: old?.record_id ?? randomUUID() }; validate(item);
+      if (historical && old && old.verified_at > 0) return old;
+      const item: LauncherMerchant = { ...input, record_id: old?.record_id ?? (historical ? (input as LauncherMerchant).record_id : randomUUID()) }; validate(item);
       const next = [...merchants.filter(m => m.record_id !== item.record_id), item]; if (next.length > 512) throw new Error('launcher_registry_invalid');
       const bytes = Buffer.from(JSON.stringify({ format: 'launcher-registry-v1', merchants: next })); if (bytes.length > 1024 * 1024) throw new Error('launcher_registry_invalid');
       const temp = path.join(this.directory, `.merchant-${randomUUID()}.tmp`);
@@ -75,7 +88,7 @@ export async function readHistoricalMerchants(directory: string): Promise<Launch
         const same = (a: unknown, b: string) => typeof a === 'string' && (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
         if (!/^[1-9][0-9]{0,127}$/.test(seller) || !record || Object.keys(record).sort().join(',') !== 'initialDataRoot,sellerId,stateDirectory,status' || record.sellerId !== seller || !['created', 'verified'].includes(String(record.status)) || !same(record.stateDirectory, state) || !validPath(record.initialDataRoot)) continue;
         const storage = await read(path.join(state, 'storage.json'), 65536);
-        if (!storage || storage.version !== 1 || Object.keys(storage).some(k => !['version', 'dataRoot', 'previousRoot', 'lastBackup', 'lastResult'].includes(k)) || !validPath(storage.dataRoot)) continue;
+        if (!storage || storage.version !== 1 || Object.keys(storage).some(k => !['version', 'dataRoot', 'previousRoot', 'lastBackup', 'lastResult'].includes(k)) || !validPath(storage.dataRoot) || workspacePathUnits(storage.dataRoot) > 260) continue;
         await checkParents(storage.dataRoot);
         const root = await lstat(storage.dataRoot); if (!root.isDirectory() || root.isSymbolicLink()) continue;
         const hash = createHash('sha256').update((process.platform === 'win32' ? directory.toLowerCase() : directory) + '\0' + seller).digest('hex');
@@ -88,14 +101,15 @@ export async function readHistoricalMerchants(directory: string): Promise<Launch
 
 export async function listLauncherCandidates(registry: LauncherRegistry, directories: string[]): Promise<LauncherMerchant[]> {
   const current = await registry.list();
-  const historical = (await Promise.all(directories.map(readHistoricalMerchants))).flat();
+  const sources = [...new Set([...directories, ...current.map(item => item.registry_directory)])];
+  const historical = (await Promise.all(sources.map(readHistoricalMerchants))).flat();
   const key = (item: LauncherMerchant) => `${process.platform === 'win32' ? item.registry_directory.toLowerCase() : item.registry_directory}\0${item.seller_id}`;
   const merged = new Map<string, LauncherMerchant>();
   for (const item of historical) merged.set(key(item), item);
   for (const item of current) {
     const prior = merged.get(key(item));
     // A moved root invalidates the old activation binding until a fresh verified launch.
-    if (!prior || (process.platform === 'win32' ? prior.data_root.toLowerCase() === item.data_root.toLowerCase() : prior.data_root === item.data_root)) merged.set(key(item), item);
+    if (item.verified_at > 0 && (!prior || (process.platform === 'win32' ? prior.data_root.toLowerCase() === item.data_root.toLowerCase() : prior.data_root === item.data_root))) merged.set(key(item), item);
   }
   return [...merged.values()];
 }

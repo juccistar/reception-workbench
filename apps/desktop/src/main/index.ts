@@ -801,7 +801,7 @@ else {
     } finally { backendStartPromise = null; storageProgress('ready', startupError || '数据目录预检完成。'); }
     if (backend) window.webContents.send('reception:event', { event: 'state.changed', data: {} });
     if(args.includes('--connect-from-accio') && backend) {
-      void (async () => { try {
+      void (async () => { let verifiedConnection = false; try {
         const started = await call<{ job_id: string }>('check_connection');
         const deadline = Date.now() + 120000;
         let verifiedJob = false;
@@ -815,13 +815,22 @@ else {
         if (!verifiedJob) throw new Error('connection_check_incomplete');
         const snapshot = await call<Snapshot>('get_snapshot');
         if (snapshot.app.account_verified && snapshot.app.seller_id === expectedSeller && /^[1-9]\d*$/.test(snapshot.app.seller_id)) {
+          verifiedConnection = true;
           window?.setTitle(`询盘接待助手 · 商家 ${snapshot.app.seller_id}`);
           const registryDirectory = process.env.RECEPTION_MERCHANT_REGISTRY_DIR;
           if (registryDirectory && path.isAbsolute(registryDirectory) && path.isAbsolute(bootstrapPaths.stateDir) && path.isAbsolute(dataRoot)) {
             const refreshed = resolveDataLocation(args);
             if (path.resolve(refreshed.currentRoot) !== path.resolve(dataRoot)) throw new Error('data_root_changed');
             await Promise.all([registryDirectory, bootstrapPaths.stateDir, dataRoot].map(directory => rejectDirectoryLinks(directory)));
-            const record = await (await createLauncherRegistry()).registerVerified({ seller_id: snapshot.app.seller_id, name: `商家 ${snapshot.app.seller_id.slice(-4)}`, registry_directory: path.resolve(registryDirectory), state_directory: path.resolve(bootstrapPaths.stateDir), data_root: path.resolve(dataRoot), verified_at: Date.now() });
+            const registry = await createLauncherRegistry();
+            let record: Awaited<ReturnType<typeof registry.registerVerified>> | undefined;
+            for (let attempt = 0; attempt < 3; attempt++) {
+              const current = await call<Snapshot>('get_snapshot');
+              if (closing || !current.app.account_verified || current.app.seller_id !== snapshot.app.seller_id || path.resolve(resolveDataLocation(args).currentRoot) !== path.resolve(dataRoot)) throw new Error('identity_changed');
+              try { record = await registry.registerVerified({ seller_id: snapshot.app.seller_id, name: `商家 ${snapshot.app.seller_id.slice(-4)}`, registry_directory: path.resolve(registryDirectory), state_directory: path.resolve(bootstrapPaths.stateDir), data_root: path.resolve(dataRoot), verified_at: Date.now() }); break; }
+              catch (error) { if (attempt === 2) throw error; await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1))); }
+            }
+            if (!record) throw new Error('launcher_registration_failed');
             const latest = await call<Snapshot>('get_snapshot');
             if (closing || !latest.app.account_verified || latest.app.seller_id !== record.seller_id || path.resolve(resolveDataLocation(args).currentRoot) !== record.data_root) throw new Error('identity_changed');
             const activation = await createWindowsLauncherActivation();
@@ -836,9 +845,11 @@ else {
               if (window.isMinimized()) window.restore(); window.show(); window.focus();
             }, validate);
             if (closing || storageBusy || updateTask) await close(); else closeActivation = close;
-          }
+          } else throw new Error('launcher_registration_unavailable');
         }
-      } catch { /* explicit connection page will display why */ } })();
+      } catch {
+        if (verifiedConnection && window && !window.isDestroyed() && !closing) void dialog.showMessageBox(window, { type: 'warning', title: '商家登记未完成', message: '平台读取已通过，但启动台登记或窗口连接未完成。', detail: '请检查本机目录权限后重新授权启动，或在启动台选择已有商家登记目录。', buttons: ['知道了'] });
+      } })();
     }
     } finally { await releaseStart(); }
   }).catch(()=>{dialog.showErrorBox('工作台未能启动','请检查程序组件和本地目录权限，保留已有数据后重试。');app.exit(2);});

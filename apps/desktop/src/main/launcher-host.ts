@@ -4,7 +4,7 @@ import { ModelCheckHost } from './model-check-host';
 import { MODEL_CAPABILITIES, type ModelCapability, type ModelCapabilityState } from '../shared/model-settings';
 import path from 'node:path';
 import { isWorkbenchPage } from './trusted-page';
-import { createLauncherRegistry, historicalRegistryDirectories, listLauncherCandidates } from './launcher-registry';
+import { createLauncherRegistry, historicalRegistryDirectories, listLauncherCandidates, readHistoricalMerchants } from './launcher-registry';
 import { createWindowsLauncherActivation } from './launcher-activation';
 import { createModelSettingsStore } from './model-settings-store';
 import { buildAccioLaunchInfo } from './launch-command';
@@ -24,17 +24,34 @@ export async function runLauncher(): Promise<void> {
   const store = () => storePromise ??= createModelSettingsStore();
   let historicalDirectories: ReturnType<typeof historicalRegistryDirectories> | undefined;
   const candidates = async () => listLauncherCandidates(await registry(), await (historicalDirectories ??= historicalRegistryDirectories()));
+  let activationPromise: ReturnType<typeof createWindowsLauncherActivation> | undefined;
+  const activationHost = () => activationPromise ??= createWindowsLauncherActivation().catch(error => { activationPromise = undefined; throw error; });
   ipcMain.handle('launcher:merchants', async event => {
     valid(event);
     const items = await candidates();
-    const activation = await createWindowsLauncherActivation().catch(() => null);
-    return Promise.all(items.map(async item => ({ id: item.record_id, name: item.name, account_tail: item.seller_id.slice(-4), status: activation && await activation.probe(item).catch(() => false) ? 'opened' as const : 'reauthorize' as const, data_root: item.data_root, verified_at: item.verified_at })));
+    const activation = await activationHost().catch(() => null);
+    return Promise.all(items.map(async item => ({ id: item.record_id, name: item.name, account_tail: item.seller_id.slice(-4), status: item.verified_at > 0 && activation && await activation.probe(item).catch(() => false) ? 'opened' as const : 'reauthorize' as const, data_root: item.data_root, verified_at: item.verified_at })));
+  });
+  ipcMain.handle('launcher:import-merchants', async event => {
+    valid(event);
+    try {
+      const selected = await dialog.showOpenDialog(window, { title: '导入所选登记目录中的商家', properties: ['openDirectory'] });
+      if (selected.canceled || selected.filePaths.length !== 1) return 0;
+      const items = await readHistoricalMerchants(selected.filePaths[0]);
+      if (!items.length) throw new Error('no_valid_merchant_registry');
+      const target = await registry();
+      for (const item of items) await target.importHistorical(item);
+      return items.length;
+    } catch (error) {
+      if (error instanceof Error && error.message === 'no_valid_merchant_registry') throw new Error('该目录没有可用的商家登记，请选择 AlibabaReceptionWorkbenchHost 目录。');
+      throw new Error('商家登记导入未完成，请检查所选目录和本机写入权限。原业务数据未移动。');
+    }
   });
   ipcMain.handle('launcher:open', async (event, id: unknown) => {
     valid(event);
     const item = typeof id === 'string' ? (await candidates()).find(entry => entry.record_id === id) : undefined;
-    if (!item) throw new Error('商家记录不存在。');
-    const activation = await createWindowsLauncherActivation().catch(() => null);
+    if (!item || item.verified_at === 0) throw new Error('商家需要从 Accio Work 重新授权。');
+    const activation = await activationHost().catch(() => null);
     if (!activation || !await activation.activate(item).catch(() => false)) throw new Error('当前窗口不可用，请从该商家的 Accio Work 授权会话重新启动。');
   });
   ipcMain.handle('launcher:authorization', event => { valid(event); return info().instructions; });

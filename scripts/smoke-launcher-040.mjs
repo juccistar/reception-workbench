@@ -19,7 +19,7 @@ const assets = assetsIndex < 0 ? path.join(root, 'artifacts/app') : path.resolve
 const env = { ...process.env };
 for (const key of Object.keys(env)) if (/^(ACCIO|PHOENIX|RECEPTION|HARNESS)_/i.test(key) || /^(ELECTRON_RUN_AS_NODE|PYTHONPATH|PYTHONHOME)$/i.test(key) || /credential|secret|token|password|api.?key/i.test(key)) delete env[key];
 Object.assign(env, { HARNESS_ROOT: root, HARNESS_TEMP: temp, HARNESS_ASSETS: assets, LOCALAPPDATA: path.join(temp, 'local'), APPDATA: path.join(temp, 'roaming') });
-const report = { status: 'failed', actual_exe_entry: false, candidate_assets: assetsIndex >= 0, production_launcher_host: false, production_launcher_preload: true, production_renderer: true, synthetic_registry: true, synthetic_model_checker: true, synthetic_encryption: true, model_network_calls: 0, screenshots: [], checks: {} };
+const report = { status: 'failed', actual_exe_entry: false, candidate_assets: assetsIndex >= 0, production_launcher_host: false, production_launcher_preload: true, production_renderer: true, synthetic_registry: true, synthetic_model_checker: true, synthetic_encryption: true, model_network_calls: 0, synthetic_native_folder_picker: true, screenshots: [], checks: {} };
 let app;
 try {
   const fixture = path.join(temp, 'host.cjs');
@@ -48,6 +48,17 @@ try {
   await page.getByText('合成授权说明').waitFor();
   assert.equal(await app.evaluate(() => process._getActiveHandles().filter(x => x?.constructor?.name === 'ChildProcess' && x.exitCode === null).length), 0);
   await page.keyboard.press('Escape'); report.checks.legacy_refresh_and_authorization = true;
+  await page.getByRole('button', { name: '选择已有商家登记目录', exact: true }).click();
+  await page.getByRole('radio', { name: /商家 8987/ }).waitFor();
+  const imported = (await page.evaluate(() => window.launcher.merchants())).filter(m => m.account_tail === '8987');
+  assert.equal(imported.length, 1); assert.equal(imported[0].verified_at, 0); assert.equal(imported[0].status, 'reauthorize');
+  await screenshot(page, '06-isolated-merchant-import.png'); report.checks.imported_isolated_registry = true;
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(440, 559));
+  await page.waitForFunction(() => innerWidth <= 440);
+  await page.getByRole('button', { name: '选择已有商家登记目录', exact: true }).waitFor();
+  assert(await page.evaluate(() => { const buttons = [...document.querySelectorAll('footer button')]; return buttons.every(button => { const r = button.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; }); }));
+  await screenshot(page, '07-narrow-import-footer.png'); report.checks.narrow_footer = true;
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(656, 559));
   await page.getByRole('button', { name: '模型配置', exact: true }).click();
   async function add(name, protocol) {
     await page.getByRole('button', { name: '＋ 添加 API' }).click();
@@ -73,7 +84,15 @@ try {
     return pending;
   });
   assert.equal(stale, 'rejected'); report.checks.stale_check_rejected = true;
-  await app.close(); app = undefined; report.status = 'passed';
+  const beforeRestart = app.process(); await app.close(); app = undefined;
+  assert.equal(beforeRestart.exitCode, 0);
+  app = await launch(); page = await app.firstWindow();
+  await page.getByRole('radio', { name: /商家 8987/ }).waitFor();
+  const restored = (await page.evaluate(() => window.launcher.merchants())).filter(m => m.account_tail === '8987');
+  assert.equal(restored.length, 1); assert.equal(restored[0].verified_at, 0); assert.equal(restored[0].status, 'reauthorize');
+  await screenshot(page, '08-import-after-restart.png'); report.checks.import_survives_restart = true;
+  const child = app.process(); await app.close(); app = undefined; assert.equal(child.exitCode, 0);
+  report.checks.normal_shutdown = true; report.status = 'passed';
 } catch (error) { report.error = String(error?.stack || error); process.exitCode = 1; }
 finally { if (app) await app.close().catch(() => {}); await writeFile(path.join(output, 'result.json'), JSON.stringify(report, null, 2) + '\n', { flag: 'wx' }); }
 console.log(JSON.stringify(report));

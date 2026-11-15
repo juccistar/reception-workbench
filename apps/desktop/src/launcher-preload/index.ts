@@ -3,6 +3,7 @@ import type { LauncherBridge } from '../shared/launcher';
 
 const bridge: LauncherBridge = Object.freeze({
   merchants: () => ipcRenderer.invoke('launcher:merchants'),
+  importMerchants: () => ipcRenderer.invoke('launcher:import-merchants'),
   openMerchant: (id: string) => ipcRenderer.invoke('launcher:open', id),
   authorization: () => ipcRenderer.invoke('launcher:authorization'),
   copyAuthorization: () => ipcRenderer.invoke('launcher:copy-authorization'),

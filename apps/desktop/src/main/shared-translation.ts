@@ -1,7 +1,6 @@
-import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { promisify } from 'node:util';
+import { resolveWindowsUserLocalAppData } from './windows-user-directories';
 // @ts-ignore The existing Windows mutex helper is JavaScript without a declaration.
 import { acquireMerchantRegistryMutex } from '../../../../scripts/merchant-mutex.mjs';
 import { normalizeTranslationBaseUrl } from '../shared/translation-endpoint';
@@ -78,13 +77,8 @@ export async function resolveSharedTranslationDirectory(mode: 'demo' | 'live'): 
   if (process.env.RECEPTION_SHARED_SETTINGS_DIR !== undefined) {
     return path.join(safeDirectory(process.env.RECEPTION_SHARED_SETTINGS_DIR), mode);
   }
-  if (process.platform !== 'win32') throw new Error('共享翻译配置目录不可用。');
   try {
-    const program = "$ErrorActionPreference='Stop';[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);[Console]::Out.Write([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData))";
-    const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
-    const { stdout } = await promisify(execFile)(powershell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(program, 'utf16le').toString('base64')],
-      { windowsHide: true, timeout: 10000, maxBuffer: 4096, encoding: 'utf8' });
-    const localAppData = safeDirectory(stdout);
+    const localAppData = safeDirectory(await resolveWindowsUserLocalAppData());
     return path.join(localAppData, 'AlibabaReceptionWorkbenchShared', 'translation', mode);
   } catch { throw new Error('共享翻译配置目录不可用。'); }
 }
