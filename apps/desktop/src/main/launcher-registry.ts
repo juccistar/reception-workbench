@@ -2,6 +2,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { resolveModelSettingsDirectory } from './model-settings-store';
+import { companyName } from './launcher-company-name';
 // @ts-ignore Existing Windows mutex helper.
 import { acquireMerchantRegistryMutex } from '../../../../scripts/merchant-mutex.mjs';
 // @ts-ignore Existing Windows path budget helper.
@@ -24,7 +25,7 @@ async function checkParents(directory: string): Promise<void> {
 }
 const validPath = (v: unknown): v is string => typeof v === 'string' && path.isAbsolute(v) && path.resolve(v) === v && !/^(?:\\\\|\/\/)/.test(v) && !/[\x00-\x1f]/.test(v) && v !== path.parse(v).root;
 function validate(item: LauncherMerchant): void {
-  if (!item || !/^[a-f0-9-]{36}$/.test(item.record_id) || !/^[1-9][0-9]{0,127}$/.test(item.seller_id) || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 200 || /[\x00-\x1f]/.test(item.name) || !validPath(item.registry_directory) || !validPath(item.state_directory) || !validPath(item.data_root) || !Number.isSafeInteger(item.verified_at) || item.verified_at < 0 || Object.keys(item).sort().join(',') !== 'data_root,name,record_id,registry_directory,seller_id,state_directory,verified_at') throw new Error('launcher_registry_invalid');
+  if (!item || !/^[a-f0-9-]{36}$/.test(item.record_id) || !/^[1-9][0-9]{0,127}$/.test(item.seller_id) || typeof item.name !== 'string' || !item.name.trim() || [...item.name].length > 400 || /[\x00-\x1f]/.test(item.name) || !validPath(item.registry_directory) || !validPath(item.state_directory) || !validPath(item.data_root) || !Number.isSafeInteger(item.verified_at) || item.verified_at < 0 || Object.keys(item).sort().join(',') !== 'data_root,name,record_id,registry_directory,seller_id,state_directory,verified_at') throw new Error('launcher_registry_invalid');
 }
 export class LauncherRegistry {
   private readonly file: string;
@@ -53,13 +54,32 @@ export class LauncherRegistry {
     const release = await this.acquireLock();
     try { const merchants = await this.list(); const old = merchants.find(m => m.seller_id === input.seller_id && m.registry_directory === input.registry_directory);
       if (historical && old && old.verified_at > 0) return old;
-      const item: LauncherMerchant = { ...input, record_id: old?.record_id ?? (historical ? (input as LauncherMerchant).record_id : randomUUID()) }; validate(item);
-      const next = [...merchants.filter(m => m.record_id !== item.record_id), item]; if (next.length > 512) throw new Error('launcher_registry_invalid');
-      const bytes = Buffer.from(JSON.stringify({ format: 'launcher-registry-v1', merchants: next })); if (bytes.length > 1024 * 1024) throw new Error('launcher_registry_invalid');
-      const temp = path.join(this.directory, `.merchant-${randomUUID()}.tmp`);
-      try { const f = await open(temp, 'wx', 0o600); try { await f.writeFile(bytes); await f.sync(); } finally { await f.close(); } await rename(temp, this.file); } finally { await unlink(temp).catch(() => {}); }
+      const sameRoot = old && old.data_root === input.data_root && old.state_directory === input.state_directory;
+      const name = !historical && sameRoot && !companyName(input.name, input.seller_id) && companyName(old.name, old.seller_id) || input.name;
+      const item: LauncherMerchant = { ...input, name, record_id: old?.record_id ?? (historical ? (input as LauncherMerchant).record_id : randomUUID()) }; validate(item);
+      await this.write([...merchants.filter(m => m.record_id !== item.record_id), item]);
       return structuredClone(item);
     } finally { await release(); }
+  }
+  /** Update only the exact verified registration; never renew its verification. */
+  async updateCompanyName(expected: LauncherMerchant, value: unknown): Promise<boolean> {
+    validate(expected);
+    const name = companyName(value, expected.seller_id);
+    if (!name || expected.verified_at < 1) return false;
+    const release = await this.acquireLock();
+    try {
+      const merchants = await this.list();
+      const item = merchants.find(m => m.record_id === expected.record_id);
+      if (!item || item.seller_id !== expected.seller_id || item.registry_directory !== expected.registry_directory || item.state_directory !== expected.state_directory || item.data_root !== expected.data_root || item.verified_at !== expected.verified_at) return false;
+      if (item.name !== name) { item.name = name; await this.write(merchants); }
+      return true;
+    } finally { await release(); }
+  }
+  private async write(merchants: LauncherMerchant[]): Promise<void> {
+    if (merchants.length > 512) throw new Error('launcher_registry_invalid');
+    const bytes = Buffer.from(JSON.stringify({ format: 'launcher-registry-v1', merchants })); if (bytes.length > 1024 * 1024) throw new Error('launcher_registry_invalid');
+    const temp = path.join(this.directory, `.merchant-${randomUUID()}.tmp`);
+    try { const f = await open(temp, 'wx', 0o600); try { await f.writeFile(bytes); await f.sync(); } finally { await f.close(); } await rename(temp, this.file); } finally { await unlink(temp).catch(() => {}); }
   }
 }
 // Historical profiles are routing hints, not proof of a current authorization.

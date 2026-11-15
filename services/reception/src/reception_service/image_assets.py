@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+from collections import OrderedDict
 import hashlib
 import http.client
 import io
@@ -112,20 +113,25 @@ def _decode_image_leased(data: bytes, mime: str) -> dict:
                 image.load()
                 oriented = ImageOps.exif_transpose(image)
                 oriented.thumbnail((1280, 1280), Image.Resampling.LANCZOS)
-                # A fresh image prevents metadata, including EXIF, being copied.
-                clean = Image.new("RGB", oriented.size, "white")
+                # Rebuild pixels without metadata, retaining actual transparency.
                 rgba = oriented.convert("RGBA")
-                clean.paste(rgba, mask=rgba.getchannel("A"))
+                transparent = rgba.getchannel("A").getextrema()[0] < 255
+                clean = Image.new("RGBA" if transparent else "RGB", oriented.size)
+                clean.paste(rgba if transparent else rgba.convert("RGB"))
                 while True:
-                    for quality in (85, 70, 55, 40):
+                    for quality in ((None,) if transparent else (85, 70, 55, 40)):
                         output = io.BytesIO()
-                        clean.save(output, format="JPEG", quality=quality, optimize=True)
+                        if transparent:
+                            clean.save(output, format="PNG", optimize=True)
+                        else:
+                            clean.save(output, format="JPEG", quality=quality, optimize=True)
                         preview = output.getvalue()
                         if len(preview) <= MAX_PREVIEW_BYTES:
+                            preview_mime = "image/png" if transparent else "image/jpeg"
                             return {"sha256": hashlib.sha256(data).hexdigest(), "mime": mime,
                                     "width": width, "height": height, "size": len(data),
                                     "original_b64": base64.b64encode(data).decode("ascii"),
-                                    "preview_data_url": "data:image/jpeg;base64," + base64.b64encode(preview).decode("ascii")}
+                                    "preview_data_url": f"data:{preview_mime};base64," + base64.b64encode(preview).decode("ascii")}
                     if max(clean.size) <= 1:
                         raise ImageAssetError("image preview failed")
                     clean.thumbnail((max(1, clean.width * 3 // 4), max(1, clean.height * 3 // 4)), Image.Resampling.LANCZOS)
@@ -133,6 +139,44 @@ def _decode_image_leased(data: bytes, mime: str) -> dict:
         raise
     except Exception:
         raise ImageAssetError("invalid image") from None
+
+
+# Only derived previews are cached; original bytes and account data remain in SQLite.
+_PREVIEW_CACHE = OrderedDict()
+_PREVIEW_CACHE_LOCK = threading.Lock()
+_PREVIEW_CACHE_LIMIT = 8 * 1024 * 1024
+
+
+def derived_preview(asset: dict) -> str:
+    """Upgrade old flattened previews after the caller verifies source ownership."""
+    preview = asset.get('preview_data_url')
+    mime = asset.get('mime')
+    if mime not in ('image/png', 'image/webp') or not isinstance(preview, str) or not preview.startswith('data:image/jpeg;base64,'):
+        return preview
+    original = asset.get('original_b64')
+    sha = asset.get('sha256')
+    if not isinstance(original, str) or len(original) > ((MAX_BYTES + 2) // 3) * 4:
+        raise ImageAssetError('invalid image')
+    try:
+        data = base64.b64decode(original, validate=True)
+    except Exception:
+        raise ImageAssetError('invalid image') from None
+    if hashlib.sha256(data).hexdigest() != sha:
+        raise ImageAssetError('invalid image')
+    key = (sha, mime, 1)
+    # Serializing regeneration also deduplicates concurrent requests for the same image.
+    with _PREVIEW_CACHE_LOCK:
+        cached = _PREVIEW_CACHE.get(key)
+        if cached is not None:
+            _PREVIEW_CACHE.move_to_end(key)
+            return cached
+        decoded = decode_image(data, mime)
+        result = decoded['preview_data_url']
+        if len(result) <= _PREVIEW_CACHE_LIMIT:
+            while _PREVIEW_CACHE and sum(map(len, _PREVIEW_CACHE.values())) + len(result) > _PREVIEW_CACHE_LIMIT:
+                _PREVIEW_CACHE.popitem(last=False)
+            _PREVIEW_CACHE[key] = result
+        return result
 
 
 def _remaining(deadline: float) -> float:

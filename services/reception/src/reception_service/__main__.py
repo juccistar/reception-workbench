@@ -27,6 +27,8 @@ def main():
         from .model_providers.checker import run_check_from_stdin
         return run_check_from_stdin()
     parser = _Parser(description='客户接待工作台 Python 服务')
+    parser.add_argument('--whatsapp-account', action='store_true')
+    parser.add_argument('--workspace-id')
     parser.add_argument('--mode', choices=('live',), default='live')
     parser.add_argument('--data-dir', type=Path, default=Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'AlibabaReceptionWorkbenchV2')
     parser.add_argument('--seller-id', default='')
@@ -49,6 +51,13 @@ def main():
         with output_lock:
             sys.stdout.write(line + '\n')
             sys.stdout.flush()
+
+    if args.whatsapp_account:
+        from .whatsapp_account_service import run_account_cli
+        raise SystemExit(run_account_cli(args, emit))
+
+    if args.workspace_id:
+        parser.error('workspace-id requires whatsapp-account')
 
     if args.inspect_launch_owner:
         if (args.maintenance or args.seller_id or args.workctl or args.source or args.destination

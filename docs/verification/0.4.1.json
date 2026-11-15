@@ -1,0 +1,74 @@
+{
+  "version": "0.4.1",
+  "date": "2026-11-15",
+  "status": "in_development",
+  "branch": "feat/whatsapp-chrome-0.4.1",
+  "base_commit": "626fe07",
+  "plan": "docs/0.4.1开发方案.md",
+  "authorization": {
+    "development": true,
+    "company_name_launcher_titles": true,
+    "targeted_verification": true,
+    "build_and_immediate_local_commit": true,
+    "public_release_after_completion": "existing_session_authorization",
+    "private_source_push": false,
+    "installation": false,
+    "real_business_data_migration": false,
+    "real_account_login_or_messages": false,
+    "real_paid_model_calls": false,
+    "full_suite": false
+  },
+  "implementation": {
+    "real_system_chrome_private_pipe": "public_qr_feasibility_passed_production_host_in_progress",
+    "launcher_company_names": "implemented_gui_verification_pending",
+    "independent_account_service": "implemented_synthetic_generation_and_core_verified_integration_pending",
+    "cross_merchant_binding": "implemented_segment_and_uncertainty_tests_passed",
+    "merchant_context_broker": "implemented_targeted_tests_passed_production_handshake_pending",
+    "account_ledger_and_legacy_preservation": "implementation_in_progress_full_source_rehearsal_pending",
+    "launcher_account_management_and_tray": "wired_actual_window_verification_pending",
+    "writeback_contract_disabled": "capability_closed_full_versioned_plan_contract_pending",
+    "embedded_merchant_whatsapp_retirement": "merchant_ui_preload_and_runtime_path_retired_historical_modules_cleanup_pending",
+    "transparent_white_png": "alpha_preview_legacy_read_only_upgrade_and_checkerboard_implemented_gui_pending"
+  },
+  "verification": {
+    "chrome_public_qr": {
+      "report": "artifacts/verification/chrome-041-p1-run-20261115b/report.json",
+      "chrome": "152.0.7977.65",
+      "sdk": "1.34.8",
+      "puppeteer": "24.38.0",
+      "headless": false,
+      "private_pipe": true,
+      "same_visible_page": true,
+      "observations_ms": [65546, 65459],
+      "qr_refreshed_both": true,
+      "owned_processes_remaining": 0,
+      "authenticated": false,
+      "limitations": [
+        "Controlled failure covers one SDK method evaluation, not initialization failure or browser crash recovery.",
+        "Two images were viewed but masked the whole webpage; page-layout screenshots with precise QR masking remain required.",
+        "Production Chrome host, login persistence and real messages are not covered by this feasibility probe."
+      ]
+    },
+    "targeted_tests": [
+      {"scope": "initial_company_name_chain", "files": 4, "passed": 24, "log": "artifacts/verification/company-names-041/ui.log", "historical_stage_not_additive": true},
+      {"scope": "current_desktop_account_launcher_and_company_names", "files": 7, "passed": 33, "long_unicode_company_name_400": "passed", "includes": ["launcher-company-name.test.ts", "launcher-registry-legacy.test.ts", "launcher-host-trust.test.ts", "whatsapp-account-store.test.ts", "whatsapp-merchant-broker.test.ts", "chrome-host.test.ts", "whatsapp-accounts.test.tsx"]},
+      {"scope": "current_account_related_backend", "pattern": "test_whatsapp_account*_041.py", "files": 6, "passed": 37, "includes_core_and_generation_below": true},
+      {"scope": "account_core_041", "file": "test_whatsapp_account_core_041.py", "passed": 13},
+      {"scope": "account_generation_041", "file": "test_whatsapp_account_generation_041.py", "passed": 8, "real_model_router": true, "synthetic_provider_and_receipts": true, "image_and_text_same_call": true},
+      {"scope": "transparent_preview_and_original_integrity", "file": "test_image_assets.py", "passed": 11},
+      {"scope": "message_images_and_legacy_read_only_preview", "file": "test_message_photos.py", "passed": 17}
+    ],
+    "known_test_failures_resolved": ["Initial synthetic PNG fixture was invalid; replaced with Pillow-generated PNG and image generation test passed.", "Prepared-send fixture used a buyer source from a prior binding segment; changed it to a new buyer message in the active segment and core tests passed."],
+    "typecheck": {"status": "passed", "command": "tsc --noEmit -p apps/desktop/tsconfig.json"},
+    "source_build": {"status": "passed", "stage": "development_snapshot_1", "command": "node scripts/build.mjs", "desktop_only": true, "output": "artifacts/app", "candidate_or_release": false, "window_verification": "pending", "immediate_local_commit": true},
+    "candidate": null,
+    "real_account_send_receive": "not_verified",
+    "real_model_quality": "not_verified"
+  },
+  "release": {
+    "repository": "juccistar/reception-workbench-releases",
+    "published": false,
+    "installed": false,
+    "real_data_migrated": false
+  }
+}

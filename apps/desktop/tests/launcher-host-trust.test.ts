@@ -1,11 +1,15 @@
 // @vitest-environment node
 import { pathToFileURL } from 'node:url';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 const state = vi.hoisted(() => ({
   handlers: new Map<string, (...args: any[]) => any>(),
   window: undefined as any,
   file: '',
+  directory: '',
   navigate: undefined as any,
   showOpenDialog: vi.fn(),
   readHistoricalMerchants: vi.fn(),
@@ -13,7 +17,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('electron', () => ({
-  app: { whenReady: async () => {}, isPackaged: false, quit: vi.fn() },
+  app: { whenReady: async () => {}, isPackaged: false, quit: vi.fn(), setName: vi.fn(), setPath: vi.fn(), requestSingleInstanceLock: () => true, on: vi.fn() },
   BrowserWindow: class {
     webContents = {
       mainFrame: { url: '' },
@@ -37,13 +41,14 @@ vi.mock('../src/main/launcher-registry', () => ({
   readHistoricalMerchants: state.readHistoricalMerchants,
 }));
 vi.mock('../src/main/launcher-activation', () => ({ createWindowsLauncherActivation: vi.fn() }));
-vi.mock('../src/main/model-settings-store', () => ({ createModelSettingsStore: vi.fn() }));
+vi.mock('../src/main/model-settings-store', () => ({ createModelSettingsStore: vi.fn(), resolveModelSettingsDirectory: async () => path.join(state.directory, 'models') }));
 vi.mock('../src/main/launch-command', () => ({ buildAccioLaunchInfo: () => ({ instructions: 'authorized' }) }));
 
 import { runLauncher } from '../src/main/launcher-host';
 
 describe('launcher IPC origin', () => {
-  beforeAll(async () => { await runLauncher(); });
+  beforeAll(async () => { state.directory = await mkdtemp(path.join(os.tmpdir(), 'launcher-trust-041-')); await runLauncher(); });
+  afterAll(async () => { await rm(state.directory, { recursive: true, force: true }); });
 
   it('accepts the launcher main frame with Windows drive-letter normalization', () => {
     const contents = state.window.webContents;

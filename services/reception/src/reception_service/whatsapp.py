@@ -32,6 +32,8 @@ class WhatsAppMixin(WhatsAppMediaMixin):
         self._wa_epoch = None
         self._wa_status = 'disconnected'
         self._wa_enabled = False
+        if getattr(self, '_whatsapp_retired', False):
+            return
         with self.repo.transaction():
             for batch in self.repo.list('wa_reply_batch'):
                 if batch.get('status') not in ('accepted', 'stopped'):
@@ -73,6 +75,8 @@ class WhatsAppMixin(WhatsAppMediaMixin):
             self.repo.put('wa_conversation', key, contact)
 
     def _wa_cancel(self, chat_id=None, *, preserve_pending=False):
+        if getattr(self, '_whatsapp_retired', False):
+            return
         for batch in self.repo.list('wa_reply_batch'):
             if batch.get('seller_id') == self.seller_id and batch.get('account_id') == self._wa_account and (chat_id is None or batch.get('chat_id') == chat_id):
                 self._wa_stop_batch(batch, preserve_pending=preserve_pending)

@@ -7,7 +7,9 @@ export interface LauncherMerchant {
   verified_at?: number | null;
 }
 
-export interface LauncherBridge {
+import type { WhatsAppAccountBridge } from './whatsapp-account';
+
+export interface LauncherBridge extends WhatsAppAccountBridge {
   merchants(): Promise<LauncherMerchant[]>;
   importMerchants(): Promise<number>;
   openMerchant(id: string): Promise<void>;

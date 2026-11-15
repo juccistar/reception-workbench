@@ -12,6 +12,7 @@ import re
 import time
 
 from .errors import ServiceError, read_diagnostics
+from .image_assets import ImageAssetError, derived_preview
 from .photos import (has_photo, is_photo_placeholder, photo_version, with_photo_notice,
                      photo_observation_id, valid_photo_observation, pending_photo_message_ids)
 from .repository import encoded, new_id, now_ms
@@ -70,7 +71,11 @@ class MessagePhotosMixin:
                 if not asset or asset.get('sha256') != state.get('sha256'):
                     return {**result, 'status': 'failed', 'vision_status': 'unavailable', 'message': '本地图片内容缺失，可重试'}
                 # Original bytes and resource URLs never cross the renderer boundary.
-                result.update(data_url=asset['preview_data_url'], width=asset['width'],
+                try:
+                    preview = derived_preview(asset)
+                except (ImageAssetError, ServiceError):
+                    return {**result, 'status': 'failed', 'vision_status': 'unavailable', 'message': '本地图片内容无效或处理资源暂不可用'}
+                result.update(data_url=preview, width=asset['width'],
                               height=asset['height'], sha256=asset['sha256'],
                               image_ref={'kind': 'message', 'conversation_id': conversation_id, 'message_id': message_id,
                                          'source_version': source_version, 'sha256': asset['sha256']})

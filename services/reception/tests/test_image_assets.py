@@ -32,6 +32,41 @@ class ImageAssetsTests(unittest.TestCase):
                     self.assertLessEqual(max(decoded.size), 1280)
                     self.assertFalse(decoded.getexif())
 
+    def test_transparent_previews_preserve_alpha_and_original(self):
+        for mode, fmt, mime in (('RGBA', 'PNG', 'image/png'), ('LA', 'PNG', 'image/png'),
+                                ('P', 'PNG', 'image/png'), ('RGBA', 'WEBP', 'image/webp')):
+            with self.subTest(mode=mode, fmt=fmt):
+                if mode == 'P':
+                    image = Image.new('P', (20, 20), 0)
+                    image.putpalette([255, 255, 255, 255, 255, 255] + [0] * 762)
+                    image.paste(1, (5, 5, 15, 15))
+                    image.info['transparency'] = 0
+                else:
+                    image = Image.new(mode, (20, 20), (255, 0) if mode == 'LA' else (255, 255, 255, 0))
+                    image.paste((255, 255) if mode == 'LA' else (255, 255, 255, 255), (5, 5, 15, 15))
+                stream = io.BytesIO()
+                image.save(stream, format=fmt)
+                original = stream.getvalue()
+                result = assets.decode_image(original, mime)
+                self.assertEqual(base64.b64decode(result['original_b64']), original)
+                self.assertTrue(result['preview_data_url'].startswith('data:image/png;base64,'))
+                preview = base64.b64decode(result['preview_data_url'].split(',', 1)[1])
+                self.assertLessEqual(len(preview), assets.MAX_PREVIEW_BYTES)
+                with Image.open(io.BytesIO(preview)) as decoded:
+                    self.assertEqual(decoded.getchannel('A').getextrema(), (0, 255))
+                    self.assertFalse(decoded.getexif())
+
+    def test_legacy_preview_verifies_original_even_on_cache_hit(self):
+        image = Image.new('RGBA', (4, 4), (255, 255, 255, 0))
+        stream = io.BytesIO()
+        image.save(stream, 'PNG')
+        asset = assets.decode_image(stream.getvalue(), 'image/png')
+        asset['preview_data_url'] = 'data:image/jpeg;base64,b2xk'
+        self.assertTrue(assets.derived_preview(asset).startswith('data:image/png;base64,'))
+        asset['original_b64'] = base64.b64encode(image_bytes()).decode('ascii')
+        with self.assertRaises(assets.ImageAssetError):
+            assets.derived_preview(asset)
+
     def test_binary_mime_requires_supported_magic_and_complete_image(self):
         for fmt, mime in (("PNG", "image/png"), ("JPEG", "image/jpeg"), ("WEBP", "image/webp")):
             data = image_bytes(fmt)

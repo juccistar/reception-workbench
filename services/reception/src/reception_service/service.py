@@ -28,6 +28,7 @@ from .send_gate import SendAuthorization, SendGateDecision
 from .reply_messages import normalize_reply_output
 from .cached_media import CachedMediaMixin
 from .whatsapp import WhatsAppMixin
+from .whatsapp_merchant_context import WhatsAppMerchantContextMixin
 from .business_supplement import supplement_fingerprint
 from . import policy_library
 from .integrations.generation_metadata import applied_policy_summaries, checked_metadata
@@ -68,7 +69,8 @@ FAST = frozenset({'get_snapshot', 'get_executor_health', 'get_conversation', 'ge
                   'get_whatsapp_state', 'save_whatsapp_binding', 'get_whatsapp_context', 'set_whatsapp_reception',
                   'takeover_whatsapp', 'reconcile_whatsapp_operation', '_wa_set_account', '_wa_ingest',
                   '_wa_prepare_send', '_wa_transport_result', '_wa_ack', '_wa_media_begin', '_wa_media_chunk',
-                  '_wa_media_finish', '_wa_media_fail', '_configure_models', 'shutdown'})
+                  '_wa_media_finish', '_wa_media_fail', '_wa_export_merchant_context', '_wa_writeback_capabilities',
+                  '_wa_writeback_preview', '_wa_writeback_submit', '_configure_models', 'shutdown'})
 DEFAULT_SETTINGS = {'workctl_path': '', 'poll_seconds': 30, 'probe_seconds': 2, 'merge_seconds': 1,
                     'required_fields': ['product', 'quantity', 'specifications', 'destination'],
                     'image_batch_mib': 64, 'image_prepare_seconds': 60, 'image_parallelism': 2,
@@ -98,11 +100,13 @@ def coverage():
             'next_cursor': None, 'message': '尚未读取历史消息'}
 
 
-class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin, ProductLibraryMixin, RequirementMediaMixin, ExecutionMixin, ProcurementMixin, ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
+class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin, ProductLibraryMixin, RequirementMediaMixin, ExecutionMixin, ProcurementMixin, ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
     def __init__(self, data_root: Path, mode='live', seller_id='', emit=None, *, _integration_factory=None, _fixture_initializer=None):
         if mode != 'live' and not (mode == 'demo' and _integration_factory and _fixture_initializer):
             raise ServiceError('invalid_mode', '运行模式无效')
         self._seller_guard = None
+        # Synthetic historical regression factories explicitly retain the old mixin.
+        self._whatsapp_retired = _integration_factory is None
         self._workspace_lock = WorkspaceLock(data_root).acquire(invalidate_clean=False)
         try:
             preflight_workspace(data_root)
@@ -325,6 +329,12 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMixin, RequirementChangesMixin, 
             self.account_verified = True
 
     def call(self, method, params=None):
+        if self._whatsapp_retired and method in {
+                'get_whatsapp_state', 'save_whatsapp_binding', 'get_whatsapp_context',
+                'set_whatsapp_reception', 'takeover_whatsapp', 'reconcile_whatsapp_operation',
+                '_wa_set_account', '_wa_ingest', '_wa_prepare_send', '_wa_transport_result', '_wa_ack',
+                '_wa_media_begin', '_wa_media_chunk', '_wa_media_finish', '_wa_media_fail'}:
+            raise ServiceError('whatsapp_moved', '请从启动台使用独立 WhatsApp 账号环境')
         if method not in FAST | SLOW:
             raise ServiceError('unknown_method', '不支持的业务方法')
         if params is None:

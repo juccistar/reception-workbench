@@ -193,6 +193,8 @@ button{transition:background-color 120ms,color 120ms,border-color 120ms}
 .image-dialog{display:flex;flex-direction:column;align-items:flex-end;gap:10px;max-width:100%;max-height:100%;padding:14px;background:#fff;border-radius:8px}
 .image-dialog button{padding:6px 12px;cursor:pointer}
 .image-dialog img{display:block;max-width:min(90vw,1000px);max-height:75vh;object-fit:contain}
+/* A display-only transparency grid keeps white and dark artwork visible. */
+.message-image-preview img,.image-dialog img,.attachment-preview img,.requirement-image-button img{background-color:#8d949c;background-image:conic-gradient(#c1c6cb 25%,transparent 0 50%,#c1c6cb 0 75%,transparent 0);background-size:16px 16px}
 .new-messages{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);border:1px solid #d5e8df;border-radius:15px;padding:6px 12px;display:flex;align-items:center;gap:7px;background:#fff;box-shadow:0 3px 10px #183d2210;color:var(--green);font-size:11px;z-index:2}
 .composer{margin:0 20px 19px;padding:15px 16px 14px;border:1px solid #e3e7e8;border-radius:12px;box-shadow:0 3px 9px #26383403;flex:0 1 auto;min-height:0;max-height:55%;display:flex;flex-direction:column;background:#fff}
 .composer-content{min-height:0;overflow:auto;overscroll-behavior:contain}

@@ -1,4 +1,11 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Tray, type IpcMainInvokeEvent } from 'electron';
+import { mkdir } from 'node:fs/promises';
+import { resolveModelSettingsDirectory } from './model-settings-store';
+import { WhatsAppAccountManager } from './whatsapp-account-manager';
+import { createWhatsAppAccountStore } from './whatsapp-account-store';
+import { createWindowsWhatsAppMerchantBroker } from './whatsapp-merchant-broker';
+import { ServiceClient } from './service-client';
+import { ModelConfigHost } from './model-config-host';
 import { existsSync } from 'node:fs';
 import { ModelCheckHost } from './model-check-host';
 import { MODEL_CAPABILITIES, type ModelCapability, type ModelCapabilityState } from '../shared/model-settings';
@@ -6,6 +13,7 @@ import path from 'node:path';
 import { isWorkbenchPage } from './trusted-page';
 import { createLauncherRegistry, historicalRegistryDirectories, listLauncherCandidates, readHistoricalMerchants } from './launcher-registry';
 import { createWindowsLauncherActivation } from './launcher-activation';
+import { launcherCompanyName } from './launcher-company-name';
 import { createModelSettingsStore } from './model-settings-store';
 import { buildAccioLaunchInfo } from './launch-command';
 import type { ModelSettingsSaveInput } from '../shared/model-settings';
@@ -13,6 +21,12 @@ import { version as programVersion } from '../../../../package.json';
 
 /** Launcher runs before any business service or business storage is initialized. */
 export async function runLauncher(): Promise<void> {
+  const modelsDirectory = await resolveModelSettingsDirectory();
+  const userData = path.join(path.dirname(modelsDirectory), 'launcher-host');
+  await mkdir(userData, { recursive: true });
+  app.setName('客户接待工作台');
+  app.setPath('userData', userData);
+  if (!app.requestSingleInstanceLock()) { app.quit(); return; }
   await app.whenReady();
   const file = path.join(__dirname, '../renderer/launcher.html');
   const window = new BrowserWindow({ width: 656, height: 559, minWidth: 440, minHeight: 400, title: '接待工作台', backgroundColor: '#ffffff', show: false, autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, '../launcher-preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
@@ -26,11 +40,69 @@ export async function runLauncher(): Promise<void> {
   const candidates = async () => listLauncherCandidates(await registry(), await (historicalDirectories ??= historicalRegistryDirectories()));
   let activationPromise: ReturnType<typeof createWindowsLauncherActivation> | undefined;
   const activationHost = () => activationPromise ??= createWindowsLauncherActivation().catch(error => { activationPromise = undefined; throw error; });
+  let accountManager: WhatsAppAccountManager | undefined;
+  let accountPromise: Promise<WhatsAppAccountManager> | undefined;
+  let tray: Tray | undefined;
+  let exiting = false;
+  let quitting: Promise<void> | undefined;
+  const show = () => { if (!window.isDestroyed()) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } };
+  app.on('second-instance', show);
+  const quit = () => quitting ??= (async () => {
+    try {
+      await accountPromise?.catch(() => {});
+      await accountManager?.close();
+      for (const task of checks.values()) task.cancelled = true;
+      checker.close();
+      exiting = true;
+      tray?.destroy(); tray = undefined;
+      window.destroy(); app.quit();
+    } catch {
+      quitting = undefined;
+      show();
+      await dialog.showMessageBox(window, { type: 'warning', title: '正在保留发送记录', message: 'WhatsApp 尚未完成退出，请保留当前环境并检查连接后重试。', buttons: ['返回工作台'] });
+    }
+  })();
+  const accounts = () => accountPromise ??= (async () => {
+    const manager = new WhatsAppAccountManager({ store: await createWhatsAppAccountStore(), broker: await createWindowsWhatsAppMerchantBroker(), merchants: candidates,
+      available: async record => (await activationHost()).probe(record), version: programVersion,
+      service: (workspaceId, directory) => {
+        if (!executable) throw new Error('WhatsApp 后台组件缺失，请重新安装完整程序。');
+        const env: NodeJS.ProcessEnv = {};
+        for (const [key, value] of Object.entries(process.env)) if (/^(SystemRoot|WINDIR|SystemDrive|PATH|PATHEXT|ComSpec|TEMP|TMP|USERPROFILE|LOCALAPPDATA|APPDATA|ProgramFiles|ProgramFiles\(x86\)|ProgramW6432)$/i.test(key)) env[key] = value;
+        env.PYTHONIOENCODING = 'utf-8'; env.PYTHONDONTWRITEBYTECODE = '1';
+        return new ServiceClient(executable, [...(app.isPackaged ? [] : ['-I', '-u', path.join(root, 'services/reception/run.py')]), '--whatsapp-account', '--workspace-id', workspaceId, '--data-dir', directory], root, env);
+      },
+      models: async invoke => new ModelConfigHost(await store(), invoke),
+      confirm: async (message, detail, action = '确认开启') => (await dialog.showMessageBox(window, { type: 'question', title: 'WhatsApp', message, detail, buttons: ['取消', action], defaultId: 0, cancelId: 0, noLink: true })).response === 1,
+    });
+    const icon = await app.getFileIcon(process.execPath, { size: 'small' });
+    if (icon.isEmpty()) throw new Error('系统托盘暂不可用，请稍后重试。');
+    tray = new Tray(icon); tray.setToolTip('客户接待工作台 · WhatsApp');
+    tray.setContextMenu(Menu.buildFromTemplate([{ label: '打开启动台', click: show }, { label: '打开 WhatsApp Chrome', click: () => { void manager.open().catch(show); } }, { type: 'separator' }, { label: '退出并暂停接待', click: () => { void quit(); } }]));
+    tray.on('double-click', show);
+    accountManager = manager;
+    return manager;
+  })().catch(error => { accountPromise = undefined; throw error; });
+  ipcMain.handle('launcher:wa:get', async event => { valid(event); return (await accounts()).snapshot(); });
+  ipcMain.handle('launcher:wa:create', async (event, label: unknown) => { valid(event); return (await accounts()).create(label); });
+  ipcMain.handle('launcher:wa:select', async (event, workspaceId: unknown) => { valid(event); return (await accounts()).select(workspaceId); });
+  ipcMain.handle('launcher:wa:connect', async event => { valid(event); return (await accounts()).connect(); });
+  ipcMain.handle('launcher:wa:open', async event => { valid(event); return (await accounts()).open(); });
+  ipcMain.handle('launcher:wa:disconnect', async event => { valid(event); return (await accounts()).disconnect(); });
+  ipcMain.handle('launcher:wa:contacts', async event => { valid(event); return (await accounts()).contacts(); });
+  ipcMain.handle('launcher:wa:verify-legacy', async event => { valid(event); return (await accounts()).verifyLegacy(); });
+  ipcMain.handle('launcher:wa:binding', async (event, input) => { valid(event); return (await accounts()).binding(input); });
+  ipcMain.handle('launcher:wa:default', async (event, input) => { valid(event); return (await accounts()).defaultMerchant(input); });
+  ipcMain.handle('launcher:wa:reception', async (event, input) => { valid(event); return (await accounts()).reception(input); });
+  ipcMain.handle('launcher:wa:takeover', async (event, input) => { valid(event); return (await accounts()).takeover(input); });
+  ipcMain.handle('launcher:wa:reconcile', async (event, id) => { valid(event); return (await accounts()).reconcile(id); });
+  ipcMain.handle('launcher:wa:context', async (event, id) => { valid(event); return (await accounts()).context(id); });
+  ipcMain.handle('launcher:wa:writeback-capabilities', async event => { valid(event); return (await accounts()).writebackCapabilities(); });
   ipcMain.handle('launcher:merchants', async event => {
     valid(event);
     const items = await candidates();
     const activation = await activationHost().catch(() => null);
-    return Promise.all(items.map(async item => ({ id: item.record_id, name: item.name, account_tail: item.seller_id.slice(-4), status: item.verified_at > 0 && activation && await activation.probe(item).catch(() => false) ? 'opened' as const : 'reauthorize' as const, data_root: item.data_root, verified_at: item.verified_at })));
+    return Promise.all(items.map(async item => ({ id: item.record_id, name: launcherCompanyName(item.name, item.seller_id, item.verified_at > 0), account_tail: item.seller_id.slice(-4), status: item.verified_at > 0 && activation && await activation.probe(item).catch(() => false) ? 'opened' as const : 'reauthorize' as const, data_root: item.data_root, verified_at: item.verified_at })));
   });
   ipcMain.handle('launcher:import-merchants', async event => {
     valid(event);
@@ -57,7 +129,7 @@ export async function runLauncher(): Promise<void> {
   ipcMain.handle('launcher:authorization', event => { valid(event); return info().instructions; });
   ipcMain.handle('launcher:copy-authorization', event => { valid(event); clipboard.writeText(info().instructions); });
   ipcMain.handle('launcher:models:get', async event => { valid(event); return (await store()).read(); });
-  ipcMain.handle('launcher:models:save', async (event, input: ModelSettingsSaveInput) => { valid(event); if (!input || typeof input !== 'object' || JSON.stringify(input).length > 262144) throw new Error('配置无效。'); return (await store()).save(input); });
+  ipcMain.handle('launcher:models:save', async (event, input: ModelSettingsSaveInput) => { valid(event); if (!input || typeof input !== 'object' || JSON.stringify(input).length > 262144) throw new Error('配置无效。'); const value = await (await store()).save(input); await accountManager?.modelsChanged(); return value; });
   const root = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '../../..');
   const executable = app.isPackaged ? path.join(process.resourcesPath, 'backend', 'reception-backend.exe') : [process.env.RECEPTION_PYTHON, path.join(root, 'services/reception/.venv/Scripts/python.exe'), path.join(root, 'services/reception/.venv/bin/python')].find(v => v && existsSync(v)) || '';
   const checker = new ModelCheckHost({ executable, prefix: app.isPackaged ? [] : ['-I', '-u', path.join(root, 'services/reception/run.py')], cwd: root, env: process.env, timeoutMs: 180000 });
@@ -104,6 +176,14 @@ export async function runLauncher(): Promise<void> {
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   Menu.setApplicationMenu(null);
   window.once('ready-to-show', () => window.show());
-  window.on('closed', () => { for (const task of checks.values()) task.cancelled = true; checker.close(); app.quit(); });
+  window.on('close', event => {
+    if (exiting) return;
+    event.preventDefault();
+    if (accountManager?.isRunning() && tray) window.hide();
+    else void quit();
+  });
+  app.on('before-quit', event => { if (!exiting) { event.preventDefault(); void quit(); } });
+  app.on('activate', show);
+  window.on('closed', () => { for (const task of checks.values()) task.cancelled = true; checker.close(); if (exiting) app.quit(); });
   await window.loadFile(file);
 }

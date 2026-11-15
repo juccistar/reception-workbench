@@ -1,5 +1,7 @@
 """Synthetic photo pipeline: no real account, URL, message or model calls."""
+import base64
 import copy
+import io
 from pathlib import Path
 import tempfile
 import threading
@@ -190,6 +192,30 @@ class MessagePhotoTests(unittest.TestCase):
         self.service.close()
         self.service = ReceptionService(Path(self.temp.name))
         self.assertEqual(preview, self.service.call('get_message_image', self.params))
+
+    def test_old_flattened_preview_is_derived_without_writes_or_fetch(self):
+        from PIL import Image
+        from reception_service.image_assets import decode_image
+        image = Image.new('RGBA', (20, 20), (255, 255, 255, 0))
+        image.paste((255, 255, 255, 255), (5, 5, 15, 15))
+        stream = io.BytesIO()
+        image.save(stream, format='PNG')
+        asset = decode_image(stream.getvalue(), 'image/png')
+        self.assertEqual(self.wait(self.service.call('load_message_image', self.params))['status'], 'succeeded')
+        key = encoded(['photo-conversation', 'photo-one'])
+        state = self.service.repo.get('message_image', key)
+        state['sha256'] = asset['sha256']
+        asset['preview_data_url'] = self.service.repo.get('image_asset', self.service.repo.get('message_image', key)['sha256'])['preview_data_url']
+        self.service.repo.put('image_asset', asset['sha256'], asset)
+        self.service.repo.put('message_image', key, state)
+        before = copy.deepcopy(self.service.repo.get('image_asset', asset['sha256']))
+        with patch.object(self.service.repo, 'put', side_effect=AssertionError('unexpected write')), \
+             patch.object(self.service.integrations, 'load_photo', side_effect=AssertionError('unexpected fetch')):
+            preview = self.service.call('get_message_image', self.params)
+            self.assertEqual(preview, self.service.call('get_message_image', self.params))
+        self.assertEqual(self.service.repo.get('image_asset', asset['sha256']), before)
+        with Image.open(io.BytesIO(base64.b64decode(preview['data_url'].split(',', 1)[1]))) as decoded:
+            self.assertEqual(decoded.getchannel('A').getextrema(), (0, 255))
 
     def test_full_workspace_backup_restores_image_bytes_and_binding(self):
         from reception_service.workspace_backup import backup_workspace, restore_workspace
