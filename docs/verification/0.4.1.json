@@ -137,7 +137,8 @@
     },
     "offline_account_maintenance": {"status": "passed_synthetic", "strict_cli_before_service_construction": true, "real_workspace_backup_and_legacy_import": true, "source_db_and_ledger_hashes_preserved": true, "duplicate_import_idempotent": true, "restored_unknown_fence_preserved": true, "automatic_reception_after_restore": false, "chrome_profile_in_business_backup": false},
     "verification_corrections": ["Direct invocation of legacy product main-image tests lacked explicit synthetic support; rerun with scripts/test-backend.mjs passed all 18. Both logs retained."],
-    "candidate": null,
+    "launcher_window_source_004": {"status": "passed", "source_commit": "c585aee", "report": "artifacts/verification/launcher-041-source-004/report.json", "screenshots_viewed": 8, "all_narrow_footer_actions_visible": true, "account_form_horizontal_overflow": false, "production_launcher_preload_renderer_and_account_service": true, "synthetic_merchants_and_isolated_known_folder": true, "tray_single_instance_and_shutdown": true},
+    "candidate": {"name": "A", "status": "built_verification_pending", "source_commit": "c585aee", "output": "relase/reception-0.4.1-release-A-20261116", "installer_and_portable": true, "immediate_local_commit": true, "installed": false},
     "real_account_send_receive": "not_verified",
     "real_model_quality": "not_verified"
   },

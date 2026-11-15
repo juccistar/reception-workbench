@@ -12,18 +12,20 @@ import { assertReleasePath } from './release-paths.mjs';
 const options = new Map();
 for (let i = 2; i < process.argv.length; i += 2) {
   const key = process.argv[i], value = process.argv[i + 1];
-  assert(['--label', '--executable'].includes(key) && value && !options.has(key), 'Use --label and --executable');
+  assert(['--label', '--executable', '--expected-version'].includes(key) && value && !options.has(key), 'Use --label, --executable and optionally --expected-version');
   options.set(key, value);
 }
 assert(/^[a-z0-9][a-z0-9-]{0,60}$/.test(options.get('--label') || ''));
 assert(options.has('--executable'));
 const executable = assertReleasePath(root, options.get('--executable'));
 const packagedVersion = JSON.parse(extractFile(path.join(path.dirname(path.dirname(executable)), 'app.asar'), 'package.json').toString('utf8')).version;
-assert.equal(packagedVersion, '0.4.0');
-const directory = path.join(root, 'artifacts/verification', `packaged-models-040-${options.get('--label')}`);
+const expectedVersion = options.get('--expected-version') || '0.4.0';
+assert(/^\d+\.\d+\.\d+$/.test(expectedVersion));
+assert.equal(packagedVersion, expectedVersion);
+const directory = path.join(root, 'artifacts/verification', `packaged-models-${expectedVersion.replaceAll('.', '')}-${options.get('--label')}`);
 await mkdir(directory);
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'arw-packaged-models-040-'));
-const report = { status: 'failed', executable: path.relative(root, executable), frozen_backend: true, provider: 'synthetic_loopback_http', real_model_calls: 0, merchant_database_opened: false, checks: [] };
+const report = { status: 'failed', version: expectedVersion, executable: path.relative(root, executable), frozen_backend: true, provider: 'synthetic_loopback_http', real_model_calls: 0, merchant_database_opened: false, checks: [] };
 let current, serverError;
 function imageColor(encoded) {
   const bytes = Buffer.from(encoded, 'base64');
