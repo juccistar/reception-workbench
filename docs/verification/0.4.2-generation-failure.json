@@ -1,0 +1,43 @@
+{
+  "version": "0.4.2",
+  "observed_date": "2026-11-17",
+  "status": "fixes_under_targeted_verification",
+  "user_report": "automatic replies and manual suggestions fail",
+  "live_observation": {
+    "installed_version": "0.4.1",
+    "access": "read_only_local_job_and_source_metadata",
+    "latest_matching_failures": 3,
+    "same_conversation": true,
+    "kinds": { "generate_draft": 1, "manual_suggestion": 2 },
+    "code": "invalid_requirement_change",
+    "stage": "requirements",
+    "message": "需求字段缺少有效内容或确切原文依据",
+    "prepared_images_per_attempt": 1,
+    "prepared_bytes_per_attempt": 103195,
+    "image_failures_or_pending": 0,
+    "model_elapsed_ms": [22937, 19296, 20657],
+    "image_placeholder_in_source": true,
+    "failed_raw_outputs_available": false,
+    "exact_rejected_field_in_historical_jobs": "not_recorded"
+  },
+  "confirmed_synthetic_defects": [
+    "image annotations appended to model-visible message text do not exist in original text used for exact excerpt validation",
+    "requirements prompt requests a local media_id while the projected manifest previously exposed only alias and image_id"
+  ],
+  "fix_scope": [
+    "keep original message text exact and project image associations separately",
+    "provide controlled local media identifiers for eligible chat images",
+    "preserve exact source, ownership and real image-read validation",
+    "record only an allowlisted requirement field name on rejection; never record returned private text or excerpts"
+  ],
+  "evidence_limit": "Synthetic failures reproduce the same error and the live source has an image placeholder. Historical raw outputs are absent, so the exact rejected field and the cause of each of those three runs cannot be established.",
+  "boundaries": {
+    "credentials_read_or_decrypted": false,
+    "chat_bodies_exported": false,
+    "live_platform_requests": 0,
+    "paid_model_requests": 0,
+    "customer_sends": 0,
+    "real_data_migration": false,
+    "installed_application_replaced": false
+  }
+}

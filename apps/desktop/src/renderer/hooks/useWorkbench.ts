@@ -29,7 +29,7 @@ export interface EditorState {
   manualError: string;
   send: ChatSend | null;
 }
-const defaults: Preferences = { nav_preference: 'expanded', details_preference: 'expanded', list_width: 272, details_width: 334, requirements_ratio: 0.68 };
+const defaults: Preferences = { nav_preference: 'expanded', details_preference: 'expanded', list_width: 280, details_width: 334 };
 const isActive = (job: Job) => job.status === 'queued' || job.status === 'running';
 const sendUnsettled = (send: ChatSend | null) => !!send && ['requesting', 'retry', 'queued', 'running', 'unknown'].includes(send.status);
 const isSendJob = (job: Job) => ['send_chat', 'confirm_send', 'automatic_send'].includes(job.kind);
@@ -645,7 +645,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
       const observed = jobsRef.current.find(job => job.job_id === ack.job_id);
       if (observed) reportManualFailure(observed);
     }
-    setNotice('任务已提交，处理结果会在运行记录中更新。');
+    setNotice('已开始处理。');
     if (method === 'fill_history' && !jobsRef.current.some(job => job.job_id === ack.job_id)) setHistoryRequests(previous => [...previous, { job_id: ack.job_id, conversation_id: String(params.conversation_id ?? '') }]);
     if ((method === 'generate_draft' || method === 'generate_manual_suggestion') && !jobsRef.current.some(job => job.job_id === ack.job_id)) {
       const caseId = String(params.case_id ?? '');

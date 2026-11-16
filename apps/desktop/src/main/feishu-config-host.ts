@@ -5,7 +5,7 @@ import type { Snapshot } from '../shared/api';
 import type { FeishuCredentialStore } from './feishu-credentials';
 
 type Invoke = <T>(method: string, params?: Record<string, unknown>) => Promise<T>;
-type Store = Pick<FeishuCredentialStore, 'save' | 'read'>;
+type Store = Pick<FeishuCredentialStore, 'stage' | 'read'>;
 const configKeys = ['account_option', 'app_id', 'enabled', 'fields', 'initial_status', 'table_url'];
 const failure = () => new Error('飞书配置未能保存，请保留输入后重试。');
 
@@ -55,17 +55,18 @@ export class FeishuConfigHost {
       await this.invoke('_grant_feishu_write', { ...identity, expected_revision: target.revision, enabled: false });
       const appId = input.settings.app_id;
       let secret: string | null = null;
+      let credentialRef = appId === target.cfg.app_id && typeof target.cfg.credential_ref === 'string' ? target.cfg.credential_ref : null;
       if (appId) {
-        if (input.app_secret.trim()) { await this.store.save(target.merchant, appId, input.app_secret); secret = input.app_secret; }
-        else secret = await this.store.read(target.merchant, appId);
+        if (input.app_secret.trim()) { credentialRef = await this.store.stage(target.merchant, appId, input.app_secret); secret = input.app_secret; }
+        else if (appId === target.cfg.app_id) secret = await this.store.read(target.merchant, appId, credentialRef);
       } else if (input.app_secret) throw failure();
       if (input.settings.enabled && !secret) throw new Error('请填写飞书应用密钥。');
       await this.target(input.expected_revision);
       const result = await this.invoke<{ saved: boolean; revision: number }>('_save_feishu_configuration', {
-        ...identity, expected_revision: target.revision, settings: input.settings,
+        ...identity, expected_revision: target.revision, settings: input.settings, credential_ref: credentialRef,
       });
       if (!result.saved) throw failure();
-      if (secret) await this.invoke('_configure_feishu_credential', { ...identity, app_id: appId, app_secret: secret });
+      if (secret) await this.invoke('_configure_feishu_credential', { ...identity, app_id: appId, app_secret: secret, credential_ref: credentialRef });
       this.synchronized = secret ? JSON.stringify([target.merchant, appId, result.revision]) : '';
       return true;
     });
@@ -83,16 +84,16 @@ export class FeishuConfigHost {
   synchronize(): Promise<void> {
     return this.exclusive(async () => {
       const target = await this.target();
-      const requested = await this.invoke<{ app_ids: string[] }>('_feishu_credential_requests', { seller_id: target.seller_id, data_root: target.data_root });
-      if (!requested || !Array.isArray(requested.app_ids) || requested.app_ids.some(id => typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id))) throw failure();
-      const key = JSON.stringify([target.merchant, target.revision, requested.app_ids]);
+      const requested = await this.invoke<{ credentials: { app_id: string; credential_ref: string | null }[] }>('_feishu_credential_requests', { seller_id: target.seller_id, data_root: target.data_root });
+      if (!requested || !Array.isArray(requested.credentials) || requested.credentials.some(item => !item || typeof item.app_id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(item.app_id) || item.credential_ref !== null && (typeof item.credential_ref !== 'string' || !/^[a-f0-9]{64}$/.test(item.credential_ref)))) throw failure();
+      const key = JSON.stringify([target.merchant, target.revision, requested.credentials]);
       if (key === this.synchronized) return;
-      for (const appId of requested.app_ids) {
-        const secret = await this.store.read(target.merchant, appId);
+      for (const item of requested.credentials) {
+        const secret = await this.store.read(target.merchant, item.app_id, item.credential_ref);
         if (!secret) continue;
         this.ready();
         await this.invoke('_configure_feishu_credential', { seller_id: target.seller_id, data_root: target.data_root,
-          app_id: appId, app_secret: secret });
+          app_id: item.app_id, app_secret: secret, credential_ref: item.credential_ref });
       }
       this.synchronized = key;
     });

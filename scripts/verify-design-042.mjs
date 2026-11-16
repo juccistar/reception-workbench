@@ -25,6 +25,7 @@ try {
   const page = await app.firstWindow();
   page.on('pageerror', e => report.renderer_errors.push(e.message));
   const shot = async name => {
+    await page.addStyleTag({ content: '.design-toolbar{display:none!important}.workspace,.suite-app{height:100dvh!important}.suite-sheet-overlay{inset:0!important}' });
     await page.evaluate(async () => { await document.fonts.ready; await Promise.all([...document.images].map(i => i.decode().catch(() => {}))); await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); });
     await page.screenshot({ path: path.join(output, name), animations: 'disabled' });
     const rects = await page.evaluate(() => ({ viewport: { width: innerWidth, height: innerHeight }, elements: [...document.querySelectorAll('nav, main, [role="dialog"], [role="region"], #suite-content, #customer-panel, .messages')].filter(el => { const r = el.getBoundingClientRect(); return r.width && r.height; }).map(el => { const r = el.getBoundingClientRect(); return { tag: el.tagName, id: el.id, role: el.getAttribute('role'), label: el.getAttribute('aria-label'), class: el.className, x: r.x, y: r.y, width: r.width, height: r.height }; }) }));

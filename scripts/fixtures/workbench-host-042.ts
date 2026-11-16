@@ -103,8 +103,8 @@ async function start() {
   bind('reception:launcher:open', () => undefined);
   const syntheticSecrets = new Map<string, string>();
   const feishu = new FeishuConfigHost({
-    save: async (merchant, appId, secret) => { syntheticSecrets.set(`${merchant}:${appId}`, secret); },
-    read: async (merchant, appId) => syntheticSecrets.get(`${merchant}:${appId}`) ?? null,
+    stage: async (merchant, appId, secret) => { const ref = (await import('node:crypto')).randomBytes(32).toString('hex'); syntheticSecrets.set(`${merchant}:${appId}:${ref}`, secret); return ref; },
+    read: async (merchant, appId, ref) => syntheticSecrets.get(`${merchant}:${appId}:${ref ?? ''}`) ?? null,
   }, (method, params = {}) => client!.invoke(method, params), 'live', path.join(temp, 'data'), ready);
   bind('reception:feishu:save', input => feishu.save(input));
   bind('reception:feishu:grant', input => feishu.grant(input));

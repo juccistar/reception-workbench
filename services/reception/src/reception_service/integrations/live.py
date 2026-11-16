@@ -77,8 +77,8 @@ class LiveIntegration:
     def configure_model_router(self, router):
         self._model_router = router
 
-    def configure_feishu_credential(self, app_id, secret):
-        self.native.feishu.configure_secret(app_id, secret)
+    def configure_feishu_credential(self, app_id, secret, *, credential_ref=None):
+        self.native.feishu.configure_secret(app_id, secret, credential_ref=credential_ref)
 
     def configure_whatsapp_image_resolver(self, resolver):
         self._whatsapp_image_resolver = resolver

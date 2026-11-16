@@ -1,4 +1,6 @@
 import json
+import hashlib
+import threading
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,7 +8,9 @@ from unittest.mock import patch
 
 from reception_service.integrations.feishu_open_adapter import FeishuOpenAdapter
 from reception_service.integrations.accio_native.vendor.adapters.common import Ledger
-from reception_service.integrations.accio_native.vendor.models import FACT_LABELS
+from reception_service.integrations.accio_native.vendor.models import FACT_LABELS, Message
+from reception_service.integrations.accio_native.gateway import NativeGateway
+from reception_service.context import REQUIREMENT_FIELDS
 
 
 class Transport:
@@ -124,6 +128,67 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(result['status'], 'confirmed')
         self.assertEqual(self.transport.rows['rec1']['fields']['Image'], [{'file_token': 'file123'}])
         self.assertTrue(any('/medias/upload_all' in path for _, path in self.transport.calls))
+
+    def ai_case(self):
+        text = 'I need 20 pieces of blue widgets.'
+        digest = hashlib.sha256(text.encode()).hexdigest()
+        requirements = {key: {'value': [] if key == 'product_images' else None, 'evidence_ids': []} for key in REQUIREMENT_FIELDS}
+        requirements['product'] = {'value': '蓝色部件', 'evidence_ids': ['m1'], 'source_excerpts': {'m1': 'blue widgets'}, 'evidence_versions': {'m1': digest}}
+        requirements['quantity'] = {'value': '20件', 'evidence_ids': ['m1'], 'source_excerpts': {'m1': '20 pieces'}, 'evidence_versions': {'m1': digest}}
+        self.payload['case'].update(requirements_format='ai-v1', requirements=requirements, facts={}, conversation_id='conv', inquiry_source_id='m1')
+        message = Message('m1', '100', '200', 'conv', 'buyer', text, 1700000000000)
+        gateway = NativeGateway.__new__(NativeGateway)
+        gateway._permission_lock, gateway._permission_epoch = threading.Lock(), 0
+        gateway.lock = threading.RLock()
+        gateway.ledger, gateway.feishu = self.ledger, self.adapter
+        gateway.history = lambda *args: [message]
+        return gateway, message
+
+    def test_ai_v1_gateway_confirmed_with_evidenced_quantity(self):
+        gateway, _ = self.ai_case()
+        self.settings['feishu']['fields']['quantity'] = {'name': 'Quantity', 'type': 'number'}
+        self.transport.fields.append({'field_name': 'Quantity', 'type': 2})
+        result = gateway.register(self.payload)
+        self.assertEqual(result['status'], 'confirmed')
+        self.assertEqual(self.transport.rows['rec1']['fields']['Quantity'], 20)
+        self.assertIn('蓝色部件', self.transport.rows['rec1']['fields']['Product'])
+
+    def test_ai_v1_gateway_create_and_unknown_replay(self):
+        gateway, _ = self.ai_case()
+        self.transport.drop = True
+        result = gateway.register(self.payload)
+        self.assertEqual(result['status'], 'unknown')
+        self.assertEqual(self.transport.posts, 1)
+        self.assertIn('蓝色部件', self.transport.rows['rec1']['fields']['Product'])
+        self.assertIn('20件', self.transport.rows['rec1']['fields']['Product'])
+        gateway.history = lambda *args: self.fail('replay must not fetch history')
+        self.assertEqual(gateway.register(self.payload)['status'], 'unknown')
+        self.assertEqual(self.transport.posts, 1)
+
+    def test_ai_v1_changed_source_or_wrong_buyer_rejected(self):
+        gateway, message = self.ai_case()
+        message.text += ' changed'
+        self.assertEqual(gateway.register(self.payload)['status'], 'rejected')
+        self.assertEqual(self.transport.posts, 0)
+        message.text = 'I need 20 pieces of blue widgets.'
+        message.buyer_id = '999'
+        self.assertEqual(gateway.register(self.payload)['status'], 'rejected')
+        self.assertEqual(self.transport.posts, 0)
+
+    def test_credential_reference_survives_restart_and_never_falls_back(self):
+        self.settings['feishu']['credential_ref'] = 'ref-old'
+        self.adapter.configure_secret('cli_A', 'OLD_SECRET', credential_ref='ref-old')
+        self.transport.fail_read = True
+        self.assertEqual(self.adapter.register(self.payload)['status'], 'unknown')
+        old = self.ledger.get('op1')
+        self.assertEqual(old[1]['target']['credential_ref'], 'ref-old')
+        restarted = FeishuOpenAdapter(self.settings, self.temp.name, None, self.ledger, transport=self.transport)
+        restarted.configure_secret('cli_A', 'NEW_SECRET', credential_ref='ref-new')
+        self.transport.fail_read = False
+        self.assertEqual(restarted.reconcile('op1', old[1], old[2])['status'], 'unknown')
+        restarted.configure_secret('cli_A', 'OLD_SECRET', credential_ref='ref-old')
+        self.assertEqual(restarted.reconcile('op1', old[1], old[2])['status'], 'confirmed')
+        self.assertNotIn(b'OLD_SECRET', self.ledger.path.read_bytes())
 
     def test_types_and_options_block_submission(self):
         self.assertTrue(self.adapter.check_schema()['ok'])

@@ -17,8 +17,8 @@ class FeishuDispatch:
         self.legacy = FeishuAdapter(legacy_settings, native.data_dir, native.process, native.ledger)
         self.open = FeishuOpenAdapter(native.settings, native.data_dir, native.process, native.ledger)
 
-    def configure_secret(self, app_id, secret):
-        self.open.configure_secret(app_id, secret)
+    def configure_secret(self, app_id, secret, *, credential_ref=None):
+        self.open.configure_secret(app_id, secret, credential_ref=credential_ref)
 
     def _current(self):
         return self.open if 'app_id' in (self.native.settings.get('feishu') or {}) else self.legacy

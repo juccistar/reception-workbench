@@ -93,7 +93,7 @@ try {
   report.checks.suggestion_translation_with_chat_translation_off = true;
   const source = page.locator('.canonical-field').filter({ hasText: '数量' }).getByRole('button', { name: '来源', exact: true });
   await source.first().click();
-  await until(async () => await page.locator('[data-message-id]').evaluateAll(nodes => nodes.some(node => node.getAttribute('data-message-id') === 'window-showcase-1' && node.classList.contains('message-highlight'))), 'Source message was not highlighted');
+  await until(async () => await page.locator('[data-message-id]').evaluateAll((nodes, id) => nodes.some(node => node.getAttribute('data-message-id') === id && node.classList.contains('message-highlight')), injected.message_id), 'Source message was not highlighted');
   await shot('source-message.png');
   report.checks.source_navigates_to_showcase_message = true;
   const body = 'Please keep this draft while the model is unavailable.';
@@ -251,7 +251,7 @@ try {
   await resize('调整右侧栏宽度', -30, 0);
   await resize('调整采购需求与业务补充高度', 0, -30);
   await shot('05-resized.png'); report.checks.drag_horizontal_and_vertical = true;
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(800, 700));
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(640, 700));
   await until(async () => await page.locator('.app.layout-narrow').count() === 1, 'Narrow layout not active');
   await shot('06-narrow.png'); report.checks.narrow_layout = true;
   await page.getByRole('button', { name: '打开客户列表', exact: true }).click();

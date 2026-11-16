@@ -1,5 +1,6 @@
 import { webcrypto } from 'node:crypto';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
+import { useWorkbench } from '../src/renderer/hooks/useWorkbench';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/renderer/App';
 import type { ApiMethod, Case, ConversationDetail, ConversationSummary, Draft, Job, JobAck, Preferences, ReceptionBridge, SendConfirmation, ServiceEvent, Snapshot, Supplement } from '../src/shared/api';
@@ -110,6 +111,57 @@ class FakeBridge implements ReceptionBridge {
   emit(event: ServiceEvent) { for (const listener of this.listeners) listener(event); }
 }
 
+it('saves registered dirty forms before close and rejects a failed form', async () => {
+  const bridge = new FakeBridge();
+  const { result } = renderHook(() => useWorkbench(bridge));
+  await waitFor(() => expect(result.current.connected).toBe(true));
+  const pending = deferred<boolean>();
+  const save = vi.fn(() => pending.promise);
+  act(() => { result.current.registerFormSaver('test', save); result.current.setFormDirty('test', true); });
+  const finished = vi.fn();
+  act(() => window.dispatchEvent(new CustomEvent('reception:save-before-close', { detail: { finish: finished } })));
+  expect(save).toHaveBeenCalledOnce(); expect(finished).not.toHaveBeenCalled();
+  await act(async () => { pending.resolve(false); await pending.promise; });
+  await waitFor(() => expect(finished).toHaveBeenCalledWith(false));
+  const order: string[] = [];
+  act(() => {
+    result.current.registerFormSaver('test', async () => { order.push('first'); return true; });
+    result.current.registerFormSaver('second', async () => { order.push('second'); return true; });
+    result.current.setFormDirty('second', true);
+  });
+  const completed = vi.fn();
+  act(() => window.dispatchEvent(new CustomEvent('reception:save-before-close', { detail: { finish: completed } })));
+  await waitFor(() => expect(completed).toHaveBeenCalledWith(true));
+  expect(order).toEqual(['first', 'second']);
+});
+
+it('saves dirty forms before navigation and stays put on failure', async () => {
+  const bridge = new FakeBridge(); const { result } = renderHook(() => useWorkbench(bridge));
+  await waitFor(() => expect(result.current.connected).toBe(true));
+  const pending = deferred<boolean>(); const save = vi.fn(() => pending.promise);
+  act(() => { result.current.registerFormSaver('test-navigation', save); result.current.setFormDirty('test-navigation', true); });
+  let navigation!: Promise<boolean>;
+  act(() => { navigation = result.current.navigate('settings'); });
+  expect(save).toHaveBeenCalledOnce(); expect(result.current.page).toBe('reception');
+  await act(async () => { pending.resolve(false); expect(await navigation).toBe(false); });
+  expect(result.current.page).toBe('reception');
+  act(() => { result.current.registerFormSaver('test-navigation', async () => true); });
+  await act(async () => { expect(await result.current.navigate('settings')).toBe(true); });
+  expect(result.current.page).toBe('settings');
+});
+
+it('opens a specified older case when switching customers', async () => {
+  const bridge = new FakeBridge();
+  const old = { ...bridge.details.sofia.cases[0], case_id: 'old-sofia', state: 'stopped' as Case['state'] };
+  bridge.details.sofia.cases.push(old);
+  const { result } = renderHook(() => useWorkbench(bridge));
+  await waitFor(() => expect(result.current.selection.conversationId).toBe('emma'));
+  await act(async () => { await result.current.selectConversation('sofia', 'old-sofia'); });
+  expect(bridge.calls).toContainEqual({ method: 'get_conversation', params: { conversation_id: 'sofia', case_id: 'old-sofia', refresh_empty: true } });
+  expect(result.current.detail?.case?.case_id).toBe('old-sofia');
+  expect(bridge.calls.some(call => /reopen|set_current_case/.test(call.method))).toBe(false);
+});
+
 const failedAiBridge = () => {
   const bridge = new FakeBridge(); bridge.snapshot.app.mode = 'live'; bridge.snapshot.app.account_verified = true;
   for (const key of ['runtime', 'identity', 'messages'] as const) bridge.snapshot.checks[key] = { ...bridge.snapshot.checks[key], status: 'passed', simulated: false };
@@ -118,6 +170,7 @@ const failedAiBridge = () => {
   return bridge;
 };
 const openApp = async (bridge = new FakeBridge()) => { render(<App bridge={bridge} />); await screen.findByRole('textbox', { name: '回复正文' }, { timeout: 5000 }); return bridge; };
+const chooseCase = (index: number) => { fireEvent.click(screen.getByLabelText('选择采购事项')); fireEvent.click(within(screen.getByRole('group', { name: '采购事项' })).getAllByRole('button')[index]); };
 const textarea = () => screen.getByRole('textbox', { name: '回复正文' });
 const sendButton = () => screen.getByRole('button', { name: '发送', exact: true });
 const calls = (bridge: FakeBridge, method: ApiMethod) => bridge.calls.filter(call => call.method === method);
@@ -138,12 +191,25 @@ describe('0.3.15 compact workspace', () => {
     else { suggestion.mode = 'polish'; suggestion.input_part_index = 1; }
     await openApp(bridge);
     const original = (textarea() as HTMLTextAreaElement).value;
-    fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
+    fireEvent.click(screen.getByRole('button', { name: '替换正文' }));
     expect(await screen.findByText('旧版多条建议不可采用，请重新生成单条建议。')).toBeInTheDocument();
     expect(textarea()).toHaveValue(original);
     expect(screen.getByRole('region', { name: '待处理回复建议' })).toBeInTheDocument();
     expect(calls(bridge, 'begin_manual_edit')).toHaveLength(0);
     expect(calls(bridge, 'send_chat')).toHaveLength(0);
+  });
+  it('sends on Enter while preserving Shift+Enter and IME composition', async () => {
+    const bridge = new FakeBridge(); bridge.details.emma.chat_draft = null;
+    await openApp(bridge); await edit('First line');
+    expect(fireEvent.keyDown(textarea(), { key: 'Enter', shiftKey: true })).toBe(true);
+    fireEvent.change(textarea(), { target: { value: 'First line\nSecond line' } });
+    expect(fireEvent.keyDown(textarea(), { key: 'Enter', isComposing: true })).toBe(true);
+    expect(fireEvent.keyDown(textarea(), { key: 'Enter', keyCode: 229 })).toBe(true);
+    expect(calls(bridge, 'send_chat')).toHaveLength(0);
+    expect(textarea()).toHaveValue('First line\nSecond line');
+    expect(fireEvent.keyDown(textarea(), { key: 'Enter' })).toBe(false);
+    await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(1));
+    expect(calls(bridge, 'save_chat_draft')[0].params.body).toBe('First line\nSecond line');
   });
   it('sends a normal single body with Ctrl+Enter', async () => {
     const bridge = new FakeBridge(); bridge.details.emma.chat_draft = null;
@@ -227,7 +293,7 @@ describe('0.3.15 compact workspace', () => {
   });
   it('adopts once without sending and does not reopen the handled suggestion on customer return', async () => {
     const bridge = new FakeBridge(); ready(bridge); await openApp(bridge);
-    fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
+    fireEvent.click(screen.getByRole('button', { name: '替换正文' }));
     expect(textarea()).toHaveValue('A synthetic reply for review.');
     expect(screen.queryByRole('region', { name: '待处理回复建议' })).not.toBeInTheDocument();
     await waitFor(() => expect(calls(bridge, 'begin_manual_edit')).toHaveLength(1));
@@ -252,15 +318,15 @@ describe('0.3.15 compact workspace', () => {
   });
   it('shows five local gallery images during legacy completion and supports switching', async () => {
     const bridge = new FakeBridge(); const current = bridge.details.emma.case!;
-    current.requirements_format = 'ai-v1'; current.requirements = { product_id: { value: '123', evidence_ids: [] } };
+    current.requirements_format = 'ai-v1'; current.requirements = { product: { value: '商品', evidence_ids: [] }, product_id: { value: '123', evidence_ids: [] } };
     current.product_main_image = { status: 'loading', local_product_id: 'p', updated_at: 1 }; bridge.details.emma.cases[0] = clone(current);
     const original = bridge.invoke.bind(bridge);
     bridge.invoke = vi.fn(async (method, params = {}) => method === 'get_product_main_image' ? { status: 'loading', message: '不展示的后台说明', images: [0,1,2,3,4].map(() => ({status:'ready',data_url:'data:image/png;base64,AAAA'})) } as never : original(method, params));
     await openApp(bridge);
-    await screen.findByRole('button', { name: '放大查看商品图片 5' });
-    expect(document.querySelectorAll('.product-image-gallery img')).toHaveLength(5);
+    await screen.findByRole('button', { name: '查看商品图片 5' });
+    expect(document.querySelectorAll('.requirement-product-thumbnails img')).toHaveLength(5);
     expect(screen.queryByText('不展示的后台说明')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '放大查看商品图片 1' }));
+    fireEvent.click(screen.getByRole('button', { name: '查看需求商品原图' }));
     fireEvent.click(screen.getByRole('button', { name: '下一张商品图片' }));
     expect(screen.getByRole('dialog', { name: '商品图片' })).toHaveTextContent('2 / 5');
     fireEvent.keyDown(document, { key: 'Escape' });
@@ -298,7 +364,7 @@ describe('0.3.15 compact workspace', () => {
 });
 
 describe('mounted requirement workspace', () => {
-  it('shows only the thirteen AI demand fields and hides legacy reminders and metadata', async () => {
+  it('shows primary and expanded AI demand fields without legacy metadata', async () => {
     const bridge = new FakeBridge();
     const values = { product: '陶瓷杯', product_id: '123', product_url: 'https://example.com/product', product_images: ['img-1'], quantity: '500件', specifications: '白色', customization: '印标', destination: '法国', delivery: '30天', budget: '2美元', packaging: '纸盒', certifications: 'CE', contact: '邮件' };
     const current = bridge.details.emma.case;
@@ -310,8 +376,10 @@ describe('mounted requirement workspace', () => {
     bridge.invoke = vi.fn(async (method, params = {}) => method === 'get_requirement_media' ? { case_id: 'case-emma', revision: 0, cover_id: null, items: [{ media_id: 'img-1', status: 'ready', data_url: 'https://example.com/unsafe.png' }] } as never : original(method, params));
     await openApp(bridge);
     const panel = screen.getByRole('region', { name: '采购需求' });
-    expect(panel.querySelectorAll('.canonical-field')).toHaveLength(13);
-    for (const value of ['陶瓷杯', '123', '500件', '白色', '法国']) expect(within(panel).getByText(value)).toBeInTheDocument();
+    expect(panel.querySelectorAll('.canonical-field')).toHaveLength(5);
+    fireEvent.click(within(panel).getByRole('button', { name: '更多需求' }));
+    expect(panel.querySelectorAll('.canonical-field')).toHaveLength(11);
+    for (const value of ['陶瓷杯', '123', '500件', '白色', '法国']) expect(within(panel).getAllByText(value).length).toBeGreaterThan(0);
     for (const text of ['旧译文', '不应出现', 'secret-evidence', '旧提醒', '旧原因']) expect(screen.queryByText(text)).not.toBeInTheDocument();
     await waitFor(() => expect(bridge.invoke).toHaveBeenCalledWith('get_requirement_media', { case_id: 'case-emma' }));
     expect(panel.querySelector('img[src^="https:"]')).toBeNull();
@@ -324,13 +392,13 @@ describe('mounted requirement workspace', () => {
     const original = bridge.invoke.bind(bridge);
     bridge.invoke = vi.fn(async (method, params = {}) => method === 'get_product_main_image' ? { status: 'ready', data_url: 'data:image/png;base64,AAAA' } as never : method === 'get_requirement_media' ? { case_id: 'case-emma', revision: 1, cover_id: null, items: [{ media_id: 'customer', status: 'ready', data_url: 'data:image/png;base64,BBBB' }] } as never : original(method, params));
     await openApp(bridge);
-    const main = await screen.findByRole('button', { name: '放大查看商品图片 1' });
-    expect(screen.getByText('商品图片')).toBeInTheDocument();
+    const main = await screen.findByRole('button', { name: '查看需求商品原图' });
+    fireEvent.click(screen.getByRole('button', { name: '更多需求' }));
     expect(await screen.findByRole('button', { name: '放大查看产品图片' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'https://www.alibaba.com/product-detail/123.html' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '在浏览器打开产品链接' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '商品链接' })).toBeInTheDocument();
     expect(bridge.invoke).toHaveBeenCalledWith('get_product_main_image', { local_product_id: 'product-123' });
-    fireEvent.click(main); expect(screen.getByRole('dialog', { name: '商品图片' })).toBeInTheDocument();
+    main.focus(); fireEvent.click(main); expect(screen.getByRole('dialog', { name: '商品图片' })).toBeInTheDocument();
     fireEvent.keyDown(document, { key: 'Escape' }); expect(main).toHaveFocus();
   });
   it('copies a product field through the host and ignores a late result after changing customer', async () => {
@@ -341,12 +409,12 @@ describe('mounted requirement workspace', () => {
     const copyProductText = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
     Object.assign(bridge, { copyProductText });
     await openApp(bridge);
-    fireEvent.click(screen.getByRole('button', { name: '复制产品ID' }));
+    fireEvent.click(screen.getByRole('button', { name: '复制商品编号' }));
     expect(copyProductText).toHaveBeenCalledWith({ field: 'product_id', case_id: 'case-emma' });
     fireEvent.click(screen.getByRole('button', { name: /Sofia.*Do you have this mug in white/s }));
     await screen.findByRole('main', { name: 'Sofia 的客户接待' });
     await act(async () => finish());
-    expect(screen.queryByText('产品ID已复制')).not.toBeInTheDocument();
+    expect(screen.queryByText('商品编号已复制')).not.toBeInTheDocument();
   });
   it('does not fabricate a URL or trust a remote main image for a custom ID', async () => {
     const bridge = new FakeBridge(); const current = bridge.details.emma.case!;
@@ -365,7 +433,7 @@ describe('mounted requirement workspace', () => {
   });
   it.each([['loading', '正在读取商品图片'], ['not_loaded', '尚未读取商品图片'], ['unavailable', '暂无商品图片'], ['failed', '商品图片读取失败'], ['unknown', '商品图片读取未完成']] as const)('shows product image %s without requesting it in the renderer', async (status, label) => {
     const bridge = new FakeBridge(); const current = bridge.details.emma.case!;
-    current.requirements_format = 'ai-v1'; current.requirements = { product_id: { value: '123', evidence_ids: [] } };
+    current.requirements_format = 'ai-v1'; current.requirements = { product: { value: '商品', evidence_ids: [] }, product_id: { value: '123', evidence_ids: [] } };
     current.product_main_image = { status }; bridge.details.emma.cases[0] = clone(current);
     await openApp(bridge);
     expect(screen.getByText(label)).toBeInTheDocument();
@@ -379,6 +447,7 @@ describe('mounted requirement workspace', () => {
     const original = bridge.invoke.bind(bridge);
     bridge.invoke = vi.fn(async (method, params = {}) => method === 'get_requirement_media' ? { case_id: 'case-emma', revision: 1, cover_id: null, items: [{ media_id: 'approved', status: 'ready', data_url: 'data:image/png;base64,AAAA' }, { media_id: 'other', status: 'ready', data_url: 'data:image/png;base64,BBBB' }] } as never : original(method, params));
     await openApp(bridge);
+    fireEvent.click(screen.getByRole('button', { name: '更多需求' }));
     const preview = await screen.findByRole('button', { name: '放大查看产品图片' });
     expect(screen.getAllByRole('img', { name: '产品图片' })).toHaveLength(1);
     fireEvent.click(preview);
@@ -395,8 +464,8 @@ describe('mounted requirement workspace', () => {
     await openApp(bridge);
     expect(screen.getByLabelText('会话摘要')).toHaveTextContent('客户询问目录，需要确认目录链接。');
     expect(screen.getByText('当前没有采购需求')).toBeInTheDocument();
-    fireEvent.change(screen.getByRole('combobox', { name: '当前采购事项' }), { target: { value: 'another-case' } });
-    await waitFor(() => expect(screen.getByRole('combobox', { name: '当前采购事项' })).toHaveValue('another-case'));
+    chooseCase(1);
+    await waitFor(() => expect(calls(bridge, 'get_conversation').at(-1)?.params.case_id).toBe('another-case'));
     expect(screen.getByLabelText('会话摘要')).toHaveTextContent('客户询问目录，需要确认目录链接。');
     expect(screen.queryByText('另一旧摘要')).not.toBeInTheDocument();
   });
@@ -434,9 +503,9 @@ describe('manual suggestion and supplement', () => {
     bridge.details.emma.automatic_source = { message_id: 'message-emma', text_sha256: 'valid-hash' };
     const failed: Job = { job_id: 'auto-failure', kind: 'generate_draft', conversation_id: 'emma', case_id: 'case-emma', source_message_id: 'message-emma', source_text_sha256: 'valid-hash', status: 'failed', stage: 'retry', message: '失败', error: { code: 'generation_retry_limit', message: '失败' }, last_error_code: 'model_timeout', retry_status: 'exhausted', created_at: Date.now(), started_at: Date.now(), completed_at: Date.now() };
     act(() => bridge.emit({ event: 'job.updated', data: failed }));
-    fireEvent.click(within(await screen.findByRole('dialog', { name: 'AI不可用' })).getByRole('button', { name: '知道了' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'AI 不可用' })).getByRole('button', { name: '关闭' }));
     act(() => bridge.emit({ event: 'job.updated', data: failed }));
-    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI 不可用' })).not.toBeInTheDocument();
   });
 
   it('checks the authoritative source version even when it is outside the visible message window', async () => {
@@ -446,9 +515,9 @@ describe('manual suggestion and supplement', () => {
     const failed: Job = { job_id: 'old-version', kind: 'generate_draft', conversation_id: 'emma', case_id: 'case-emma', source_message_id: 'old-buyer', source_text_sha256: 'old-text', status: 'failed', stage: 'model', message: '', error: { code: 'model_timeout', message: '' }, created_at: Date.now(), started_at: null, completed_at: Date.now() };
     act(() => bridge.emit({ event: 'job.updated', data: failed }));
     await waitFor(() => expect(calls(bridge, 'get_conversation').length).toBeGreaterThan(1));
-    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI 不可用' })).not.toBeInTheDocument();
     act(() => bridge.emit({ event: 'job.updated', data: { ...failed, job_id: 'current-version', source_text_sha256: 'new-text' } }));
-    await screen.findByRole('dialog', { name: 'AI不可用' });
+    await screen.findByRole('dialog', { name: 'AI 不可用' });
   });
 
   it('discards an automatic failure when the source changes while verification is pending', async () => {
@@ -461,7 +530,7 @@ describe('manual suggestion and supplement', () => {
     act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
     await act(async () => check.resolve({ ...bridge.details.emma, automatic_source: { message_id: 'message-emma', text_sha256: 'hash' } }));
     await waitFor(() => expect(reads).toBeGreaterThan(1));
-    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI 不可用' })).not.toBeInTheDocument();
   });
 
   it('reports a current automatic failure followed by its normal state change', async () => {
@@ -472,7 +541,7 @@ describe('manual suggestion and supplement', () => {
       bridge.emit({ event: 'job.updated', data: failed });
       bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } });
     });
-    await screen.findByRole('dialog', { name: 'AI不可用' });
+    await screen.findByRole('dialog', { name: 'AI 不可用' });
     expect(calls(bridge, 'get_conversation').length).toBeGreaterThanOrEqual(3);
   });
 
@@ -488,7 +557,7 @@ describe('manual suggestion and supplement', () => {
     });
     await waitFor(() => expect(calls(bridge, 'get_conversation').length).toBeGreaterThanOrEqual(3));
     await act(async () => check.resolve(clone(bridge.details.emma)));
-    await screen.findByRole('dialog', { name: 'AI不可用' });
+    await screen.findByRole('dialog', { name: 'AI 不可用' });
   });
 
   it('retries an uncertain supplement save with the original mutation', async () => {
@@ -537,17 +606,17 @@ describe('manual suggestion and supplement', () => {
     act(() => bridge.emit({ event: 'job.updated', data: job }));
     act(() => bridge.emit({ event: 'job.updated', data: { ...job, status: 'cancelled' } }));
     act(() => bridge.emit({ event: 'job.updated', data: { ...job, status: 'failed' } }));
-    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI 不可用' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Sofia.*Do you have this mug in white/s }));
     await screen.findByRole('main', { name: 'Sofia 的客户接待' });
     act(() => bridge.emit({ event: 'job.updated', data: { ...job, status: 'failed' } }));
-    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI 不可用' })).not.toBeInTheDocument();
   });
 
   it('allows a verified live merchant to generate without checking AI on startup', async () => {
     const bridge = failedAiBridge(); bridge.snapshot.checks.ai.status = 'not_checked'; bridge.details.emma.chat_draft = null;
     await openApp(bridge);
-    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI 不可用' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
     await waitFor(() => expect(calls(bridge, 'generate_manual_suggestion')).toHaveLength(1));
     expect(calls(bridge, 'check_ai')).toHaveLength(0);
@@ -566,13 +635,13 @@ describe('manual suggestion and supplement', () => {
     };
     await openApp(bridge);
     fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
-    const dialog = await screen.findByRole('dialog', { name: 'AI不可用' });
-    fireEvent.click(within(dialog).getByRole('button', { name: '知道了' }));
+    const dialog = await screen.findByRole('dialog', { name: 'AI 不可用' });
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
     act(() => bridge.emit({ event: 'job.updated', data: clone(bridge.snapshot.jobs[0]) }));
-    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI 不可用' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
-    await screen.findByRole('dialog', { name: 'AI不可用' });
-    fireEvent.click(screen.getByRole('button', { name: '知道了' }));
+    await screen.findByRole('dialog', { name: 'AI 不可用' });
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
     fireEvent.change(textarea(), { target: { value: '保留我的正文' } });
     expect(textarea()).toHaveValue('保留我的正文');
   });
@@ -593,8 +662,8 @@ describe('manual suggestion and supplement', () => {
       fireEvent.change(textarea(), { target: { value: '等待期间的新正文' } });
       const failed: Job = { job_id: 'polish-failure', kind: 'manual_suggestion', conversation_id: 'emma', case_id: 'case-emma', status: 'failed', stage: 'model', message: '模型不可用', error: { code: 'model_auth_error', message: '模型不可用' }, created_at: Date.now(), started_at: Date.now(), completed_at: Date.now() };
       act(() => bridge.emit({ event: 'job.updated', data: failed }));
-      const dialog = await screen.findByRole('dialog', { name: 'AI不可用' });
-      fireEvent.click(within(dialog).getByRole('button', { name: '知道了' }));
+      const dialog = await screen.findByRole('dialog', { name: 'AI 不可用' });
+      fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
       expect(textarea()).toHaveValue('等待期间的新正文');
     } finally {
       if (originalSubtle) Object.defineProperty(globalThis.crypto, 'subtle', originalSubtle);
@@ -612,7 +681,7 @@ describe('manual suggestion and supplement', () => {
       return { job_id: 'invalid-model-requirements' } as T;
     };
     await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
-    await screen.findByRole('dialog', { name: 'AI不可用' });
+    await screen.findByRole('dialog', { name: 'AI 不可用' });
   });
   it('does not show an old customer model failure on the newly selected customer', async () => {
     const bridge = failedAiBridge(); bridge.details.emma.chat_draft = null;
@@ -627,10 +696,10 @@ describe('manual suggestion and supplement', () => {
     await screen.findByRole('main', { name: 'Sofia 的客户接待' });
     const failed: Job = { job_id: 'late-old-customer-failure', kind: 'manual_suggestion', conversation_id: 'emma', case_id: null, status: 'failed', stage: 'model', message: '模型不可用', error: { code: 'model_auth_error', message: '模型不可用' }, created_at: Date.now(), started_at: Date.now(), completed_at: Date.now() };
     bridge.snapshot.jobs.push(failed); act(() => bridge.emit({ event: 'job.updated', data: clone(failed) }));
-    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI 不可用' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Emma.*Could you make a sample/s }));
     await screen.findByRole('main', { name: 'Emma 的客户接待' });
-    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI 不可用' })).not.toBeInTheDocument();
   });
   it('does not reinterpret a code-less configuration change as provider unavailability', async () => {
     const bridge = failedAiBridge(); bridge.details.emma.chat_draft = null;
@@ -641,7 +710,7 @@ describe('manual suggestion and supplement', () => {
     };
     await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
     await screen.findByText('模型配置不可用或已变化，请重新检查配置');
-    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI 不可用' })).not.toBeInTheDocument();
   });
   it.each(['cancelled', 'source_changed', 'model_configuration_stale', 'task_failed'])('does not label %s as AI unavailable', async code => {
     const bridge = failedAiBridge(); bridge.details.emma.chat_draft = null;
@@ -655,7 +724,7 @@ describe('manual suggestion and supplement', () => {
     await openApp(bridge);
     fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
     await waitFor(() => expect(calls(bridge, 'list_jobs').length).toBeGreaterThan(0));
-    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'AI 不可用' })).not.toBeInTheDocument();
   });
   it('keeps an attachment with its original customer when selection changes', async () => {
     const bridge = new FakeBridge();
@@ -748,7 +817,7 @@ describe('manual suggestion and supplement', () => {
     expect((textarea() as HTMLTextAreaElement).value).toBe(initial);
     act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
     await screen.findByRole('region', { name: '待处理回复建议' });
-    fireEvent.click(await screen.findByRole('button', { name: '替换到输入框' }));
+    fireEvent.click(await screen.findByRole('button', { name: '替换正文' }));
     expect((textarea() as HTMLTextAreaElement).value).toBe('New suggested reply');
     await waitFor(() => expect(calls(bridge, 'begin_manual_edit')).toHaveLength(1));
   });
@@ -810,9 +879,11 @@ describe('manual suggestion and supplement', () => {
     expect(calls(bridge, 'get_snapshot')).toHaveLength(beforeSnapshot);
     expect(calls(bridge, 'get_conversation')).toHaveLength(beforeDetail);
   });
-  it('keeps supplement visible when procurement needs are collapsed', async () => {
+  it('reopens supplement after collapsing customer details', async () => {
     await openApp();
-    fireEvent.click(screen.getByRole('button', { name: '收起需求侧栏' }));
+    fireEvent.click(screen.getByRole('button', { name: '收起客户资料' }));
+    expect(screen.queryByRole('textbox', { name: '业务补充内容' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '采购需求' }));
     expect(screen.getByRole('textbox', { name: '业务补充内容' })).toBeVisible();
     expect(screen.queryByRole('button', { name: '查看需求' })).not.toBeInTheDocument();
   });
@@ -999,8 +1070,8 @@ describe('conversation chat and automatic reception', () => {
     bridge.snapshot.jobs = [{ job_id: 'persisted-unknown-job', kind: 'send_chat', conversation_id: 'emma', case_id: 'old-case', operation_id: 'original-unknown', status: 'unknown', stage: 'complete', message: '原任务结果未知', created_at: Date.now(), started_at: null, completed_at: Date.now() }];
     await openApp(bridge);
     expect(sendButton()).toBeDisabled();
-    fireEvent.change(screen.getByRole('combobox', { name: '当前采购事项' }), { target: { value: 'old-case' } });
-    await waitFor(() => expect(screen.getByRole('combobox', { name: '当前采购事项' })).toHaveValue('old-case'));
+    chooseCase(1);
+    await waitFor(() => expect(calls(bridge, 'get_conversation').at(-1)?.params.case_id).toBe('old-case'));
     expect(sendButton()).toBeDisabled(); fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: true });
     expect(calls(bridge, 'send_chat')).toHaveLength(0);
     expect(screen.queryByRole('button', { name: /核查原操作/ })).not.toBeInTheDocument();
@@ -1035,8 +1106,8 @@ describe('conversation chat and automatic reception', () => {
     const bridge = new FakeBridge();
     bridge.details.emma.cases.push({ ...clone(bridge.details.emma.case), case_id: 'another-case', procurement_key: '另一采购', state: 'closed' });
     await openApp(bridge); await edit('Conversation-level body');
-    fireEvent.change(screen.getByRole('combobox', { name: '当前采购事项' }), { target: { value: 'another-case' } });
-    await waitFor(() => expect(screen.getByRole('combobox', { name: '当前采购事项' })).toHaveValue('another-case'));
+    chooseCase(1);
+    await waitFor(() => expect(calls(bridge, 'get_conversation').at(-1)?.params.case_id).toBe('another-case'));
     expect(textarea()).toHaveValue('Conversation-level body');
     expect(bridge.details.emma.draft!.body).toBe('Separate AI suggestion');
     expect(calls(bridge, 'save_chat_draft')[0].params).not.toHaveProperty('case_id');
@@ -1066,7 +1137,7 @@ describe('conversation chat and automatic reception', () => {
     await openApp(bridge);
     await screen.findByText('Separate AI suggestion');
     expect(textarea()).toHaveValue(''); expect(calls(bridge, 'begin_manual_edit')).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: '替换到输入框' }));
+    fireEvent.click(screen.getByRole('button', { name: '替换正文' }));
     expect(calls(bridge, 'begin_manual_edit')).toHaveLength(1);
     await waitFor(() => expect(sendButton()).toBeEnabled());
     fireEvent.change(textarea(), { target: { value: 'A carefully edited human answer' } });
@@ -1159,7 +1230,7 @@ describe('message sync summaries and explicit empty-history refresh', () => {
     expect(calls(bridge, 'get_conversation')[1].params).toEqual({ conversation_id: 'emma', refresh_empty: true });
     fireEvent.click(screen.getByRole('button', { name: /Sofia.*Do you have this mug in white/s }));
     await screen.findByRole('main', { name: 'Sofia 的客户接待' });
-    expect(calls(bridge, 'get_conversation')[2].params).toEqual({ conversation_id: 'sofia', refresh_empty: true });
+    expect(calls(bridge, 'get_conversation')[2].params).toEqual({ conversation_id: 'sofia', case_id: 'case-sofia', refresh_empty: true });
     expect(calls(bridge, 'begin_manual_edit')).toHaveLength(0);
     expect(calls(bridge, 'takeover')).toHaveLength(0);
     noLegacySend(bridge);
@@ -1188,8 +1259,11 @@ describe('message sync summaries and explicit empty-history refresh', () => {
     };
     await passive(() => bridge.emit({ event: 'state.changed', data: {} }));
     await passive(() => bridge.emit({ event: 'job.updated', data: { job_id: 'completed-history', kind: 'fill_history', conversation_id: 'emma', case_id: 'case-emma', status: 'succeeded', stage: 'complete', message: '本地历史已更新', created_at: Date.now(), started_at: null, completed_at: Date.now() } satisfies Job }));
-    await passive(() => fireEvent.click(screen.getByRole('button', { name: '刷新本地工作区' })));
-    await passive(() => fireEvent.click(screen.getByRole('button', { name: '客户资料', exact: true })));
+    fireEvent.click(screen.getByRole('button', { name: '运行记录', exact: true }));
+    await screen.findByRole('heading', { name: '运行记录' });
+    fireEvent.click(screen.getByRole('button', { name: '刷新记录' }));
+    await waitFor(() => expect(screen.getByText('运行记录已刷新。')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: '客户资料', exact: true }));
     await screen.findByRole('heading', { name: '客户资料', exact: true });
     await passive(() => bridge.emit({ event: 'state.changed', data: {} }));
     expect(calls(bridge, 'get_conversation').filter(call => call.params.refresh_empty === true)).toHaveLength(1);
@@ -1203,9 +1277,9 @@ describe('message sync summaries and explicit empty-history refresh', () => {
     act(() => bridge.emit({ event: 'job.updated', data: clone(failure) }));
     fireEvent.click(screen.getByRole('button', { name: '运行记录', exact: true }));
     await screen.findByRole('heading', { name: '运行记录', exact: true });
-    fireEvent.click(screen.getByRole('button', { name: '需要关注', exact: true }));
-    fireEvent.click(screen.getByRole('button', { name: /同步近期消息.*累计 4 次.*最后时间：11-07 10:30/s }));
-    const detail = screen.getByRole('heading', { name: '任务详情' }).closest('aside')!;
+    fireEvent.click(screen.getByRole('button', { name: /^需关注/ }));
+    fireEvent.click(screen.getByRole('button', { name: /查看详情/ }));
+    const detail = screen.getByRole('dialog', { name: '任务详情' });
     expect(within(detail).getByText(failure.message)).toBeInTheDocument();
     expect(within(detail).getByRole('alert')).toHaveTextContent('消息读取超时，请稍后重试。');
     expect(within(detail).getByRole('alert')).toHaveTextContent('错误码：native_timeout');
@@ -1213,9 +1287,9 @@ describe('message sync summaries and explicit empty-history refresh', () => {
     expect(screen.queryByText(/PRIVATE_EXCEPTION_DETAIL/)).not.toBeInTheDocument();
     failure.message = '消息读取失败，累计 5 次；最后时间：11-07 10:35';
     act(() => bridge.emit({ event: 'job.updated', data: clone(failure) }));
-    await screen.findByRole('button', { name: /同步近期消息.*累计 5 次.*最后时间：11-07 10:35/s });
+    expect((await screen.findAllByText(/累计 5 次/)).length).toBeGreaterThan(0);
     expect(screen.queryByText(/累计 4 次/)).not.toBeInTheDocument();
-    expect(screen.getAllByText('失败')).toHaveLength(1);
+    expect(screen.getByRole('alert')).toHaveTextContent('消息读取超时');
   });
 });
 
@@ -1247,16 +1321,16 @@ describe('editing safeguards and existing workspace layout', () => {
     expect(calls(bridge, 'get_conversation').some(call => call.params.conversation_id === 'sofia')).toBe(false);
   });
 
-  it('keeps the editor mounted while collapsing both sidebars and opening responsive drawers', async () => {
+  it('keeps the editor mounted while collapsing details and opening the responsive drawer', async () => {
     const bridge = await openApp(); const original = textarea(); await edit('Layout preserves input');
     const navigation = screen.getByRole('navigation', { name: '主导航' });
-    fireEvent.click(screen.getByRole('button', { name: '收起需求侧栏' }));
+    fireEvent.click(screen.getByRole('button', { name: '收起客户资料' }));
     expect(screen.getByRole('navigation', { name: '主导航' })).toBe(navigation);
     expect(textarea()).toBe(original); expect(textarea()).toHaveValue('Layout preserves input');
     expect(calls(bridge, 'get_conversation')).toHaveLength(1);
     act(() => { Object.defineProperty(window, 'innerWidth', { value: 850 }); window.dispatchEvent(new Event('resize')); });
     fireEvent.click(screen.getByRole('button', { name: '采购需求' }));
-    expect(within(screen.getByRole('dialog', { name: '采购需求' })).getByText('当前没有采购需求')).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog', { name: '客户资料' })).getByText('当前没有采购需求')).toBeInTheDocument();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(textarea()).toHaveValue('Layout preserves input');
     expect(bridge.preferences.details_preference).toBe('rail');
@@ -1277,6 +1351,7 @@ describe('editing safeguards and existing workspace layout', () => {
     await openApp(); fireEvent.click(screen.getByRole('button', { name: '资料与政策', exact: true }));
     fireEvent.change(await screen.findByRole('textbox', { name: '资料名称' }), { target: { value: 'Unsaved sample policy' } });
     fireEvent.click(screen.getByRole('button', { name: '客户接待', exact: true }));
+    await screen.findByText('请填写资料名称和已核实的内容。');
     expect(screen.getByRole('heading', { name: '资料与政策', exact: true })).toBeInTheDocument();
     const event = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(event); expect(event.defaultPrevented).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: '放弃修改', exact: true }));
@@ -1300,7 +1375,7 @@ describe('editing safeguards and existing workspace layout', () => {
     bridge.snapshot.handoff_cases = [older]; bridge.details.emma.cases.push(older);
     await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '待我报价', exact: true }));
     await screen.findByText('原陶瓷杯采购'); fireEvent.click(screen.getByRole('button', { name: '打开聊天' }));
-    await waitFor(() => expect(screen.getByRole('combobox', { name: '当前采购事项' })).toHaveValue(older.case_id));
+    await waitFor(() => expect(calls(bridge, 'get_conversation').at(-1)?.params.case_id).toBe(older.case_id));
     expect(calls(bridge, 'get_conversation').at(-1)?.params).toEqual({ conversation_id: 'emma', case_id: older.case_id, refresh_empty: true });
   });
 
@@ -1402,25 +1477,29 @@ describe('editing safeguards and existing workspace layout', () => {
     ];
     await openApp(bridge);
     fireEvent.click(screen.getByRole('button', { name: '运行记录', exact: true }));
-    await screen.findByText('待补读');
-    expect(screen.getByText('待补读')).toHaveClass('badge-neutral');
-    fireEvent.click(screen.getByRole('button', { name: '需要关注', exact: true }));
-    expect(screen.queryByText('待补读')).not.toBeInTheDocument();
-    expect(screen.getByText('失败')).toBeInTheDocument();
+    await screen.findByText('历史正文暂不可用，已安排稍后补读');
+    fireEvent.click(screen.getByRole('button', { name: /^需关注/ }));
+    expect(screen.queryByText('历史正文暂不可用，已安排稍后补读')).not.toBeInTheDocument();
     expect(screen.getByText('接口读取超时')).toBeInTheDocument();
   });
 
-  it('persists the Feishu write switch separately from enabling the integration', async () => {
-    const bridge = await openApp(); fireEvent.click(screen.getByRole('button', { name: '连接与设置', exact: true }));
+  it('saves Feishu credentials through its dedicated bridge and grants writing separately', async () => {
+    const bridge = new FakeBridge(); bridge.snapshot.settings.feishu = { enabled: true };
+    const save = vi.fn(async (_params: { settings: Record<string, unknown>; app_secret: string; expected_revision: number }) => true); const grant = vi.fn(async (_params: { enabled: boolean; expected_revision: number }) => true);
+    Object.assign(bridge, { saveFeishuConfiguration: save, grantFeishuWrite: grant });
+    await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '连接与设置', exact: true }));
     fireEvent.click(await screen.findByRole('button', { name: '飞书登记', exact: true }));
-    fireEvent.change(await screen.findByRole('textbox', { name: '飞书 CLI 完整路径' }), { target: { value: 'C:/Tools/lark-cli.exe' } });
-    for (const [name, value] of [['多维表格标识', 'synthetic-base'], ['数据表 ID', 'synthetic-table'], ['原表单分享标识', 'synthetic-form'], ['联系账号选项', 'synthetic-account'], ['初始接待状态', 'pending']]) fireEvent.change(screen.getByRole('textbox', { name }), { target: { value } });
-    fireEvent.click(screen.getByText('数据表字段映射（首次配置必填）'));
-    for (const label of ['买家编号', '联系账号', '接待状态', '产品名称', '自动编号']) fireEvent.change(screen.getByRole('textbox', { name: label + ' *', exact: true }), { target: { value: label } });
-    fireEvent.click(screen.getByRole('checkbox', { name: /启用飞书交接/ }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /允许本次运行写入交接记录/ }));
-    fireEvent.click(screen.getByRole('button', { name: '保存飞书配置', exact: true }));
-    await waitFor(() => expect(calls(bridge, 'save_settings').some(call => (call.params.feishu as { write_enabled?: boolean })?.write_enabled === true)).toBe(true));
+    fireEvent.change(screen.getByLabelText('应用 ID'), { target: { value: 'synthetic-app' } });
+    fireEvent.change(screen.getByLabelText('应用密钥'), { target: { value: 'synthetic-secret' } });
+    fireEvent.change(screen.getByLabelText('多维表格链接'), { target: { value: 'https://example.feishu.cn/base/synthetic' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存设置', exact: true }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(save.mock.calls[0][0]).toMatchObject({ app_secret: 'synthetic-secret', expected_revision: 0, settings: { app_id: 'synthetic-app', table_url: 'https://example.feishu.cn/base/synthetic', enabled: true } });
+    expect(calls(bridge, 'save_settings')).toHaveLength(0); expect(grant).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByLabelText('应用密钥')).toHaveValue(''));
+    fireEvent.click(screen.getByRole('button', { name: '授权本次写入' }));
+    fireEvent.click(within(screen.getByRole('dialog', { name: '授权本次飞书登记' })).getByRole('button', { name: '确认授权' }));
+    await waitFor(() => expect(grant).toHaveBeenCalledWith({ enabled: true, expected_revision: 0 }));
   });
 
   it('saves selected scope without starting automation or running an AI check', async () => {
@@ -1474,8 +1553,7 @@ describe('editing safeguards and existing workspace layout', () => {
     bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}) => method === 'check_ai' ? { cancelled: true } as T : original<T>(method, params);
     await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '连接与设置', exact: true }));
     fireEvent.click(await screen.findByRole('button', { name: '平台连接', exact: true }));
-    fireEvent.click(screen.getByText('连接诊断'));
-    fireEvent.click(screen.getByRole('button', { name: '检查模型' })); await screen.findByText('已取消本次操作。');
+        fireEvent.click(screen.getByRole('button', { name: '检查模型' })); await screen.findByText('已取消本次操作。');
     expect(bridge.snapshot.jobs).toHaveLength(0);
   });
 
@@ -1492,16 +1570,15 @@ describe('merchant card and adjustable reception layout', () => {
     bridge.snapshot.app = { ...bridge.snapshot.app, mode: 'live', seller_id: '123456', seller_suffix: '3456', account_verified: true, company_name: 'Example Trading Company' };
     await openApp(bridge);
     const navigation = screen.getByRole('navigation', { name: '主导航' });
-    const card = navigation.querySelector('.merchant')!;
+    const card = document.querySelector('.header-merchant')!;
     expect(card).toHaveTextContent('Example Trading Company');
-    expect(card).toHaveAttribute('title', 'Example Trading Company');
     expect(card.textContent).not.toMatch(/尾号|当前账号工作区|3456/);
     bridge.snapshot.app.company_name = null;
     act(() => bridge.emit({ event: 'state.changed', data: {} }));
     await waitFor(() => expect(card).toHaveTextContent('正在读取公司名称'));
     bridge.snapshot.app.company_name = '';
     act(() => bridge.emit({ event: 'state.changed', data: {} }));
-    await waitFor(() => expect(card).toHaveTextContent('公司名称读取失败'));
+    await waitFor(() => expect(within(card as HTMLElement).getByRole('button', { name: '重试读取公司名称' })).toBeEnabled());
     const readsBeforeRetry = calls(bridge, 'get_snapshot').length;
     fireEvent.click(within(card as HTMLElement).getByRole('button', { name: '重试读取公司名称' }));
     await waitFor(() => expect(calls(bridge, 'refresh_company_profile')).toHaveLength(1));
@@ -1522,7 +1599,7 @@ describe('merchant card and adjustable reception layout', () => {
       await screen.findByRole('textbox', { name: '回复正文' });
       const side = screen.getByRole('separator', { name: '调整右侧栏宽度' });
       const vertical = screen.getByRole('separator', { name: '调整采购需求与业务补充高度' });
-      expect(vertical).toHaveAttribute('aria-valuenow', '330');
+      expect(vertical).toHaveAttribute('aria-valuenow', '329');
       fireEvent.pointerDown(side, { button: 0, clientX: 700 });
       fireEvent.pointerMove(document, { clientX: 650 });
       fireEvent.pointerUp(document);
@@ -1530,20 +1607,21 @@ describe('merchant card and adjustable reception layout', () => {
       fireEvent.pointerDown(vertical, { button: 0, clientY: 300 });
       fireEvent.pointerMove(document, { clientY: 350 });
       fireEvent.pointerUp(document);
-      await waitFor(() => expect(bridge.preferences.requirements_ratio).toBeCloseTo(380 / 600));
+      await waitFor(() => expect(bridge.preferences.requirements_ratio).toBeCloseTo(379 / 598));
       first.unmount();
       render(<App bridge={bridge} />);
       await screen.findByRole('textbox', { name: '回复正文' });
       expect(screen.getByRole('separator', { name: '调整右侧栏宽度' })).toHaveAttribute('aria-valuenow', '370');
-      expect(screen.getByRole('separator', { name: '调整采购需求与业务补充高度' })).toHaveAttribute('aria-valuenow', '380');
+      expect(screen.getByRole('separator', { name: '调整采购需求与业务补充高度' })).toHaveAttribute('aria-valuenow', '379');
       fireEvent.keyDown(screen.getByRole('separator', { name: '调整采购需求与业务补充高度' }), { key: 'ArrowUp' });
-      await waitFor(() => expect(bridge.preferences.requirements_ratio).toBeCloseTo(364 / 600));
+      await waitFor(() => expect(bridge.preferences.requirements_ratio).toBeCloseTo(363 / 598));
       fireEvent.doubleClick(screen.getByRole('separator', { name: '调整采购需求与业务补充高度' }));
       fireEvent.doubleClick(screen.getByRole('separator', { name: '调整右侧栏宽度' }));
-      await waitFor(() => expect(bridge.preferences).toMatchObject({ details_width: 360, requirements_ratio: 0.68 }));
+      await waitFor(() => expect(bridge.preferences).toMatchObject({ details_width: 334, requirements_ratio: 368 / 598 }));
+      expect(screen.getByRole('separator', { name: '调整采购需求与业务补充高度' })).toHaveAttribute('aria-valuenow', '368');
       act(() => { window.innerWidth = 900; window.dispatchEvent(new Event('resize')); });
       expect(screen.queryByRole('separator', { name: '调整右侧栏宽度' })).not.toBeInTheDocument();
-      expect(bridge.preferences).toMatchObject({ details_width: 360, requirements_ratio: 0.68 });
+      expect(bridge.preferences).toMatchObject({ details_width: 334, requirements_ratio: 368 / 598 });
     } finally { height.mockRestore(); }
   });
 
@@ -1563,15 +1641,17 @@ describe('merchant card and adjustable reception layout', () => {
       await openApp(bridge);
       const side = screen.getByRole('separator', { name: '调整右侧栏宽度' });
       const vertical = screen.getByRole('separator', { name: '调整采购需求与业务补充高度' });
-      await waitFor(() => expect(side).toHaveAttribute('aria-valuenow', '584'));
-      expect(vertical).toHaveAttribute('aria-valuenow', '126');
+      await waitFor(() => expect(side).toHaveAttribute('aria-valuenow', '560'));
+      expect(vertical).toHaveAttribute('aria-valuenow', '125');
       expect(bridge.preferences).toMatchObject({ details_width: 600, requirements_ratio: 0.8 });
       expect(notifyResize).toBeTypeOf('function');
       heightPx = 608;
       act(() => notifyResize?.(heightPx));
-      expect(vertical).toHaveAttribute('aria-valuenow', '460');
+      expect(vertical).toHaveAttribute('aria-valuenow', '418');
+      expect(vertical).toHaveAttribute('aria-valuemin', '180');
+      expect(vertical).toHaveAttribute('aria-valuemax', '418');
       act(() => { window.innerWidth = 1900; window.dispatchEvent(new Event('resize')); });
-      expect(side).toHaveAttribute('aria-valuenow', '600');
+      expect(side).toHaveAttribute('aria-valuenow', '560');
       expect(bridge.preferences).toMatchObject({ details_width: 600, requirements_ratio: 0.8 });
     } finally { height.mockRestore(); vi.unstubAllGlobals(); }
   });
@@ -1589,12 +1669,13 @@ describe('0.3.16 conversation controls', () => {
     await openApp(bridge);
     bridge.details.emma.conversation.case_id = other.case_id;
     act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
-    await waitFor(() => expect(screen.getByRole('combobox', { name: '当前采购事项' })).toHaveValue('case-other'));
-    fireEvent.change(screen.getByRole('combobox', { name: '当前采购事项' }), { target: { value: original.case_id } });
-    await waitFor(() => expect(screen.getByRole('combobox', { name: '当前采购事项' })).toHaveValue(original.case_id));
+    await waitFor(() => expect(document.querySelector('.requirement-product-title')).toHaveTextContent('帽子'));
+    chooseCase(0);
+    await waitFor(() => expect(calls(bridge, 'get_conversation').at(-1)?.params).toMatchObject({ case_id: original.case_id, refresh_empty: true }));
+    await waitFor(() => expect(document.querySelector('.requirement-product-title')).toHaveTextContent('眼镜'));
     act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
     await waitFor(() => expect(calls(bridge, 'get_conversation').at(-1)?.params.case_id).toBe(original.case_id));
-    expect(screen.getByRole('combobox', { name: '当前采购事项' })).toHaveValue(original.case_id);
+    expect(document.querySelector('.requirement-product-title')).toHaveTextContent('眼镜');
   });
   it('submits history directly and blocks repeated clicks while the task is active', async () => {
     const bridge = new FakeBridge(); await openApp(bridge);
@@ -1633,8 +1714,7 @@ it('shows executor failure without losing editing or allowing queued sends and c
   expect(textarea()).toHaveValue('保留的正文');
   fireEvent.click(screen.getByRole('button', { name: '连接与设置' }));
   fireEvent.click(await screen.findByRole('button', { name: '平台连接', exact: true }));
-  fireEvent.click(screen.getByText('连接诊断'));
-  expect(screen.getByRole('button', { name: '检查模型' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '检查模型' })).toBeDisabled();
   expect(screen.getByRole('button', { name: '关闭自动接待' })).toBeEnabled();
 });
 
@@ -1658,9 +1738,12 @@ it.each([10, 20])('keeps independent failure visible over a delayed healthy snap
   const blocked = deferred<Snapshot>();
   const original = bridge.invoke.bind(bridge);
   bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => method === 'get_snapshot' ? await blocked.promise as T : original<T>(method, params);
-  fireEvent.click(screen.getByRole('button', { name: '刷新本地工作区' }));
+  fireEvent.click(screen.getByRole('button', { name: '运行记录', exact: true }));
+  fireEvent.click(await screen.findByRole('button', { name: '刷新记录' }));
   act(() => bridge.emit({ event: 'executor.health', data: { ...initial, state: 'failed', worker_alive: false, observed_at_ms: 20 } }));
   expect((await screen.findAllByText('后台执行异常，自动发送已暂停')).length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole('button', { name: '客户接待', exact: true }));
+  await screen.findByRole('textbox', { name: '回复正文' });
   expect(sendButton()).toBeDisabled();
   await act(async () => blocked.resolve(clone(bridge.snapshot)));
   expect(screen.getAllByText('后台执行异常，自动发送已暂停').length).toBeGreaterThan(0);

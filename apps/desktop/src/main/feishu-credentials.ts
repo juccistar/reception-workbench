@@ -16,12 +16,17 @@ export class FeishuCredentialStore {
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(appId) || typeof secret !== 'string' || !secret.trim() || secret.length > 4096 || /[\0\r\n]/.test(secret)) throw new Error('Invalid Feishu credential');
     await this.store.replace(this.ref(merchant, appId), JSON.stringify({ appId, secret }));
   }
-  async read(merchant: string, appId: string): Promise<string | null> {
-    const value = await this.store.get(this.ref(merchant, appId));
+  async stage(merchant: string, appId: string, secret: string): Promise<string> {
+    this.ref(merchant, appId);
+    if (typeof secret !== 'string' || !secret.trim() || secret.length > 4096 || /[\0\r\n]/.test(secret)) throw new Error('Invalid Feishu credential');
+    return this.store.put(JSON.stringify({ merchant, appId, secret }));
+  }
+  async read(merchant: string, appId: string, credentialRef?: string | null): Promise<string | null> {
+    const value = await this.store.get(credentialRef || this.ref(merchant, appId));
     if (!value) return null;
     try {
       const record: unknown = JSON.parse(value);
-      if (!record || typeof record !== 'object' || !('appId' in record) || !('secret' in record) || record.appId !== appId || typeof record.secret !== 'string' || !record.secret.trim()) return null;
+      if (!record || typeof record !== 'object' || !('appId' in record) || !('secret' in record) || record.appId !== appId || typeof record.secret !== 'string' || !record.secret.trim() || credentialRef && (!('merchant' in record) || record.merchant !== merchant)) return null;
       return record.secret;
     } catch { throw new Error('Unable to read Feishu credential'); }
   }

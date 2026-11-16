@@ -44,6 +44,10 @@ def safe_diagnostics(source):
         value = source.get(key)
         if isinstance(value, str) and value in allowed_values:
             safe[key] = value
+    if source.get('requirement_field') in ('product', 'product_id', 'product_images', 'quantity',
+            'specifications', 'customization', 'destination', 'delivery', 'budget',
+            'packaging', 'certifications', 'contact'):
+        safe['requirement_field'] = source['requirement_field']
     if source.get('cancel_reason') in ('source_changed', 'paused', 'shutdown', 'superseded'):
         safe['cancel_reason'] = source['cancel_reason']
     if isinstance(source.get('read_stage'), str) and source['read_stage'] in READ_STAGES:

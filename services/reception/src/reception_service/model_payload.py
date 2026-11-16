@@ -195,12 +195,17 @@ def project_model_payload(context: dict, task_mode: str | None = None) -> dict:
             continue
         seen.add(mid)
         projected = _pick(row, ('message_id', 'role', 'timestamp_ms', 'text'))
+        manifest_refs = {(ref.get('alias'), ref.get('image_id')) for ref in context.get('image_manifest', [])
+                         if isinstance(ref, dict) and ref.get('message_id') == mid}
+        refs = [ref for ref in row.get('image_refs', []) if isinstance(ref, dict)
+                and (ref.get('alias'), ref.get('image_id')) in manifest_refs]
+        if refs:
+            projected['image_refs'] = [_pick(ref, ('alias', 'image_id')) for ref in refs]
         body = projected.get('text')
         if isinstance(body, str) and (_URL.search(body) or _safe_text(body) != body):
             projected['media_notice'] = 'product_or_media_metadata_filtered'
         if body == '[image]' and not any(isinstance(ref, dict) and ref.get('message_id') == mid
                                          for ref in context.get('image_manifest', [])):
-            projected['text'] = ''
             projected['media_notice'] = 'image_not_available_to_this_request'
         timeline.append(projected)
     result['message_view'] = timeline
@@ -237,8 +242,13 @@ def project_model_payload(context: dict, task_mode: str | None = None) -> dict:
         result['unsent_reply'] = _pick(context['unsent_reply'], ('body',))
     manifest = context.get('image_manifest')
     if isinstance(manifest, list) and manifest:
-        result['image_manifest'] = [_pick(row, ('alias', 'image_id', 'message_id', 'attachment_id', 'origin', 'role'))
-                                    for row in manifest if isinstance(row, dict)]
+        from .requirement_media import _media_id
+        result['image_manifest'] = [
+            {**_pick(row, ('alias', 'image_id', 'message_id', 'attachment_id', 'origin', 'role')),
+             **({'media_id': _media_id('customer_image', row['message_id'])}
+                if row.get('role') in ('buyer', 'seller') and isinstance(row.get('message_id'), str)
+                and row.get('origin') != 'business_supplement' else {})}
+            for row in manifest if isinstance(row, dict)]
         result['image_transport'] = context.get('image_transport', 'none')
     projected = _model_safe(result)
     # These are our typed requirement records, not platform card metadata.
@@ -254,6 +264,8 @@ def project_model_payload(context: dict, task_mode: str | None = None) -> dict:
         projected['image_manifest'] = deepcopy(result['image_manifest'])
         projected['image_transport'] = result['image_transport']
     for original, row in zip(timeline, projected['message_view']):
+        if 'image_refs' in original:
+            row['image_refs'] = deepcopy(original['image_refs'])
         if isinstance(original.get('text'), str):
             row['text'] = original['text']
             if _URL.search(row['text']):

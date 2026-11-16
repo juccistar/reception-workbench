@@ -292,7 +292,55 @@ class NativeGateway(LiveGateway):
                 return False
             with self._permission_lock:
                 return epoch == self._permission_epoch
-        return super().register(payload, authorization=authorized)
+        case = payload.get('case') or {}
+        owner = self.feishu._owner(payload.get('operation_id')) if hasattr(self.feishu, '_owner') else self.feishu
+        from ..feishu_open_adapter import FeishuOpenAdapter
+        if case.get('requirements_format') != 'ai-v1' or not isinstance(owner, FeishuOpenAdapter):
+            return super().register(payload, authorization=authorized)
+        from ..feishu_requirements import verify_requirements
+        with self.lock:
+            case = dict(case)
+            source_id = case.get('inquiry_source_id')
+            ids = []
+            for row in (case.get('requirements') or {}).values():
+                if isinstance(row, dict) and isinstance(row.get('evidence_ids'), list):
+                    ids.extend(row['evidence_ids'])
+            if isinstance(source_id, str) and source_id:
+                ids.append(source_id)
+            case['source_message_ids'] = list(dict.fromkeys(ids))
+            case.pop('inquiry_timestamp_ms', None)
+            operation = payload.get('operation_id')
+            old = self.ledger.get(operation) if operation else None
+            if old:
+                stored = (old[1].get('payload') or {}).get('case') or {}
+                if source_id == stored.get('inquiry_source_id') and 'inquiry_timestamp_ms' in stored:
+                    case['inquiry_timestamp_ms'] = stored['inquiry_timestamp_ms']
+                return self.feishu.register(dict(payload, case=case), authorization=authorized)
+            previous = payload.get('previous') or {}
+            if previous.get('status') == 'unknown' or not self.feishu.enabled():
+                return self.feishu.register(dict(payload, case=case), authorization=authorized)
+            try:
+                require_registration_authorization(authorized)
+                history = self.history(case.get('seller_id'), case.get('buyer_id'), case.get('conversation_id'))
+                require_registration_authorization(authorized)
+                selected = [m for m in history if m.message_id in ids]
+                verified = [m.to_dict() for m in selected]
+                verify_requirements(case, verified)
+                if case.get('customer_name') and not any(m.customer_name == case['customer_name'] for m in history):
+                    raise AdapterError('客户名称未在当前接口核实')
+                if source_id:
+                    origin = [m for m in selected if m.message_id == source_id and m.role == 'buyer'
+                              and m.seller_id == case.get('seller_id') and m.buyer_id == case.get('buyer_id')
+                              and m.conversation_id == case.get('conversation_id') and type(m.timestamp_ms) is int and m.timestamp_ms > 0]
+                    if len(origin) != 1:
+                        raise AdapterError('原始询单来源未核实')
+                    case['inquiry_timestamp_ms'] = origin[0].timestamp_ms
+                require_registration_authorization(authorized)
+                return self.feishu.register(dict(payload, case=case, verified_messages=verified), authorization=authorized)
+            except (AdapterError, ServiceError, OSError, ValueError, KeyError, TypeError):
+                return dict(status='rejected', record_id=previous.get('record_id') or '', number=previous.get('number') or '',
+                            case_id=previous.get('case_id') or case.get('case_id') or '', submission_started=False,
+                            detail='登记权限或买家需求来源未核实，未写表')
 
     def revoke(self):
         # Never acquire the gateway's network/ledger lock while pausing.

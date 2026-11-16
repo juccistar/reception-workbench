@@ -22,7 +22,9 @@ export interface LauncherBridge extends WhatsAppAccountBridge {
   copyAuthorization(): Promise<void>;
   modelSettings(): Promise<import('./model-settings').ModelSettingsSnapshot>;
   saveModelSettings(input: unknown): Promise<import('./model-settings').ModelSettingsSnapshot>;
-  checkModel(profileId: string, purpose: 'reception' | 'translation'): Promise<import('./model-settings').ModelSettingsSnapshot>;
+  checkModel(profileId: string, purpose: 'reception' | 'translation', revisions: { directory_revision: number; config_revision: number; credential_revision: number }): Promise<import('./model-settings').ModelSettingsSnapshot>;
+  onCloseRequest(listener: (event: import('./exit-dialog').ExitDialogEvent) => void): () => void;
+  respondClose(response: import('./exit-dialog').ExitDialogResponse): Promise<void>;
   cancelModelCheck(profileId: string, purpose: 'reception' | 'translation'): Promise<void>;
 }
 

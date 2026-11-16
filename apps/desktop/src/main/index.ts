@@ -129,7 +129,7 @@ let refreshLauncherCompanyName: (() => void) | null = null;
 let closing = false;
 let canDestroy = false;
 let receptionIntent = 0;
-let preferences: Preferences = { nav_preference:'expanded', details_preference:'expanded', list_width:280, details_width:334, requirements_ratio:0.68 };
+let preferences: Preferences = { nav_preference:'expanded', details_preference:'expanded', list_width:280, details_width:334 };
 let preferenceWrites = Promise.resolve();
 let storageBusy = false;
 let storageTask: StorageRequest | null = null;
@@ -168,6 +168,16 @@ const exitDialogHost = createExitDialogHost<BrowserWindow, WebFrameMain, IpcMain
   send: (target, event) => { if (target.isDestroyed() || target.webContents.isDestroyed()) throw new Error('窗口已关闭。'); target.webContents.send('reception:exit-dialog', event); },
 });
 
+let confirmationDetails: import('../shared/confirmation-dialog').ConfirmationDetails | null = null;
+const confirmationDialogHost = createExitDialogHost<BrowserWindow, WebFrameMain, IpcMainInvokeEvent>({
+  currentFrame: target => target.isDestroyed() || target.webContents.isDestroyed() ? null : target.webContents.mainFrame,
+  isSource: (event, target, frame) => {
+    try { validSender(event); return target === window && event.sender === target.webContents && event.senderFrame === frame && target.webContents.mainFrame === frame; }
+    catch { return false; }
+  },
+  send: (target, event) => { if (target.isDestroyed() || target.webContents.isDestroyed()) throw new Error('窗口已关闭。'); target.webContents.send('reception:confirmation-dialog', { ...event, ...confirmationDetails }); },
+});
+
 function validSender(event: IpcMainInvokeEvent) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('无效的操作来源。');
   if (!isWorkbenchPage(event.senderFrame.url, rendererFile)) throw new Error('当前页面不允许访问接待服务。');
@@ -191,9 +201,11 @@ function updateVerifiedTitle(): void {
   }).catch(() => {}).finally(() => { identityTitlePending = false; });
 }
 async function confirm(title: string, message: string, detail: string, action: string) {
-  if (!window) return false;
-  const result = await dialog.showMessageBox(window, { type:'question', title, message, detail, buttons:['取消',action], defaultId:0, cancelId:0, noLink:true });
-  return result.response === 1;
+  if (!window || window.isDestroyed()) return false;
+  const details = { title, message, detail, action };
+  confirmationDetails = details;
+  try { return await confirmationDialogHost.request(window) === 'save'; }
+  finally { if (confirmationDetails === details) confirmationDetails = null; }
 }
 async function accioLaunchInfo(): Promise<AccioLaunchInfo> {
   if (closing || storageBusy || updateTask) throw new Error('工作台正在退出或管理数据，请稍后复制启动指令。');
@@ -284,7 +296,7 @@ async function performStorageTask(request: StorageRequest): Promise<string> {
   } else writeBootstrap(bootstrapPaths.configFile, next, captured);
   return nextRoot;
 }
-async function manageStorage(input: unknown): Promise<StorageResult> {
+async function manageStorage(input: unknown, confirmedInPage = false): Promise<StorageResult> {
   if (storageBusy || updateTask || closing || backendStartPromise) return { status: 'failed', message: '后台正在启动、退出、升级或执行数据管理，请等待完成。' };
   let request: StorageRequest;
   try {
@@ -299,7 +311,7 @@ async function manageStorage(input: unknown): Promise<StorageResult> {
   try {
     release = await acquireStorageOperation(bootstrapPaths.stateDir);
     const names = { migrate: '迁移当前数据', open: '打开已有工作区', backup: '完整备份', restore: '恢复备份' };
-    const accepted = await confirm('数据与备份', `${names[request.action]}并重启工作台？`, `当前目录：${dataRoot || '未连接'}\n目标目录：${request.target}\n${request.backup ? `备份来源：${request.backup}\n` : ''}将先保存编辑、停止后台并核验数据。原目录保留；非空迁移目标和缺少较新发送账本的旧备份会被拒绝。重启后自动接待保持暂停。`, '保存并继续');
+    const accepted = confirmedInPage || await confirm('数据与备份', `${names[request.action]}并重启工作台？`, `当前目录：${dataRoot || '未连接'}\n目标目录：${request.target}\n${request.backup ? `备份来源：${request.backup}\n` : ''}将先保存编辑、停止后台并核验数据。原目录保留；非空迁移目标和缺少较新发送账本的旧备份会被拒绝。重启后自动接待保持暂停。`, '保存并继续');
     if (!accepted) return { status: 'cancelled', message: '已取消，数据目录保持不变。' };
     storageTask = request;
     const restarted = await closeWindow();
@@ -451,8 +463,9 @@ function installIPC() {
     await copyProductText(call, reference, mediaReady, text => clipboard.writeText(text));
   });
   ipcMain.handle('reception:exit-dialog:respond', (event, value: unknown) => exitDialogHost.respond(event, value));
-  window?.on('closed', () => exitDialogHost.cancel());
-  window?.webContents.on('did-start-navigation', () => exitDialogHost.cancel());
+  ipcMain.handle('reception:confirmation-dialog:respond', (event, value: unknown) => confirmationDialogHost.respond(event, value));
+  window?.on('closed', () => { exitDialogHost.cancel(); confirmationDialogHost.cancel(); });
+  window?.webContents.on('did-start-navigation', () => { exitDialogHost.cancel(); confirmationDialogHost.cancel(); });
   ipcMain.handle('reception:feishu:save', async (event, input) => { validSender(event); return feishuHost().save(input); });
   ipcMain.handle('reception:feishu:grant', async (event, input) => { validSender(event); await feishuHost().synchronize(); return feishuHost().grant(input); });
   ipcMain.handle('reception:models:summary', async event => { validSender(event); return (await createModelSettingsStore()).read(); });
@@ -487,7 +500,7 @@ function installIPC() {
     if (!folder || !existsSync(folder)) throw new Error('目录不存在或尚无成功备份。');
     const failure = await shell.openPath(folder); if (failure) throw new Error('未能打开目录，请检查访问权限。');
   });
-  ipcMain.handle('reception:storage:manage', (event, request: unknown) => { validSender(event); return manageStorage(request); });
+  ipcMain.handle('reception:storage:manage', (event, request: unknown) => { validSender(event); return manageStorage(request, true); });
   ipcMain.handle('reception:invoke', async(event, method:unknown, input:unknown)=>{
     validSender(event);
     if (typeof method!=='string'||!methods.has(method)||method.includes('whatsapp')) throw new Error('不允许此操作。');

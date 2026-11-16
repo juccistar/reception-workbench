@@ -17,6 +17,7 @@
     "feishu_configuration": { "log": "artifacts/verification/042-feishu-configuration-002.log", "tests": 3, "status": "passed" },
     "feishu_host": { "log": "artifacts/verification/042-feishu-host-001.log", "tests": 4, "status": "passed" },
     "workbench_regression_before_selector_updates": { "log": "artifacts/verification/042-replica-ui-integration-001.log", "tests": 126, "failed": 42, "status": "failed" },
+    "latest_workbench_and_host": { "log": "artifacts/verification/042-replica-ui-integration-004.log", "files": 4, "tests": 137, "status": "passed" },
     "full_suite": false
   },
   "pending": ["updated interaction regressions", "actual source window and reference comparison", "final candidate packaging and resource verification"],

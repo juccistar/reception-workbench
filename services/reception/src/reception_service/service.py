@@ -162,7 +162,7 @@ class ReceptionService(FeishuSettingsMixin, ReplyBatchMixin, WhatsAppMerchantCon
         self._running = False
         self._auto_send = False
         self._manual_only = False
-        self._scope = {'mode': 'selected', 'conversation_ids': [], 'max_auto_replies': None}
+        self._scope = {'mode': 'all', 'conversation_ids': [], 'max_auto_replies': None}
         self._frozen_scope = None
         # Session boundaries survive a pause, but never a process restart.
         self._authorized_scope = None
@@ -1121,8 +1121,12 @@ class ReceptionService(FeishuSettingsMixin, ReplyBatchMixin, WhatsAppMerchantCon
                 if value.get('write_enabled') is True:
                     raise ServiceError('authorization_required', '请单独授权本次飞书写入。')
                 if 'app_id' in value:
-                    # New application settings replace the retired CLI form configuration.
+                    # Publish the immutable credential reference with its validated configuration.
+                    app_id = value['app_id']
+                    current_ref = updated['feishu'].get('credential_ref') if updated['feishu'].get('app_id') == app_id else None
+                    credential_ref = getattr(self._feishu_save_local, 'credential_ref', current_ref)
                     value = {k: v for k, v in value.items() if k in ('enabled', 'app_id', 'table_url', 'fields', 'account_option', 'initial_status')}
+                    value['credential_ref'] = credential_ref
                     legacy = updated['feishu'].get('legacy_cli_config')
                     if not legacy and updated['feishu'].get('cli_path'):
                         legacy = {**updated['feishu'], 'write_enabled': False}

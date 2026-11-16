@@ -18,6 +18,12 @@ const bridge: ReceptionBridge = {
     return () => ipcRenderer.removeListener('reception:exit-dialog', handler);
   },
   respondExitDialog: response => ipcRenderer.invoke('reception:exit-dialog:respond', response),
+  onConfirmationDialog: listener => {
+    const handler = (_event: unknown, value: import('../shared/confirmation-dialog').ConfirmationDialogEvent) => listener(value);
+    ipcRenderer.on('reception:confirmation-dialog', handler);
+    return () => ipcRenderer.removeListener('reception:confirmation-dialog', handler);
+  },
+  respondConfirmationDialog: response => ipcRenderer.invoke('reception:confirmation-dialog:respond', response),
   getImageOriginal: (reference, requestId) => ipcRenderer.invoke('reception:image:original', reference, requestId),
   cancelImageOriginal: requestId => ipcRenderer.invoke('reception:image:cancel', requestId),
   showImageMenu: reference => ipcRenderer.invoke('reception:image:menu', reference),

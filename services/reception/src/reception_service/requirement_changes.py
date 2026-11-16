@@ -29,8 +29,8 @@ def case_catalog(repo, owner):
             for index, row in enumerate(rows)]
 
 
-def _fail(message='需求变更格式或依据无效，已有内容未修改'):
-    raise ServiceError('invalid_requirement_change', message, stage='requirements')
+def _fail(message='需求变更格式或依据无效，已有内容未修改', *, diagnostics=None):
+    raise ServiceError('invalid_requirement_change', message, stage='requirements', diagnostics=diagnostics)
 
 
 def _messages(context):
@@ -85,7 +85,13 @@ def validate_changes(output, context):
                     if not isinstance(row, dict) or row.get('value') not in (None, '', [])}
         values = validated_requirements(nonempty, target_context)
         if set(values) != set(nonempty):
-            _fail('需求字段缺少有效内容或确切原文依据')
+            rejected = next(key for key in REQUIREMENT_FIELDS if key in nonempty and key not in values)
+            labels = {'product': '产品', 'product_id': '产品编号', 'product_images': '产品图片',
+                      'quantity': '数量', 'specifications': '规格', 'customization': '定制',
+                      'destination': '收货地', 'delivery': '交期', 'budget': '预算',
+                      'packaging': '包装', 'certifications': '认证', 'contact': '联系方式'}
+            _fail(f'需求字段缺少有效内容或确切原文依据（{labels[rejected]}）',
+                  diagnostics={'requirement_field': rejected})
         for row in values.values():
             _sources(row['evidence_ids'], messages)
         cleared = {}

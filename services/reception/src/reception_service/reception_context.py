@@ -63,16 +63,17 @@ def add_image_references(context):
     manifest, view = [], []
     for message in ordered:
         ref = refs.get(message['message_id'])
-        body = message['text']
+        image_refs = []
         if ref:
             alias = 'p' + str(len(manifest) + 1)
             manifest.append({'alias': alias, 'image_id': ref['image_id'], 'message_id': message['message_id'],
                              'role': message['role'], 'sender_id': message['seller_id'] if message['role'] == 'seller' else message['buyer_id'],
                              'timestamp_ms': message.get('timestamp_ms'), 'source_version': ref['source_version'],
                              'image_sha256': ref['image_sha256'], 'availability': 'ready_for_read'})
-            body = '[图片 ' + alias + ']' if body.strip() == '[image]' else body + '\n[图片 ' + alias + ']'
+            image_refs.append({'alias': alias, 'image_id': ref['image_id']})
         view.append({'message_id': message['message_id'], 'role': message['role'],
-                     'timestamp_ms': message.get('timestamp_ms'), 'text': body})
+                     'timestamp_ms': message.get('timestamp_ms'), 'text': message['text'],
+                     **({'image_refs': image_refs} if image_refs else {})})
     for ref in context.get('supplement_image_refs', []):
         manifest.append({'alias': 'p' + str(len(manifest) + 1), 'image_id': ref['image_id'],
                          'attachment_id': ref['attachment_id'], 'origin': 'business_supplement',

@@ -24,6 +24,7 @@ import { createModelSettingsStore } from './model-settings-store';
 import { buildAccioLaunchInfo } from './launch-command';
 import type { ModelSettingsSaveInput } from '../shared/model-settings';
 import { version as programVersion } from '../../../../package.json';
+import { createExitDialogHost } from './exit-dialog-host';
 import { launcherPageFromArguments, launcherPageRequest } from '../shared/launcher-navigation';
 
 /** Launcher runs before any business service or business storage is initialized. */
@@ -41,6 +42,12 @@ export async function runLauncher(): Promise<void> {
   const file = path.join(__dirname, '../renderer/launcher.html');
   const window = new BrowserWindow({ width: 900, height: 680, minWidth: 440, minHeight: 400, title: '接待工作台', backgroundColor: '#ffffff', show: false, autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, '../launcher-preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
   const valid = (event: IpcMainInvokeEvent) => { if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !isWorkbenchPage(event.senderFrame.url, file)) throw new Error('无效的操作来源。'); };
+  const closeDialog = createExitDialogHost<BrowserWindow, Electron.WebFrameMain, IpcMainInvokeEvent>({
+    currentFrame: target => target.isDestroyed() ? null : target.webContents.mainFrame,
+    isSource: (event, target, frame) => event.sender === target.webContents && event.senderFrame === frame && isWorkbenchPage(frame.url, file),
+    send: (target, event) => target.webContents.send('launcher:close:request', event),
+  });
+  ipcMain.handle('launcher:close:respond', (event, response: unknown) => { valid(event); closeDialog.respond(event, response); });
   const info = () => buildAccioLaunchInfo({ version: programVersion, distribution: app.isPackaged ? 'installed' : 'development', executable: process.execPath, developmentEntry: app.isPackaged ? undefined : path.resolve(process.argv[1]) });
   let registryPromise: ReturnType<typeof createLauncherRegistry> | undefined;
   let storePromise: ReturnType<typeof createModelSettingsStore> | undefined;
@@ -63,6 +70,7 @@ export async function runLauncher(): Promise<void> {
   });
   ipcMain.handle('launcher:page:get', event => { valid(event); return requestedPage; });
   const quit = () => quitting ??= (async () => {
+    if (await closeDialog.request(window) !== 'save') { quitting = undefined; return; }
     try {
       await accountPromise?.catch(() => {});
       await accountManager?.close();
@@ -242,18 +250,22 @@ export async function runLauncher(): Promise<void> {
     if (task) task.cancelled = true;
     checker.cancel(id, purpose);
   });
-  ipcMain.handle('launcher:models:check', async (event, id: unknown, purpose: unknown) => {
+  ipcMain.handle('launcher:models:check', async (event, id: unknown, purpose: unknown, revisions: unknown) => {
     valid(event);
     if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(id) || (purpose !== 'reception' && purpose !== 'translation')) throw new Error('模型检查参数无效。');
     const key = checkKey(id, purpose);
     if (checks.has(key)) throw new Error('该用途的检查正在进行。');
     const task = { cancelled: false }; checks.set(key, task);
     try {
-    const answer = await dialog.showMessageBox(window, { type: 'warning', title: '模型能力检查', message: '检查会向所选模型发送合成内容，可能产生 API 费用。', buttons: ['取消', '开始检查'], defaultId: 0, cancelId: 0, noLink: true });
-    if (answer.response !== 1 || task.cancelled) throw new Error('已取消模型检查。');
+    if (!revisions || typeof revisions !== 'object') throw new Error('模型检查参数无效。');
+    const expected = revisions as Record<string, unknown>;
+    if (!['directory_revision', 'config_revision', 'credential_revision'].every(key => Number.isSafeInteger(expected[key]) && Number(expected[key]) >= 0)) throw new Error('模型检查参数无效。');
     try {
       const settings = await store();
+      const current = await settings.read();
+      if (current.directory_revision !== expected.directory_revision) throw new Error('配置已变化。');
       const { profile, api_key } = await settings.checkProfile(id);
+      if (profile.config_revision !== expected.config_revision || profile.credential_revision !== expected.credential_revision) throw new Error('配置已变化。');
       if (task.cancelled) throw new Error('model_check_cancelled');
       const identity = { profile_id: id, config_revision: profile.config_revision, credential_revision: profile.credential_revision, purpose: purpose as 'reception' | 'translation' };
       const result = await checker.check(identity, { format: 'model-check-v1', purpose, profile: { profile_id: id, protocol: profile.protocol, base_url: profile.base_url, model: profile.model, config_revision: profile.config_revision, credential_revision: profile.credential_revision }, api_key }) as Record<string, unknown>;
@@ -279,8 +291,9 @@ export async function runLauncher(): Promise<void> {
   window.on('close', event => {
     if (exiting) return;
     event.preventDefault();
-    if (accountManager?.isRunning() && tray) window.hide();
-    else void quit();
+    if (accountManager?.isRunning() && tray) {
+      void closeDialog.request(window).then(choice => { if (choice === 'save' && !window.isDestroyed()) window.hide(); });
+    } else void quit();
   });
   app.on('before-quit', event => { if (!exiting) { event.preventDefault(); void quit(); } });
   app.on('activate', show);

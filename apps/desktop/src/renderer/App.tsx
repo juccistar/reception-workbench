@@ -11,6 +11,7 @@ import { executorHealth } from './executorHealth';
 import { ExitConfirmation } from './components/ExitConfirmation';
 import { NavigationGlyph } from './components/NavigationGlyph';
 import type { ExitDialogChoice, ExitDialogEvent, ExitDialogResponse } from '../shared/exit-dialog';
+import type { ConfirmationDialogEvent } from '../shared/confirmation-dialog';
 import './styles.css';
 import './reception-layout.css';
 
@@ -29,6 +30,11 @@ function Navigation({ model, bridge, afterSelect }: { model: Workbench; bridge?:
 export function App({ bridge = window.reception }: { bridge?: ReceptionBridge }) {
   const model = useWorkbench(bridge);
   const health = executorHealth(model.snapshot);
+  useEffect(() => {
+    if (!model.notice) return;
+    const timer = window.setTimeout(() => model.setNotice(''), 4000);
+    return () => window.clearTimeout(timer);
+  }, [model.notice, model.setNotice]);
   const [width, setWidth] = useState(window.innerWidth);
   const [drawer, setDrawer] = useState<'navigation' | 'customers' | 'requirements' | null>(null);
   const [productId, setProductId] = useState('');
@@ -36,6 +42,23 @@ export function App({ bridge = window.reception }: { bridge?: ReceptionBridge })
     onExitDialog: (listener: (event: ExitDialogEvent) => void) => () => void;
     respondExitDialog: (response: ExitDialogResponse) => Promise<boolean>;
   }>) | undefined;
+  const [confirmationRequest, setConfirmationRequest] = useState<ConfirmationDialogEvent | null>(null);
+  const respondingConfirmation = useRef<string | null>(null);
+  useEffect(() => bridge?.onConfirmationDialog?.(event => {
+    if (!event || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(event.request_id)) return;
+    if (event.kind === 'open' && ['title', 'message', 'detail', 'action'].every(key => typeof event[key as keyof ConfirmationDialogEvent] === 'string')) {
+      respondingConfirmation.current = null; setConfirmationRequest(event);
+    } else if (event.kind === 'dismiss') setConfirmationRequest(current => current?.request_id === event.request_id ? null : current);
+  }), [bridge]);
+  const chooseConfirmation = (choice: ExitDialogChoice) => {
+    const id = confirmationRequest?.request_id;
+    if (!id || !bridge?.respondConfirmationDialog || respondingConfirmation.current === id) return;
+    respondingConfirmation.current = id;
+    void bridge.respondConfirmationDialog({ request_id: id, choice }).then(accepted => {
+      if (accepted) setConfirmationRequest(current => current?.request_id === id ? null : current);
+      else if (respondingConfirmation.current === id) respondingConfirmation.current = null;
+    }).catch(() => { if (respondingConfirmation.current === id) respondingConfirmation.current = null; });
+  };
   const [exitRequest, setExitRequest] = useState<ExitDialogEvent | null>(null);
   const respondingExit = useRef<string | null>(null);
   useEffect(() => {
@@ -76,8 +99,8 @@ export function App({ bridge = window.reception }: { bridge?: ReceptionBridge })
   const effectiveList = wide ? Math.max(240, Math.min(desiredList, width - navWidth - 480 - desiredDetails)) : width <= 800 ? 218 : 265;
   const effectiveDetails = wide ? Math.max(280, Math.min(desiredDetails, width - navWidth - effectiveList - 480)) : desiredDetails;
   const availableHeight = Math.max(0, columnHeight - 10);
-  const minimumHeight = Math.min(140, availableHeight / 2);
-  const preferredRatio = dragRatio ?? model.preferences.requirements_ratio ?? 0.68;
+  const minimumHeight = Math.min(180, availableHeight / 2);
+  const preferredRatio = dragRatio ?? model.preferences.requirements_ratio ?? (availableHeight > 0 ? (availableHeight - 230) / availableHeight : 0.68);
   const requirementsHeight = Math.max(minimumHeight, Math.min(availableHeight - minimumHeight, availableHeight * preferredRatio));
   const effectiveRatio = availableHeight ? requirementsHeight / availableHeight : 0.55;
 
@@ -96,7 +119,7 @@ export function App({ bridge = window.reception }: { bridge?: ReceptionBridge })
   }, []);
   useEffect(() => { if (wide) setDrawer(null); }, [wide]);
   const openDetails = () => {
-    if (wide) model.changePreferences({ details_preference: 'expanded' });
+    if (wide) void model.changePreferences({ details_preference: expandedDetails ? 'rail' : 'expanded' });
     else setDrawer('requirements');
   };
   const registerLocate = useCallback((locate: (id: string) => void) => { locateRef.current = locate; }, []);
@@ -156,12 +179,13 @@ export function App({ bridge = window.reception }: { bridge?: ReceptionBridge })
       {(model.snapshot?.app.mode === 'demo' || !model.connected) && <DemoConnection bridge={bridge} disconnected={!model.connected} onInspectConnection={() => void model.navigate('settings')} />}
       {model.error && !model.closing && <div className="global-feedback global-error" role="alert"><span>{model.error}</span><div><button type="button" onClick={() => void refresh()}>重新读取</button><IconButton label="关闭错误提示" onClick={() => model.setError('')}><X size={15} /></IconButton></div></div>}
       {model.notice && <div className="global-feedback global-notice" role="status"><span>{model.notice}</span><IconButton label="关闭状态提示" onClick={() => model.setNotice('')}><X size={15} /></IconButton></div>}
-      <div className="reception-layout" hidden={model.page !== 'reception'}><div className="customer-column"><CustomerList model={model} />{wide && <div className="resize-handle list-resize" role="separator" aria-label="调整客户列表宽度" aria-orientation="vertical" tabIndex={0} onPointerDown={event => { if (event.button === 0) beginResize('list', event.clientX); }} onDoubleClick={() => model.changePreferences({ list_width: 272 })} aria-valuemin={240} aria-valuemax={Math.max(240, Math.min(360, width - navWidth - effectiveDetails - 480))} aria-valuenow={effectiveList} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); model.changePreferences({ list_width: Math.max(240, Math.min(360, effectiveList + (event.key === 'ArrowRight' ? 8 : -8), width - navWidth - effectiveDetails - 480)) }); } }} />}</div><Conversation model={model} bridge={bridge} openList={() => setDrawer('customers')} openDetails={openDetails} registerLocate={registerLocate} />{expandedDetails && <div className="requirements-column" ref={detailsColumn} style={{ '--requirements-height': `${requirementsHeight}px` } as React.CSSProperties}><div className="resize-handle details-resize" role="separator" aria-label="调整右侧栏宽度" aria-orientation="vertical" aria-valuemin={280} aria-valuemax={Math.max(280, Math.min(560, width - navWidth - 240 - 480))} aria-valuenow={effectiveDetails} tabIndex={0} title="左右拖动调整右侧栏；双击恢复默认" onPointerDown={event => { if (event.button === 0) beginResize('details', event.clientX); }} onDoubleClick={() => model.changePreferences({ details_width: 334 })} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); model.changePreferences({ details_width: Math.max(280, Math.min(560, width - navWidth - 240 - 480, effectiveDetails + (event.key === 'ArrowLeft' ? 16 : -16))) }); } }} />{expandedDetails ? <><Requirements bridge={bridge} model={model} onOpenProduct={openProduct} collapse={() => model.changePreferences({ details_preference: 'rail' })} locate={locate} /><div className="split-handle" role="separator" aria-label="调整采购需求与业务补充高度" aria-orientation="horizontal" aria-valuemin={Math.round(minimumHeight)} aria-valuemax={Math.round(availableHeight - minimumHeight)} aria-valuenow={Math.round(requirementsHeight)} tabIndex={0} title="上下拖动调整高度；双击恢复默认" onPointerDown={event => { if (event.button === 0) beginVerticalResize(event.clientY); }} onDoubleClick={() => model.changePreferences({ requirements_ratio: 0.68 })} onKeyDown={event => { if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); setRequirementsHeight(requirementsHeight + (event.key === 'ArrowDown' ? 16 : -16)); } }} /></> : <button type="button" className="requirements-expand" onClick={openDetails}>展开采购需求</button>}<SupplementPanel model={model} /></div>}</div>
+      <div className="reception-layout" hidden={model.page !== 'reception'}><div className="customer-column"><CustomerList model={model} />{wide && <div className="resize-handle list-resize" role="separator" aria-label="调整客户列表宽度" aria-orientation="vertical" tabIndex={0} onPointerDown={event => { if (event.button === 0) beginResize('list', event.clientX); }} onDoubleClick={() => model.changePreferences({ list_width: 272 })} aria-valuemin={240} aria-valuemax={Math.max(240, Math.min(360, width - navWidth - effectiveDetails - 480))} aria-valuenow={effectiveList} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); model.changePreferences({ list_width: Math.max(240, Math.min(360, effectiveList + (event.key === 'ArrowRight' ? 8 : -8), width - navWidth - effectiveDetails - 480)) }); } }} />}</div><Conversation model={model} bridge={bridge} openList={() => setDrawer('customers')} openDetails={openDetails} registerLocate={registerLocate} />{expandedDetails && <div className="requirements-column" ref={detailsColumn} style={{ '--requirements-height': `${requirementsHeight}px` } as React.CSSProperties}><div className="resize-handle details-resize" role="separator" aria-label="调整右侧栏宽度" aria-orientation="vertical" aria-valuemin={280} aria-valuemax={Math.max(280, Math.min(560, width - navWidth - 240 - 480))} aria-valuenow={effectiveDetails} tabIndex={0} title="左右拖动调整右侧栏；双击恢复默认" onPointerDown={event => { if (event.button === 0) beginResize('details', event.clientX); }} onDoubleClick={() => model.changePreferences({ details_width: 334 })} onKeyDown={event => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); model.changePreferences({ details_width: Math.max(280, Math.min(560, width - navWidth - 240 - 480, effectiveDetails + (event.key === 'ArrowLeft' ? 16 : -16))) }); } }} />{expandedDetails ? <><Requirements bridge={bridge} model={model} onOpenProduct={openProduct} collapse={() => model.changePreferences({ details_preference: 'rail' })} locate={locate} /><div className="split-handle" role="separator" aria-label="调整采购需求与业务补充高度" aria-orientation="horizontal" aria-valuemin={Math.round(minimumHeight)} aria-valuemax={Math.round(availableHeight - minimumHeight)} aria-valuenow={Math.round(requirementsHeight)} tabIndex={0} title="上下拖动调整高度；双击恢复默认" onPointerDown={event => { if (event.button === 0) beginVerticalResize(event.clientY); }} onDoubleClick={() => model.changePreferences({ requirements_ratio: availableHeight > 0 ? Math.max(minimumHeight, availableHeight - 230) / availableHeight : 0.68 })} onKeyDown={event => { if (event.key === 'ArrowUp' || event.key === 'ArrowDown') { event.preventDefault(); setRequirementsHeight(requirementsHeight + (event.key === 'ArrowDown' ? 16 : -16)); } }} /></> : <button type="button" className="requirements-expand" onClick={openDetails}>展开采购需求</button>}<SupplementPanel model={model} /></div>}</div>
       {model.page === 'products' && <ProductsPage executorReady={health.ready} executorMessage={health.message} onOpenConversation={conversationId => { void model.selectConversation(conversationId); }} onOpenProcurement={() => { void model.navigate('procurement'); }} initialProductId={productId} caseSelection={model.detail?.case?.case_id ? { case_id: model.detail.case.case_id, revision: model.detail.case.revision, customer_name: model.detail.conversation.customer_name, product_name: typeof model.detail.case.requirements?.product?.value === 'string' ? model.detail.case.requirements.product.value : '', local_product_id: model.detail.case.local_product_id, offer_id: model.detail.case.selected_offer_id } : undefined} onCaseChanged={() => void refresh()} />}{model.page === 'suppliers' && <SuppliersPage onOpenProduct={openProduct} />}{model.page === 'procurement' && <ProcurementPage executorReady={health.ready} executorMessage={health.message} onOpenProduct={openProduct} />}
       {model.page === 'home' && <HomePage model={model} />}{model.page === 'handoff' && <HandoffPage model={model} onOpenProduct={openProduct} />}{model.page === 'customers' && <CustomersPage model={model} />}{model.page === 'policies' && <PoliciesPage model={model} />}{model.page === 'settings' && <SettingsPage model={model} bridge={bridge} />}{model.page === 'activity' && <ActivityPage model={model} />}
     </div></div>
     {model.aiUnavailable && !model.closing && !exitRequest && <Drawer title="AI 不可用" side="center" onClose={model.dismissAiUnavailable}><div className="ai-failure"><p>{model.aiFailureReason || '暂时无法生成回复建议'}</p><div className="dialog-actions"><Button onClick={model.dismissAiUnavailable}>关闭</Button><Button variant="primary" disabled={!bridge?.openModelLauncher} onClick={() => void bridge?.openModelLauncher?.()}>查看模型设置</Button></div></div></Drawer>}
     {exitRequest && !model.closing && <ExitConfirmation onChoose={chooseExit} saveFailed={exitRequest.reason === 'save_failed'} />}
+    {confirmationRequest && !model.closing && <Drawer side="center" title={confirmationRequest.title!} onClose={() => chooseConfirmation('cancel')}><div className="ai-failure"><p>{confirmationRequest.message}</p>{confirmationRequest.detail && <p style={{ marginTop: 12, whiteSpace: 'pre-wrap' }}>{confirmationRequest.detail}</p>}<div className="dialog-actions"><Button onClick={() => chooseConfirmation('cancel')}>取消</Button><Button variant="primary" onClick={() => chooseConfirmation('save')}>{confirmationRequest.action}</Button></div></div></Drawer>}
     {drawer === 'customers' && <Drawer title="客户列表" side="left" onClose={() => setDrawer(null)} className="customers-drawer"><CustomerList model={model} close={() => setDrawer(null)} /></Drawer>}
     {drawer === 'requirements' && <Drawer title="客户资料" className="reception-details-drawer" onClose={() => setDrawer(null)}><div className="requirements-drawer-content"><Requirements bridge={bridge} model={model} onOpenProduct={openProduct} locate={locate} /><SupplementPanel model={model} /></div></Drawer>}
   </div>{model.closing && <div role="status" aria-live="polite" style={{ position: 'fixed', inset: 0, zIndex: 10000, display: 'grid', placeItems: 'center', background: 'rgba(247, 248, 250, 0.92)', padding: 32 }}><section className="form-card"><h2>正在停止后台并保存结果…</h2><p>已撤销新增发送权限，正在等待在途操作的回执。</p><p>编辑已锁定，请等待退出完成。</p></section></div>}</>;

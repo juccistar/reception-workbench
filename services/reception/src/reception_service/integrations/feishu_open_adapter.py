@@ -15,6 +15,7 @@ import re
 from urllib.parse import quote
 
 from .feishu_open import FeishuOpenError, FeishuOpenReader, _https, parse_table_url, validate_schema
+from .feishu_requirements import verify_requirements, derived_fields
 from .accio_native.vendor.adapters.common import AdapterError, digest, require_registration_authorization
 from .accio_native.vendor.adapters.feishu import download_image, image_extension
 from .accio_native.vendor.models import FACT_LABELS
@@ -28,19 +29,21 @@ class FeishuOpenAdapter:
         self.settings, self.ledger = settings, ledger
         self._transport, self._resolver, self._secrets = transport, secret_resolver, {}
 
-    def configure_secret(self, app_id, secret):
+    def configure_secret(self, app_id, secret, *, credential_ref=None):
         if not isinstance(app_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', app_id) or not isinstance(secret, str) or not secret:
             raise FeishuOpenError('应用凭据无效')
-        self._secrets[app_id] = secret
+        if credential_ref is not None and (not isinstance(credential_ref, str) or not credential_ref):
+            raise FeishuOpenError('应用凭据引用无效')
+        self._secrets[(app_id, credential_ref)] = secret
 
     @property
     def cfg(self):
         return self.settings.get('feishu') or {}
 
-    def _secret(self, app_id):
-        secret = self._secrets.get(app_id)
+    def _secret(self, app_id, credential_ref=None):
+        secret = self._secrets.get((app_id, credential_ref))
         if not secret and self._resolver:
-            secret = self._resolver(app_id)
+            secret = self._resolver(app_id, credential_ref)
         if not isinstance(secret, str) or not secret:
             raise FeishuOpenError('应用凭据未配置')
         return secret
@@ -55,21 +58,21 @@ class FeishuOpenAdapter:
     def notify(self, payload):
         return dict(status='disabled', message_id='', detail='应用登记适配器不发送提醒')
 
-    def _reader(self, app_id):
-        return FeishuOpenReader(app_id, self._secret(app_id), self._transport)
+    def _reader(self, app_id, credential_ref=None):
+        return FeishuOpenReader(app_id, self._secret(app_id, credential_ref), self._transport)
 
     def check_schema(self):
         try:
             cfg = self.cfg
-            fields = self._reader(cfg['app_id']).fields(cfg['table_url'])
+            fields = self._reader(cfg['app_id'], cfg.get('credential_ref')).fields(cfg['table_url'])
             validate_schema(cfg, fields)
             return dict(ok=True, status='ready', detail='只读字段检查完成；登记仍需核实买家证据', required_missing=[], required_evidence=[], mapped_roles=list(cfg['fields']), field_count=len(fields), write_enabled=self.enabled())
         except (FeishuOpenError, AdapterError, OSError, http.client.HTTPException, ValueError, TypeError, KeyError):
             return dict(ok=False, status='blocked', detail='飞书只读结构检查失败；检查应用和字段配置', required_missing=[], required_evidence=[], mapped_roles=[])
 
-    def _token(self, app_id):
+    def _token(self, app_id, credential_ref=None):
         # Use the same fixed-host transport as the reader. Never persist the token.
-        response = self._transport('POST', '/open-apis/auth/v3/tenant_access_token/internal', {'Content-Type': 'application/json'}, json.dumps({'app_id': app_id, 'app_secret': self._secret(app_id)}).encode())
+        response = self._transport('POST', '/open-apis/auth/v3/tenant_access_token/internal', {'Content-Type': 'application/json'}, json.dumps({'app_id': app_id, 'app_secret': self._secret(app_id, credential_ref)}).encode())
         token = response.get('tenant_access_token')
         if not isinstance(token, str) or not token or '\r' in token or '\n' in token:
             raise FeishuOpenError('飞书未返回有效访问令牌')
@@ -205,20 +208,25 @@ class FeishuOpenAdapter:
                 raise AdapterError('登记回执属于其他事项')
             cfg = deepcopy(self.cfg)
             base, table = parse_table_url(cfg['table_url'])
-            target = dict(app_id=cfg['app_id'], base=base, table=table)
+            target = dict(app_id=cfg['app_id'], credential_ref=cfg.get('credential_ref'), base=base, table=table)
             mapping = cfg['fields']
-            validate_schema(cfg, self._reader(target['app_id']).fields(cfg['table_url']))
-            facts = case.get('facts') or {}
-            product = facts.get('product') or {}
-            if not isinstance(product.get('value'), str) or not product['value'].strip() or not product.get('evidence_ids'):
-                raise AdapterError('登记缺少有买家消息证据的采购内容')
-            summary = []
-            for key, fact in facts.items():
-                if key not in FACT_LABELS or not isinstance(fact, dict) or not isinstance(fact.get('value'), str) or not fact['value'].strip() or not isinstance(fact.get('evidence_ids'), list) or not fact['evidence_ids']:
-                    raise AdapterError('采购事实不完整')
-                summary.append(FACT_LABELS[key] + '：' + fact['value'])
-            derived = build_registration_fields(payload, mapping, cfg.get('registration') or {})
-            values = dict(product_name='\n'.join(summary), buyer_id=buyer, account=cfg['account_option'])
+            validate_schema(cfg, self._reader(target['app_id'], target['credential_ref']).fields(cfg['table_url']))
+            if case.get('requirements_format') == 'ai-v1':
+                summary = verify_requirements(case, payload.get('verified_messages') or [])
+                derived = derived_fields(payload, mapping, cfg.get('registration') or {})
+            else:
+                facts = case.get('facts') or {}
+                product = facts.get('product') or {}
+                if not isinstance(product.get('value'), str) or not product['value'].strip() or not product.get('evidence_ids'):
+                    raise AdapterError('登记缺少有买家消息证据的采购内容')
+                summary_rows = []
+                for key, fact in facts.items():
+                    if key not in FACT_LABELS or not isinstance(fact, dict) or not isinstance(fact.get('value'), str) or not fact['value'].strip() or not isinstance(fact.get('evidence_ids'), list) or not fact['evidence_ids']:
+                        raise AdapterError('采购事实不完整')
+                    summary_rows.append(FACT_LABELS[key] + '：' + fact['value'])
+                summary = '\n'.join(summary_rows)
+                derived = build_registration_fields(payload, mapping, cfg.get('registration') or {})
+            values = dict(product_name=summary, buyer_id=buyer, account=cfg['account_option'])
             if not previous.get('record_id'):
                 values['status'] = cfg['initial_status']
             if 'customer_name' in mapping and isinstance(case.get('customer_name'), str) and case['customer_name'].strip():
@@ -227,7 +235,7 @@ class FeishuOpenAdapter:
             for role, value in list(values.items()):
                 if mapping[role]['type'] == 'datetime':
                     values[role] = int(datetime.fromisoformat(value).replace(tzinfo=timezone(timedelta(hours=8))).timestamp() * 1000)
-            token = self._token(target['app_id'])
+            token = self._token(target['app_id'], target['credential_ref'])
             rid = previous.get('record_id') or ''
             if rid:
                 if not re.fullmatch(r'rec[A-Za-z0-9_]+', rid):
@@ -251,7 +259,7 @@ class FeishuOpenAdapter:
             # Refuse rather than persist a credential accidentally supplied inside
             # business data or a field mapping. Tokens never enter this request.
             serialized = json.dumps(request, ensure_ascii=False)
-            if any(secret in serialized for secret in {self._secret(target['app_id']), *self._secrets.values()} if secret):
+            if any(secret in serialized for secret in {self._secret(target['app_id'], target['credential_ref']), *self._secrets.values()} if secret):
                 raise AdapterError('登记内容包含应用凭据')
             require_registration_authorization(authorization)
             prior = self.ledger.claim(operation, 'register:' + digest([seller, case['case_id'], case['version']]), 'register', request)
@@ -281,7 +289,7 @@ class FeishuOpenAdapter:
             rid = old[2].get('record_id') if old[2].get('submission_started') is True else None
             if not isinstance(rid, str) or not re.fullmatch(r'rec[A-Za-z0-9_]+', rid):
                 return dict(old[2], status='unknown', detail='未取得原行 ID，保留未知，禁止重放')
-            result = self._verify(request, rid, self._token(request['target']['app_id']))
+            result = self._verify(request, rid, self._token(request['target']['app_id'], request['target'].get('credential_ref')))
             return self.ledger.finish(operation_id, result)
         except (FeishuOpenError, AdapterError, OSError, http.client.HTTPException, ValueError, TypeError, KeyError):
             return dict(previous, status='unknown', detail='原行只读核查未通过，禁止重放')

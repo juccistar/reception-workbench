@@ -13,7 +13,9 @@ await mkdir(destination);
 const targets = ['test_message_monitor.py', 'test_reply_sync_0320.py', 'test_reply_batches_0319.py',
   'test_manual_receipts.py', 'test_native_workflow_receipts.py', 'test_whatsapp_account_generation_041.py',
   'test_model_runtime_040.py', 'test_projection_performance_042.py', 'test_performance_042.py',
-  'test_product_library_0313.py', 'test_whatsapp_account_media_041.py'];
+  'test_product_library_0313.py', 'test_whatsapp_account_media_041.py',
+  'test_feishu_open_042.py', 'test_feishu_open_adapter_042.py', 'test_feishu_configuration_042.py',
+  'test_translation_retirement_042.py', 'test_model_router_040.py'];
 const digest = data => createHash('sha256').update(data).digest('hex');
 async function sourceInputs(directory) {
   const files = [];

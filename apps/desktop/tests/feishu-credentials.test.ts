@@ -16,6 +16,13 @@ describe('Feishu credentials', () => {
       expect(await store.read('seller-a', 'cli_one')).toBe('secret-one');
       expect(await store.read('seller-a', 'cli_two')).toBeNull();
       expect(await store.read('seller-b', 'cli_two')).toBe('secret-two');
+      const oldRef = await store.stage('seller-a', 'cli_one', 'original-version');
+      const uncommittedRef = await store.stage('seller-a', 'cli_one', 'uncommitted-version');
+      expect(uncommittedRef).not.toBe(oldRef);
+      expect(await store.read('seller-a', 'cli_one', oldRef)).toBe('original-version');
+      expect(await store.read('seller-a', 'cli_one', uncommittedRef)).toBe('uncommitted-version');
+      expect(await store.read('seller-b', 'cli_one', oldRef)).toBeNull();
+      expect(await store.read('seller-a', 'cli_two', oldRef)).toBeNull();
       for (const file of await readdir(dir)) expect((await readFile(path.join(dir, file))).toString()).not.toContain('secret-one');
     } finally { await rm(dir, { recursive: true, force: true }); }
   });

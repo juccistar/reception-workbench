@@ -34,7 +34,13 @@ const bridge: LauncherBridge = Object.freeze<LauncherBridge>({
   copyAuthorization: () => ipcRenderer.invoke('launcher:copy-authorization'),
   modelSettings: () => ipcRenderer.invoke('launcher:models:get'),
   saveModelSettings: input => ipcRenderer.invoke('launcher:models:save', input),
-  checkModel: (profileId, purpose) => ipcRenderer.invoke('launcher:models:check', profileId, purpose),
+  checkModel: (profileId, purpose, revisions) => ipcRenderer.invoke('launcher:models:check', profileId, purpose, revisions),
+  onCloseRequest: listener => {
+    const handler = (_event: unknown, value: import('../shared/exit-dialog').ExitDialogEvent) => listener(value);
+    ipcRenderer.on('launcher:close:request', handler);
+    return () => ipcRenderer.removeListener('launcher:close:request', handler);
+  },
+  respondClose: response => ipcRenderer.invoke('launcher:close:respond', response),
   cancelModelCheck: (profileId, purpose) => ipcRenderer.invoke('launcher:models:cancel', profileId, purpose),
 });
 contextBridge.exposeInMainWorld('launcher', bridge);

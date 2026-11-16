@@ -32,7 +32,10 @@ def validated_requirements(raw, context):
     from .requirement_media import _media_id
     reads = {r.get('image_id') for r in (context.get('photo_context') or {}).get('read_images', []) if isinstance(r, dict)}
     manifest = {ref.get('alias'): ref for ref in context.get('image_manifest', [])
-                if isinstance(ref, dict) and ref.get('image_id') in reads}
+                if isinstance(ref, dict) and ref.get('image_id') in reads
+                and ref.get('origin') != 'business_supplement'
+                and ref.get('message_id') in messages
+                and (ref.get('role') is None or ref.get('role') == messages[ref['message_id']].get('role'))}
     image_ids = {ref.get('image_id'): ref for ref in manifest.values()}
     media_ids = {_media_id('customer_image', ref['message_id']): ref for ref in manifest.values()}
     result = {}
