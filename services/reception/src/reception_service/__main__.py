@@ -10,6 +10,7 @@ import sys
 import threading
 
 from .errors import ServiceError
+from .image_limits import SUPPLEMENT_MAX_FILE_BYTES
 
 
 class _Parser(argparse.ArgumentParser):
@@ -161,7 +162,7 @@ def main():
         for line in sys.stdin:
             request_id = None
             try:
-                if len(line) > 8_400_000:
+                if len(line) > ((SUPPLEMENT_MAX_FILE_BYTES + 2) // 3) * 4 + 65536:
                     raise ServiceError('request_too_large', '请求超过大小限制', stage='protocol')
                 request = json.loads(line)
                 if len(line) > 2_000_000 and (not isinstance(request, dict) or request.get('method') != 'upload_supplement_attachment'):

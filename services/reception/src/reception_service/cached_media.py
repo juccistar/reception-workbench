@@ -13,13 +13,13 @@ import warnings
 from PIL import Image, ImageOps
 
 from .errors import ServiceError
-from .image_assets import MAX_BYTES, MAX_DIMENSION, MAX_PIXELS
-from .image_transfer import ImageTransferMixin
+from .image_assets import MAX_BYTES, MAX_DIMENSION, MAX_PIXELS, validate_original, inspect_image, _lease, _METADATA_RESERVE
+from .image_transfer import ImageTransferMixin, PNG_LIMIT, TTL, _BoundedOutput
 from .product_identity import product_kind, product_link
 from .repository import encoded
 
 _CHUNK = 256 * 1024
-_FORMATS = {'PNG': 'image/png', 'JPEG': 'image/jpeg', 'WEBP': 'image/webp'}
+_FORMATS = {'PNG': 'image/png', 'JPEG': 'image/jpeg', 'WEBP': 'image/webp', 'GIF': 'image/gif'}
 
 
 def _fail():
@@ -114,18 +114,8 @@ class CachedMediaMixin(ImageTransferMixin):
                 _fail()
             if not validate_pixels:
                 return data, None, None, None
-            with warnings.catch_warnings():
-                warnings.simplefilter('error', Image.DecompressionBombWarning)
-                with Image.open(io.BytesIO(data), formats=tuple(_FORMATS)) as image:
-                    mime = _FORMATS.get(image.format)
-                    width, height = image.size
-                    if (mime != asset_mime or not 0 < width <= MAX_DIMENSION
-                            or not 0 < height <= MAX_DIMENSION or width * height > MAX_PIXELS or getattr(image, 'n_frames', 1) != 1):
-                        _fail()
-                    image.verify()
-                with Image.open(io.BytesIO(data), formats=tuple(_FORMATS)) as image:
-                    image.load()
-            return data, mime, width, height
+            info = validate_original(data, asset_mime)
+            return data, info['mime'], info['width'], info['height']
         except ServiceError:
             raise
         except Exception:
@@ -146,8 +136,21 @@ class CachedMediaMixin(ImageTransferMixin):
                 _fail()
             return {'offset': offset, 'sha256': sha256, 'data_b64': base64.b64encode(data[offset:offset + _CHUNK]).decode('ascii')}
 
+    def _cached_copy_discard(self, token):
+        sessions = getattr(self, '_cached_copy_sessions', {})
+        item = sessions.pop(token, None)
+        if item:
+            item['timer'].cancel()
+            item['data'] = None
+            item['lease'].close()
+
+    def _image_transfer_close(self):
+        with self._lock:
+            for token in list(getattr(self, '_cached_copy_sessions', {})):
+                self._cached_copy_discard(token)
+            super()._image_transfer_close()
+
     def _image_copy_describe(self, reference):
-        # At most two converted images, retained only for a short bounded transfer.
         with self._lock:
             sessions = getattr(self, '_cached_copy_sessions', None)
             if sessions is None:
@@ -155,58 +158,95 @@ class CachedMediaMixin(ImageTransferMixin):
             now = time.monotonic()
             for token in list(sessions):
                 if sessions[token]['expires'] <= now:
-                    del sessions[token]
+                    self._cached_copy_discard(token)
             if len(sessions) >= 2:
                 raise ServiceError('image_busy', '图片复制繁忙，请稍后重试')
-            data, _, _, _ = self._cached_image(reference)
+            lease = None
             try:
-                class BoundedOutput(io.BytesIO):
-                    def write(self, value):
-                        if self.tell() + len(value) > 80 * 1024 * 1024:
-                            raise ValueError('PNG output limit')
-                        return super().write(value)
-                with Image.open(io.BytesIO(data), formats=tuple(_FORMATS)) as image:
-                    image.load()
-                    oriented = ImageOps.exif_transpose(image)
-                    if oriented.mode not in ('RGB', 'RGBA'):
-                        oriented = oriented.convert('RGBA' if 'A' in oriented.getbands() or 'transparency' in oriented.info else 'RGB')
-                    output = BoundedOutput()
-                    oriented.save(output, format='PNG')
-                    png = output.getvalue()
-                    width, height = oriented.size
+                # Admit the source snapshot and decoding before loading either.
+                metadata = self._cached_image_metadata(reference)
+                if len(metadata) == 4:
+                    content_length, size = len(metadata[0]), metadata[1]
+                else:
+                    content_length, size = metadata[3], metadata[4]
+                lease = _lease(3 * size + content_length + _METADATA_RESERVE)
+                content, size, mime, sha = self._cached_image_load_transfer(metadata)
+                data = base64.b64decode(content, validate=True)
+                if not 0 < len(data) <= MAX_BYTES or len(data) != size or hashlib.sha256(data).hexdigest() != sha:
+                    _fail()
+                info = inspect_image(data, mime)
+                pixels = info['width'] * info['height']
+                output_bound = min(PNG_LIMIT, pixels * 4 + info['height'] + pixels // 250 + 1024 * 1024)
+                lease.resize(12 * pixels + 2 * output_bound + 3 * len(data) + len(content) + _METADATA_RESERVE, pixels=True)
+                with warnings.catch_warnings():
+                    warnings.simplefilter('error', Image.DecompressionBombWarning)
+                    with Image.open(io.BytesIO(data), formats=tuple(_FORMATS)) as image:
+                        image.load()
+                        with ImageOps.exif_transpose(image) as oriented:
+                            if oriented.mode not in ('RGB', 'RGBA'):
+                                with oriented.convert('RGBA' if 'A' in oriented.getbands() or 'transparency' in oriented.info else 'RGB') as converted:
+                                    with _BoundedOutput(output_bound) as output:
+                                        converted.save(output, format='PNG')
+                                        png = output.getvalue()
+                                    width, height = converted.size
+                            else:
+                                with _BoundedOutput(output_bound) as output:
+                                    oriented.save(output, format='PNG')
+                                    png = output.getvalue()
+                                width, height = oriented.size
+                del data, content
+                lease.resize(len(png), pixels=False)
+                token = secrets.token_urlsafe(24)
+                sha = hashlib.sha256(png).hexdigest()
+                def expire():
+                    with self._lock:
+                        self._cached_copy_discard(token)
+                timer = threading.Timer(TTL, expire)
+                timer.daemon = True
+                sessions[token] = {'reference': dict(reference), 'data': png, 'sha256': sha,
+                                   'expires': time.monotonic() + TTL, 'timer': timer, 'lease': lease}
+                lease = None
+                try:
+                    timer.start()
+                except Exception:
+                    self._cached_copy_discard(token)
+                    raise
+                return {'token': token, 'size': len(png), 'media_type': 'image/png', 'width': width,
+                        'height': height, 'sha256': sha, 'chunk_size': _CHUNK}
             except Exception:
                 _fail()
-            token = secrets.token_urlsafe(24)
-            sha = hashlib.sha256(png).hexdigest()
-            sessions[token] = {'reference': dict(reference), 'data': png, 'sha256': sha, 'expires': now + 30}
-            def expire():
-                with self._lock:
-                    sessions.pop(token, None)
-            timer = threading.Timer(30, expire)
-            timer.daemon = True
-            timer.start()
-            return {'token': token, 'size': len(png), 'media_type': 'image/png', 'width': width,
-                    'height': height, 'sha256': sha, 'chunk_size': _CHUNK}
+            finally:
+                if lease:
+                    lease.close()
 
     def _image_copy_chunk(self, reference, token, offset, sha256):
-        if not isinstance(token, str) or type(offset) is not int or offset < 0 or offset % _CHUNK:
-            _fail()
         with self._lock:
             sessions = getattr(self, '_cached_copy_sessions', {})
-            item = sessions.get(token)
-            if (not item or item['expires'] <= time.monotonic() or item['reference'] != reference
-                    or item['sha256'] != sha256 or offset >= len(item['data'])):
-                sessions.pop(token, None)
-                _fail()
+            item = sessions.get(token) if isinstance(token, str) else None
             try:
+                if (not item or type(offset) is not int or offset < 0 or offset % _CHUNK
+                        or item['expires'] <= time.monotonic() or item['reference'] != reference
+                        or item['sha256'] != sha256 or offset >= len(item['data'])):
+                    _fail()
+                lease = item['lease']
+                metadata = self._cached_image_metadata(reference)
+                if len(metadata) == 4:
+                    content_length, size = len(metadata[0]), metadata[1]
+                else:
+                    content_length, size = metadata[3], metadata[4]
+                lease.resize(len(item['data']) + 3 * size + content_length + _METADATA_RESERVE)
                 self._cached_image(reference, validate_pixels=False)
+                data = item['data'][offset:offset + _CHUNK]
+                result = {'offset': offset, 'sha256': sha256, 'data_b64': base64.b64encode(data).decode('ascii')}
+                if offset + len(data) == len(item['data']):
+                    self._cached_copy_discard(token)
+                else:
+                    lease.resize(len(item['data']))
+                return result
             except Exception:
-                sessions.pop(token, None)
+                if item:
+                    self._cached_copy_discard(token)
                 raise
-            data = item['data'][offset:offset + _CHUNK]
-            if offset + len(data) == len(item['data']):
-                sessions.pop(token, None)
-            return {'offset': offset, 'sha256': sha256, 'data_b64': base64.b64encode(data).decode('ascii')}
 
     def _copy_text_for_reference(self, reference):
         def unavailable():

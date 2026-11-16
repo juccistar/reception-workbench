@@ -1,0 +1,25 @@
+{
+  "version": "0.4.2",
+  "date": "2026-11-16",
+  "status": "source_integration_before_visual_review",
+  "design_gate": "all_pages_and_dialogs_require_actual_comparison",
+  "previous_demo": "5c97dcc",
+  "previous_demo_is_final": false,
+  "translation": {
+    "settings_page_removed": true,
+    "legacy_settings_bridge_removed": true,
+    "legacy_credentials_cleanup": "fixed_names_only_on_normal_workspace_start",
+    "original_messages_and_translation_records_preserved": true,
+    "real_user_cleanup_executed": false
+  },
+  "integration_checks": {
+    "desktop_types": "artifacts/verification/042-replica-integration-typecheck-003.log",
+    "feishu_configuration": { "log": "artifacts/verification/042-feishu-configuration-002.log", "tests": 3, "status": "passed" },
+    "feishu_host": { "log": "artifacts/verification/042-feishu-host-001.log", "tests": 4, "status": "passed" },
+    "workbench_regression_before_selector_updates": { "log": "artifacts/verification/042-replica-ui-integration-001.log", "tests": 126, "failed": 42, "status": "failed" },
+    "full_suite": false
+  },
+  "pending": ["updated interaction regressions", "actual source window and reference comparison", "final candidate packaging and resource verification"],
+  "release": { "candidate_built": false, "uploaded": false, "published": false },
+  "boundaries": { "installed": false, "real_data_migration": false, "real_customer_sends": false, "paid_models": false, "real_feishu_requests": false, "private_source_pushed": false }
+}

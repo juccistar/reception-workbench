@@ -1,0 +1,22 @@
+.data-storage.form-card { padding: 0; overflow: hidden; }
+.data-storage-body { padding: 28px; min-height: 636px; }
+.data-storage-body h2 { margin: 0; font-size: 15px; color: #152743; }
+.data-storage-intro, .data-storage-hint, .data-storage-recent p { color: #8192ad; font-size: 12px; line-height: 1.6; }
+.data-storage-intro { margin: 10px 0 22px; }
+.data-storage-folder { display: block; color: #637a9c; font-size: 12px; }
+.data-storage-folder input { display: block; width: 100%; margin-top: 9px; padding: 11px 12px; border: 1px solid #dbe3f0; border-radius: 7px; background: #f5f7fa; color: #7185a4; }
+.data-storage-hint { margin: 10px 0 20px; overflow-wrap: anywhere; }
+.data-storage-actions { border-top: 1px solid #e7edf5; }
+.data-storage-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; min-height: 71px; border-bottom: 1px solid #e7edf5; color: #637a9c; font-size: 12px; }
+.data-storage-row p { margin: 8px 0 0; color: #8b9bb4; font-size: 12px; }
+.data-storage-row .button { flex-shrink: 0; }
+.data-storage-recent { margin-top: 24px; padding-top: 24px; border-top: 1px solid #e7edf5; }
+.data-storage-recent-row { display: flex; justify-content: space-between; align-items: center; min-height: 64px; border-bottom: 1px solid #e7edf5; color: #7185a4; font-size: 12px; }
+.data-storage-badge { padding: 4px 7px; border-radius: 4px; background: #edf6f1; color: #5e9278; font-size: 11px; }
+.data-storage-recent p { margin-top: 16px; }
+.data-storage-backup-path { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; color: #7185a4; font-size: 12px; overflow-wrap: anywhere; }
+.data-storage-footer { padding: 24px 26px; border-top: 1px solid #e1e8f2; background: #f8fafd; color: #8b9bb4; font-size: 12px; }
+.data-storage-dialog-body { padding: 4px 24px 20px; color: #526884; line-height: 1.7; font-size: 14px; }
+.data-storage-note { padding: 12px; border-radius: 6px; background: #fff8e9; color: #8b6b32; }
+.data-storage-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 16px 24px; border-top: 1px solid #e7edf5; }
+@media (max-width: 600px) { .data-storage-body { min-height: 0; padding: 20px; } .data-storage-row { padding: 12px 0; } .data-storage-footer { padding: 18px 20px; } }

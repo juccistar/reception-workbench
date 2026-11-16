@@ -1,13 +1,22 @@
 import asyncio
+from pathlib import Path
+import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from reception_service.errors import ServiceError
 from reception_service.model_providers.runtime import ModelRuntime
 
 
 class ModelRuntimeTest(unittest.TestCase):
+    def setUp(self):
+        budget = tempfile.TemporaryDirectory()
+        self.addCleanup(budget.cleanup)
+        self.enterContext(patch('reception_service.model_request_budget._directory',
+                                return_value=Path(budget.name) / 'model-budget'))
+
     def test_cancel_waits_for_async_cleanup(self):
         runtime = ModelRuntime()
         self.addCleanup(runtime.close)

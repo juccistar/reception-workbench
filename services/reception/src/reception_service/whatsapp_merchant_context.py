@@ -38,6 +38,10 @@ class WhatsAppMerchantContextMixin:
             policies = select_policy_inputs(self.repo.list('policy'), {'facts': {}, 'procurement_key': ''})
             context = {key: policies[key] for key in ('knowledge', 'guidance', 'style')}
             context['collection_rules'] = collection_rules(self.settings, None)
+            images_enabled = self.settings.get('reception_images_enabled', True)
+            message_count = self.settings.get('context_message_count', 50)
+            context['reception_images_enabled'] = images_enabled if type(images_enabled) is bool else True
+            context['context_message_count'] = message_count if type(message_count) is int and 1 <= message_count <= 200 else 50
             owner = None
             if conversation_id is not None:
                 owner = self._chat_owner(conversation_id)
@@ -51,7 +55,7 @@ class WhatsAppMerchantContextMixin:
                 messages.sort(key=lambda row: (row.get('timestamp_ms') or 0, row.get('message_id') or ''))
                 rows = [{'source_id': 'icbu_' + hashlib.sha256(encoded(row.get('message_id')).encode('utf-8')).hexdigest()[:20],
                          'role': row.get('role'), 'timestamp_ms': row.get('timestamp_ms'),
-                         'text': str(row.get('text') or '')[:3000]} for row in messages[-20:]]
+                         'text': str(row.get('text') or '')[:3000]} for row in messages[-context['context_message_count']:]]
                 requirements = {key: {field: copy.deepcopy(value[field]) for field in
                                       ('value', 'evidence_ids', 'source_excerpts', 'evidence_versions') if field in value}
                                 for key, value in (case.get('requirements') or {}).items()

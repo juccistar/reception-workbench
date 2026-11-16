@@ -59,6 +59,8 @@ export interface WhatsAppAccountState {
   default_merchant_id: string | null;
   default_revision: number;
   allowed_merchant_ids: string[];
+  /** Persisted account selection; independent of the current automatic grant. */
+  selected_merchant_ids?: string[];
   conversations: WhatsAppAccountConversation[];
   bindings: WhatsAppAccountBinding[];
   pending_operations: WhatsAppAccountOperation[];

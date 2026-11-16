@@ -1,0 +1,17 @@
+{
+  "scope": "0.4.2 后端界面只读投影及供应商地区",
+  "contracts": {
+    "list_products.items": {
+      "specifications_summary": "string|null，来自已保存采购任务的 requirement_fields.specifications",
+      "offer_count": "number，当前商家此产品的供货方案条数；supplier_count 仍为不同供应商数"
+    },
+    "list_suppliers.items": {
+      "product_count": "number，当前商家供货方案所关联的不同有效产品数",
+      "region": "string|null，已保存地区"
+    },
+    "save_supplier.region": "可选 string|null，最长200字符；省略时保留旧地区且沿用原请求哈希",
+    "get_product.customers": "数组，元素为 buyer_id、customer_name、conversation_id、case_id、case_ids；按买家去重，标识采用排序后的首个会话和事项",
+    "get_snapshot.conversations.latest_requirement": "{case_id, product, quantity, updated_at}|null；按事项更新时间和事项ID选最新，校验商家、会话与买家归属"
+  },
+  "validation": "test_product_library_0313.py 隔离定向19项通过；未构建、未运行全量测试。"
+}

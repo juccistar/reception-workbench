@@ -50,7 +50,8 @@ class CustomerSearchTests(unittest.TestCase):
         self.add('one', last_message='secret message', credential='secret key', customer_name_extra='secret')
         self.repo.put('message', 'secret', {'text': 'secret message', 'conversation_id': 'one'})
         first = search_merchant_customers(self.repo, 'seller-a', '')[0]
-        self.assertEqual(set(first), {'conversation_id', 'name', 'revision'})
+        self.assertEqual(set(first), {'conversation_id', 'name', 'buyer_id', 'revision'})
+        self.assertEqual(first['buyer_id'], 'buyer-1')
         self.assertEqual(first, search_merchant_customers(self.repo, 'seller-a', '')[0])
         self.add('one', name='Alice', revision=2)
         self.assertNotEqual(first['revision'], search_merchant_customers(self.repo, 'seller-a', '')[0]['revision'])

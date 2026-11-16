@@ -207,7 +207,8 @@ class NativeImageRequests(unittest.TestCase):
                     def emit(self, event): pass
                 asset = self.asset
                 host = Host()
-                host.repo, host.router, host._generation_active = Repo(), self.router, None
+                host.repo, host.router = Repo(), self.router
+                host._init_account_generation()
                 ref = dict(source_id='wa1', source_version='v1', image_id='wa-image', sha256=asset['sha256'], role='buyer')
                 job = dict(chat_id='chat', account_id='account', connection_epoch=1, source_key='key',
                            refs=[ref], statuses=[{'source_id': 'wa1', 'media': {'source_version': 'v1'}}],

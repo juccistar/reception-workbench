@@ -13,14 +13,14 @@ from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageOps
 
 from .errors import ServiceError
-from .image_assets import MAX_BYTES, MAX_DIMENSION, MAX_PIXELS
+from .image_assets import MAX_BYTES, MAX_DIMENSION, MAX_PIXELS, inspect_image, _METADATA_RESERVE
 from .media_resources import PROCESS_MEDIA_BUDGET, ResourceLimitError
 
 CHUNK = 256 * 1024
-TTL = 30.0
-PAYLOAD_LIMIT = 96 * 1024 * 1024
-PNG_LIMIT = 80 * 1024 * 1024
-FORMATS = {'PNG': 'image/png', 'JPEG': 'image/jpeg', 'WEBP': 'image/webp'}
+TTL = 60.0
+PAYLOAD_LIMIT = 256 * 1024 * 1024
+PNG_LIMIT = 128 * 1024 * 1024
+FORMATS = {'PNG': 'image/png', 'JPEG': 'image/jpeg', 'WEBP': 'image/webp', 'GIF': 'image/gif'}
 
 
 def _unavailable():
@@ -32,16 +32,21 @@ def _busy():
 
 
 class _BoundedOutput(io.BytesIO):
+    def __init__(self, limit=PNG_LIMIT):
+        super().__init__()
+        self.limit = limit
+
     def write(self, value):
-        if self.tell() + len(value) > PNG_LIMIT:
+        if self.tell() + len(value) > self.limit:
             raise ValueError('PNG output limit')
         return super().write(value)
 
 
 def _convert(snapshot, copy):
     content, size, declared_mime, sha = snapshot
-    data = base64.b64decode(content, validate=True)
-    if not 0 < len(data) <= MAX_BYTES or len(data) != size or hashlib.sha256(data).hexdigest() != sha:
+    data = content if isinstance(content, bytes) else base64.b64decode(content, validate=True)
+    if (not 0 < len(data) <= MAX_BYTES or len(data) != size
+            or (not isinstance(content, bytes) and hashlib.sha256(data).hexdigest() != sha)):
         raise ValueError('invalid image content')
     with warnings.catch_warnings():
         warnings.simplefilter('error', Image.DecompressionBombWarning)
@@ -52,18 +57,25 @@ def _convert(snapshot, copy):
                     or width * height > MAX_PIXELS or getattr(image, 'n_frames', 1) != 1):
                 raise ValueError('invalid image metadata')
             image.verify()
-        with Image.open(io.BytesIO(data), formats=tuple(FORMATS)) as image:
-            image.load()
-            if copy:
-                oriented = ImageOps.exif_transpose(image)
-                if oriented.mode not in ('RGB', 'RGBA'):
-                    oriented = oriented.convert('RGBA' if 'A' in oriented.getbands() or 'transparency' in oriented.info else 'RGB')
-                output = _BoundedOutput()
-                oriented.save(output, format='PNG')
-                data = output.getvalue()
-                width, height = oriented.size
-                mime = 'image/png'
-                sha = hashlib.sha256(data).hexdigest()
+        if copy:
+            pixels = width * height
+            output_bound = min(PNG_LIMIT, pixels * 4 + height + pixels // 250 + 1024 * 1024)
+            with Image.open(io.BytesIO(data), formats=tuple(FORMATS)) as image:
+                image.load()
+                with ImageOps.exif_transpose(image) as oriented:
+                    if oriented.mode not in ('RGB', 'RGBA'):
+                        with oriented.convert('RGBA' if 'A' in oriented.getbands() or 'transparency' in oriented.info else 'RGB') as converted:
+                            with _BoundedOutput(output_bound) as output:
+                                converted.save(output, format='PNG')
+                                data = output.getvalue()
+                            width, height = converted.size
+                    else:
+                        with _BoundedOutput(output_bound) as output:
+                            oriented.save(output, format='PNG')
+                            data = output.getvalue()
+                        width, height = oriented.size
+                    mime = 'image/png'
+                    sha = hashlib.sha256(data).hexdigest()
     return data, {'size': len(data), 'media_type': mime, 'width': width, 'height': height,
                   'sha256': sha, 'chunk_size': CHUNK}
 
@@ -128,12 +140,30 @@ class _Transfers:
                 return
             deadline, cancel, loader, metadata = entry['expires'], entry['cancel'], entry['loader'], entry['metadata']
         # No service or manager lock is held while waiting for resources or decoding.
-        reserve = MAX_PIXELS * 16 + (2 * PNG_LIMIT if copy else 0) + 3 * MAX_BYTES + ((MAX_BYTES + 2) // 3) * 4
         lease = None
         try:
-            lease = PROCESS_MEDIA_BUDGET.acquire(reserve, pixels=True, cancel=cancel, deadline=deadline, wait=True)
+            # Snapshot, decoded original and parser overhead are reserved before loading.
+            lease = PROCESS_MEDIA_BUDGET.acquire(3 * MAX_BYTES + ((MAX_BYTES + 2) // 3) * 4 + _METADATA_RESERVE,
+                                                 cancel=cancel, deadline=deadline, wait=True)
             snapshot = loader(metadata)
-            data, description = _convert(snapshot, copy)
+            content, size, mime, sha = snapshot
+            if not isinstance(content, str) or len(content) > ((MAX_BYTES + 2) // 3) * 4:
+                raise ValueError('invalid image content')
+            raw = base64.b64decode(content, validate=True)
+            if len(raw) != size:
+                raise ValueError('invalid image content')
+            info = inspect_image(raw, mime)
+            if info['sha256'] != sha:
+                raise ValueError('invalid image content')
+            output_bound = PNG_LIMIT
+            if copy:
+                pixels = info['width'] * info['height']
+                # Worst-case uncompressed RGBA scanlines and zlib/chunk overhead.
+                output_bound = min(PNG_LIMIT, pixels * 4 + info['height'] + pixels // 250 + 1024 * 1024)
+                reserve = 12 * pixels + 2 * output_bound + 3 * size + len(content) + _METADATA_RESERVE
+                lease.resize(reserve, pixels=True)
+            data, description = _convert((raw, size, mime, sha), copy)
+            del raw
             with self.lock:
                 if entry['revoked'] or self.closed or time.monotonic() >= deadline:
                     return

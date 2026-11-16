@@ -121,7 +121,7 @@ class RouterTranslator:
     """Use the shared model runtime without owning or closing its HTTP pool."""
     def __init__(self, router):
         self.router = router
-        self.snapshot = router.resolve('translation', ('text', 'translation'))
+        self.snapshot = router.resolve('translation', ('text', 'translation'), allow_unchecked=True)
 
     def translate(self, items, request_id, *, cancel_event=None, on_call_start=None):
         if cancel_event is not None and cancel_event.is_set():
@@ -131,7 +131,8 @@ class RouterTranslator:
                      'context': item['context']} for i, item in enumerate(items, 1)]
         result = self.router.generate('translation', _SYSTEM_PROMPT, {'items': outgoing},
                                       required_capabilities=('text', 'translation'),
-                                      cancel=cancel_event, on_call_start=on_call_start, max_output_tokens=4096)
+                                      cancel=cancel_event, on_call_start=on_call_start, max_output_tokens=4096,
+                                      _allow_unchecked=True)
         self.router.assert_current(self.snapshot)
         if cancel_event is not None and cancel_event.is_set():
             raise _error('cancelled')

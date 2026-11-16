@@ -11,37 +11,40 @@ from PIL import Image
 
 from .errors import ServiceError
 from .image_assets import decode_image
+from .image_limits import SUPPLEMENT_MAX_FILE_BYTES, SUPPLEMENT_MAX_TOTAL_BYTES, SUPPLEMENT_MAX_FILES
 from .repository import new_id, now_ms
 
-MAX_FILE = 6 * 1024 * 1024
-MAX_TOTAL = 20 * 1024 * 1024
-MAX_COUNT = 5
+MAX_FILE = SUPPLEMENT_MAX_FILE_BYTES
+MAX_TOTAL = SUPPLEMENT_MAX_TOTAL_BYTES
+MAX_COUNT = SUPPLEMENT_MAX_FILES
 MAX_TEXT = 16000
 MAX_PAGES = 10
 MAX_PREVIEW = 48 * 1024
 _TYPES = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-          '.webp': 'image/webp', '.pdf': 'application/pdf', '.txt': 'text/plain',
+          '.webp': 'image/webp', '.gif': 'image/gif', '.pdf': 'application/pdf', '.txt': 'text/plain',
           '.md': 'text/markdown', '.csv': 'text/csv'}
 
 
 def _small_preview(data_url):
-    """Bound each display thumbnail independently of the original AI input."""
-    prefix = 'data:image/jpeg;base64,'
-    if not data_url.startswith(prefix):
+    """Bound display thumbnails while preserving transparent preview pixels."""
+    prefix = next((value for value in ('data:image/jpeg;base64,', 'data:image/png;base64,')
+                   if data_url.startswith(value)), None)
+    if prefix is None:
         raise ValueError('invalid preview')
     data = base64.b64decode(data_url[len(prefix):], validate=True)
-    with Image.open(io.BytesIO(data), formats=('JPEG',)) as source:
-        image = source.convert('RGB')
-    image.thumbnail((256, 256), Image.Resampling.LANCZOS)
-    while True:
-        output = io.BytesIO()
-        image.save(output, format='JPEG', quality=65, optimize=True)
-        data = output.getvalue()
-        if len(data) <= MAX_PREVIEW:
-            return prefix + base64.b64encode(data).decode('ascii')
-        if max(image.size) <= 1:
-            raise ValueError('preview limit')
-        image.thumbnail((max(1, image.width * 3 // 4), max(1, image.height * 3 // 4)), Image.Resampling.LANCZOS)
+    transparent = prefix == 'data:image/png;base64,'
+    with Image.open(io.BytesIO(data), formats=('JPEG', 'PNG')) as source, \
+            source.convert('RGBA' if transparent else 'RGB') as image:
+        image.thumbnail((256, 256), Image.Resampling.LANCZOS)
+        while True:
+            with io.BytesIO() as output:
+                image.save(output, format='PNG' if transparent else 'JPEG', **({} if transparent else {'quality': 65}), optimize=True)
+                data = output.getvalue()
+            if len(data) <= MAX_PREVIEW:
+                return prefix + base64.b64encode(data).decode('ascii')
+            if max(image.size) <= 1:
+                raise ValueError('preview limit')
+            image.thumbnail((max(1, image.width * 3 // 4), max(1, image.height * 3 // 4)), Image.Resampling.LANCZOS)
 
 
 def parse_attachment(name, content_b64):
@@ -57,7 +60,7 @@ def parse_attachment(name, content_b64):
     except (ValueError, TypeError):
         raise ServiceError('invalid_attachment', '附件内容无法读取') from None
     if not data or len(data) > MAX_FILE:
-        raise ServiceError('invalid_attachment', '单个附件须大于 0 且不超过 6 MiB')
+        raise ServiceError('invalid_attachment', '单个附件须大于 0 且不超过 20 MiB')
     sha = hashlib.sha256(data).hexdigest()
     result = {'id': new_id('supplement_attachment'), 'name': name, 'media_type': mime,
               'size': len(data), 'sha256': sha, 'status': 'ready', 'origin': 'business_supplement',

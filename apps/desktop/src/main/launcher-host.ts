@@ -24,6 +24,7 @@ import { createModelSettingsStore } from './model-settings-store';
 import { buildAccioLaunchInfo } from './launch-command';
 import type { ModelSettingsSaveInput } from '../shared/model-settings';
 import { version as programVersion } from '../../../../package.json';
+import { launcherPageFromArguments, launcherPageRequest } from '../shared/launcher-navigation';
 
 /** Launcher runs before any business service or business storage is initialized. */
 export async function runLauncher(): Promise<void> {
@@ -34,7 +35,8 @@ export async function runLauncher(): Promise<void> {
   await mkdir(userData, { recursive: true });
   app.setName('客户接待工作台');
   app.setPath('userData', userData);
-  if (!app.requestSingleInstanceLock()) { app.quit(); return; }
+  let requestedPage = launcherPageFromArguments(process.argv);
+  if (!app.requestSingleInstanceLock({ launcher_page: requestedPage })) { app.quit(); return; }
   await app.whenReady();
   const file = path.join(__dirname, '../renderer/launcher.html');
   const window = new BrowserWindow({ width: 900, height: 680, minWidth: 440, minHeight: 400, title: '接待工作台', backgroundColor: '#ffffff', show: false, autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, '../launcher-preload/index.js'), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
@@ -54,7 +56,12 @@ export async function runLauncher(): Promise<void> {
   let exiting = false;
   let quitting: Promise<void> | undefined;
   const show = () => { if (!window.isDestroyed()) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } };
-  app.on('second-instance', show);
+  app.on('second-instance', (_event, commandLine, _workingDirectory, additionalData) => {
+    requestedPage = launcherPageRequest(additionalData) ?? launcherPageFromArguments(commandLine);
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('launcher:page:changed', requestedPage);
+    show();
+  });
+  ipcMain.handle('launcher:page:get', event => { valid(event); return requestedPage; });
   const quit = () => quitting ??= (async () => {
     try {
       await accountPromise?.catch(() => {});

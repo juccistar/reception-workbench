@@ -1,0 +1,25 @@
+.feishu-form { overflow: hidden; border: 1px solid #dfe6f1; border-radius: 11px; background: #fff; color: #253b60; }
+.feishu-form-body { padding: 28px; }
+.feishu-form header { padding-bottom: 24px; border-bottom: 1px solid #e4eaf3; }
+.feishu-form h2 { margin: 0; color: #172b4a; font-size: 16px; }
+.feishu-form header p, .feishu-form-mapping p { margin: 9px 0 0; color: #8495b1; font-size: 12px; }
+.feishu-form-toggle { display: flex; align-items: center; justify-content: space-between; margin: 18px 0; font-size: 13px; }
+.feishu-form-toggle small { display: block; margin-top: 7px; color: #8a9bb6; }
+.feishu-switch { position: relative; display: inline-flex; cursor: pointer; }
+.feishu-switch input { position: absolute; opacity: 0; }
+.feishu-switch span { width: 34px; height: 20px; border-radius: 12px; background: #d7e0eb; transition: background .15s; }
+.feishu-switch span::after { content: ''; display: block; width: 16px; height: 16px; margin: 2px; border-radius: 50%; background: white; transition: transform .15s; }
+.feishu-switch input:checked + span { background: #3559d8; }
+.feishu-switch input:checked + span::after { transform: translateX(14px); }
+.feishu-switch input:focus-visible + span { outline: 2px solid #3559d8; outline-offset: 3px; }
+.feishu-form-body > label, .feishu-form-grid > label { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; color: #607797; font-size: 12px; }
+.feishu-form-body input:not([type=checkbox]) { box-sizing: border-box; width: 100%; height: 39px; padding: 0 11px; border: 1px solid #d9e3f1; border-radius: 6px; color: #253b60; background: #fff; font: inherit; }
+.feishu-form-body input::placeholder { color: #9aacc5; }
+.feishu-form-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.feishu-form-status { margin: 12px 0 0; color: #8395b1; font-size: 12px; }
+.feishu-form-mapping { margin-top: 22px; padding-top: 20px; border-top: 1px solid #e4eaf3; }
+.feishu-form-mapping summary { cursor: pointer; color: #7188ab; font-size: 12px; }
+.feishu-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; margin-top: 18px; }
+.feishu-form-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 18px 25px; border-top: 1px solid #e0e7f1; background: #f8fafd; color: #899bb7; font-size: 12px; }
+.feishu-form-footer > div { display: flex; gap: 8px; }
+@media (max-width: 600px) { .feishu-form-body { padding: 20px; } .feishu-form-grid { grid-template-columns: 1fr; } .feishu-form-footer { flex-wrap: wrap; } }

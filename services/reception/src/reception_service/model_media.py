@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import base64
 import sys
+import threading
 import time
 
 from .errors import ServiceError
-from .image_assets import decode_image, MAX_BYTES, ImageAssetError
+from .image_assets import validate_original, MAX_BYTES, ImageAssetError
 from .photos import direct_image_id, photo_version
 from .media_resources import PROCESS_MEDIA_BUDGET, ResourceLimitError
 
@@ -15,23 +16,36 @@ class OwnedInput:
     """Explicit ownership of input memory until the actual model task finishes."""
     def __init__(self, amount):
         self.lease = PROCESS_MEDIA_BUDGET.acquire(amount)
+        self._lock = threading.Lock()
+        self._caller_open = True
+        self._runtime_open = False
         self._transferred = False
 
     def reserve_more(self, amount):
         self.lease.resize(self.lease.amount + amount)
 
     def transfer(self):
-        if self._transferred:
-            raise RuntimeError('input already transferred')
-        self._transferred = True
-        return self.close
+        with self._lock:
+            if self._transferred or not self._caller_open:
+                raise RuntimeError('input already transferred or closed')
+            self._transferred = True
+            self._runtime_open = True
+        return self._close_runtime
+
+    def _close_runtime(self):
+        with self._lock:
+            self._runtime_open = False
+            if not self._caller_open:
+                self.lease.close()
 
     def close_if_owned(self):
-        if not self._transferred:
-            self.close()
+        self.close()
 
     def close(self):
-        self.lease.close()
+        with self._lock:
+            self._caller_open = False
+            if not self._runtime_open:
+                self.lease.close()
 
 
 class PhotoDeadline(float):
@@ -45,7 +59,7 @@ class PhotoDeadline(float):
 def start_photo_deadline(settings):
     started = time.monotonic()
     seconds = settings.get('image_prepare_seconds', 60) if isinstance(settings, dict) else 60
-    seconds = min(seconds, 60) if type(seconds) is int and seconds >= 1 else 60
+    seconds = seconds if type(seconds) is int and 10 <= seconds <= 300 else 60
     return PhotoDeadline(started + seconds, started)
 
 
@@ -75,11 +89,6 @@ def estimate_input_reservation(context, photo_inputs, instructions=''):
             stack.extend(value.values())
         elif isinstance(value, (list, tuple)):
             stack.extend(value)
-    # A resolver returns base64 plus decoded bytes only after it is called.
-    if isinstance(context, dict):
-        refs = context.get('model_image_refs', [])
-        if isinstance(refs, list):
-            size += len(refs) * (MAX_BYTES * 3)
     return size + 2 * 1024 * 1024
 
 
@@ -120,7 +129,7 @@ def prepare_model_images(context, photo_inputs, *, cancel=None, deadline=None, b
             total += len(data)
             if total > batch_mib * 1024 * 1024:
                 raise ServiceError('photo_preparation_budget', '图片总大小超过预算', stage='analysis')
-            checked = decode_image(data, asset['mime'])
+            checked = validate_original(data, asset['mime'])
             if checked['sha256'] != ref['image_sha256'] or asset.get('sha256') != checked['sha256']:
                 raise ValueError()
             matches = [row for row in manifest if row.get('image_id') == ref['image_id']]

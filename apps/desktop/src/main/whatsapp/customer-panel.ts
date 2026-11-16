@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { WhatsAppContext, WhatsAppHostInfo } from '../../shared/whatsapp';
 import type { WhatsAppAccountSnapshot, WhatsAppBindingInput, WhatsAppTakeoverInput } from '../../shared/whatsapp-account';
 
-type Customer = { conversation_id: string; name: string; company?: string; revision?: number | string };
+type Customer = { conversation_id: string; name: string; buyer_id?: string; company?: string; revision?: number | string };
 export interface CustomerPanelOptions {
   workspaceId: string;
   runtimeInstanceId: string;
@@ -260,7 +260,7 @@ export class CustomerPanelController {
       const input = request.input; let result: unknown;
       if (request.action === 'search' && keys(input, ['merchant_id', 'query']) && short(input.merchant_id) && typeof input.query === 'string' && input.query.length <= 80 && this.view!.merchants.some(m => m.merchant_id === input.merchant_id && m.available)) {
         const rows = await this.options.searchCustomers({ merchant_id: input.merchant_id, query: input.query, chat_id: identity.chat_id, binding_revision: this.view!.binding_revision });
-        const safeRows = rows.slice(0, 25).filter(r => short(r.conversation_id) && short(r.name)).map(r => ({ conversation_id: r.conversation_id, name: r.name.slice(0, 256), company: typeof r.company === 'string' ? r.company.slice(0, 256) : undefined }));
+        const safeRows = rows.slice(0, 25).filter(r => short(r.conversation_id) && short(r.name)).map(r => ({ conversation_id: r.conversation_id, name: r.name.slice(0, 256), buyer_id: typeof r.buyer_id === 'string' ? r.buyer_id.slice(0, 120) : undefined, company: typeof r.company === 'string' ? r.company.slice(0, 256) : undefined }));
         await this.assertCurrent(identity, generation);
         this.candidates.clear();
         for (const row of safeRows) this.candidates.add(JSON.stringify([input.merchant_id, row.conversation_id]));

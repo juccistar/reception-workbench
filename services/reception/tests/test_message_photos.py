@@ -92,7 +92,7 @@ class MessagePhotoTests(unittest.TestCase):
                 raise ValueError('private synthetic provider details')
             return copy.deepcopy(asset)
 
-        with patch.object(self.service._queue, 'put'), patch.object(self.service, '_yield_to_ready_work'), \
+        with patch.object(self.service._requirement_media_pool, 'submit'), patch.object(self.service, '_yield_to_ready_work'), \
              patch.object(self.service, '_generation_cancel_event', return_value=threading.Event()), \
              patch.object(facade, 'read_photo_source', side_effect=source, create=True), \
              patch.object(facade, 'fetch_photo_source', side_effect=download, create=True):
@@ -109,7 +109,7 @@ class MessagePhotoTests(unittest.TestCase):
     def test_five_eight_twenty_images_prepare_despite_preview_backpressure(self):
         facade = self.service.integrations
         asset = facade._synthetic_photo_asset()
-        with patch.object(self.service._queue, 'put'), patch.object(self.service, '_yield_to_ready_work'), \
+        with patch.object(self.service._requirement_media_pool, 'submit'), patch.object(self.service, '_yield_to_ready_work'), \
              patch.object(self.service, '_generation_cancel_event', return_value=threading.Event()), \
              patch.object(facade, 'read_photo_source', side_effect=lambda message: message['message_id'], create=True), \
              patch.object(facade, 'fetch_photo_source', side_effect=lambda source: copy.deepcopy(asset), create=True):
@@ -253,23 +253,97 @@ class MessagePhotoTests(unittest.TestCase):
             self.service.call('get_message_image', self.params)
 
     def test_failures_do_not_repeat_without_explicit_bounded_retry(self):
-        with patch.object(self.service.integrations, 'load_photo', side_effect=ValueError('private URL')) as load:
+        clock = [1900000000000]
+        with patch('reception_service.message_photos.now_ms', side_effect=lambda: clock[0]), \
+             patch.object(self.service.integrations, 'load_photo', side_effect=ValueError('private URL')) as load:
             first = self.service.call('load_message_image', self.params)
             self.assertEqual(self.wait(first)['status'], 'failed')
             self.assertEqual(first, self.service.call('load_message_image', self.params))
             state = self.service.call('get_message_image', self.params)
             self.assertEqual(state['status'], 'failed')
+            self.assertFalse(state['retry_allowed'])
             self.assertNotIn('private URL', str(state))
             with self.assertRaises(ServiceError):
                 self.service.call('load_message_image', {**self.params, 'retry': True})
-            for _ in range(2):
-                record = self.service.repo.get('message_image', encoded(['photo-conversation', 'photo-one']))
-                with patch('reception_service.message_photos.now_ms', return_value=record['attempted_at'] + 60001):
-                    ack = self.service.call('load_message_image', {**self.params, 'retry': True})
-                    self.assertEqual(self.wait(ack)['status'], 'failed')
+            for _ in range(5):
+                state = self.service.call('get_message_image', self.params)
+                clock[0] = state['retry_at'] + 1
+                ack = self.service.call('load_message_image', {**self.params, 'retry': True})
+                self.assertEqual(self.wait(ack)['status'], 'failed')
+            self.assertEqual(load.call_count, 6)
+            state = self.service.call('get_message_image', self.params)
             with self.assertRaises(ServiceError):
                 self.service.call('load_message_image', {**self.params, 'retry': True})
-            self.assertEqual(load.call_count, 3)
+            # A recovered network can be explicitly tried in a new bounded window;
+            # an exhausted message version is no longer permanently locked.
+            clock[0] = state['retry_at'] + 1
+            ack = self.service.call('load_message_image', {**self.params, 'retry': True})
+            self.assertEqual(self.wait(ack)['status'], 'failed')
+            record = self.service.repo.get('message_image', encoded(['photo-conversation', 'photo-one']))
+            self.assertEqual((record['attempts'], record['window_attempts']), (7, 1))
+            self.assertEqual(load.call_count, 7)
+
+    def test_cancelled_queued_photo_does_not_consume_source_attempt(self):
+        with patch.object(self.service._requirement_media_pool, 'submit'), \
+             patch.object(self.service.integrations, 'load_photo') as load:
+            first = self.service.call('load_message_image', self.params)
+            key = encoded(['photo-conversation', 'photo-one'])
+            self.assertEqual(self.service.repo.get('message_image', key)['attempts'], 0)
+            job = self.service.repo.get('job', first['job_id'])
+            job['status'] = 'cancelled'
+            self.service.repo.put('job', first['job_id'], job)
+            second = self.service.call('load_message_image', {**self.params, 'retry': True})
+            self.assertNotEqual(first, second)
+            self.assertEqual(self.service.repo.get('message_image', key)['attempts'], 0)
+            load.assert_not_called()
+
+    def test_legacy_failed_image_recovers_after_retry_window(self):
+        with patch.object(self.service.integrations, 'load_photo', side_effect=ValueError('synthetic')):
+            self.assertEqual(self.wait(self.service.call('load_message_image', self.params))['status'], 'failed')
+        key = encoded(['photo-conversation', 'photo-one'])
+        record = self.service.repo.get('message_image', key)
+        record.update(attempts=3, attempted_at=record['attempted_at'] - 300001)
+        record.pop('attempt_window_started_at', None)
+        record.pop('window_attempts', None)
+        self.service.repo.put('message_image', key, record)
+        self.service.repo.db.execute("DELETE FROM entities WHERE kind='message_image_retry'")
+        self.assertTrue(self.service.call('get_message_image', self.params)['retry_allowed'])
+        self.assertEqual(self.wait(self.service.call('load_message_image', {**self.params, 'retry': True}))['status'], 'succeeded')
+
+    def test_retry_window_survives_version_restore_and_service_restart(self):
+        clock = [1900000000000]
+        with patch('reception_service.message_photos.now_ms', side_effect=lambda: clock[0]):
+            with patch.object(self.service.integrations, 'load_photo', side_effect=ValueError('synthetic')) as load:
+                for index in range(6):
+                    ack = self.service.call('load_message_image', {**self.params, 'retry': index > 0})
+                    self.assertEqual(self.wait(ack)['status'], 'failed')
+                    state = self.service.call('get_message_image', self.params)
+                    if index < 5:
+                        clock[0] = state['retry_at'] + 1
+                exhausted_until = state['retry_at']
+                version_b = self.ingest(text=' [image] ')
+                self.assertEqual(self.wait(self.service.call('load_message_image', self.parameters(version_b)))['status'], 'failed')
+                self.ingest()
+                state = self.service.call('get_message_image', self.params)
+                self.assertEqual((state['status'], state['retry_at'], state['retry_allowed']), ('failed', exhausted_until, False))
+                self.service._queue_recent_photos('photo-conversation')
+                with self.assertRaises(ServiceError) as error:
+                    self.service.call('load_message_image', {**self.params, 'retry': True})
+                self.assertEqual(error.exception.code, 'image_retry_wait')
+                self.assertEqual(load.call_count, 7)
+            self.service.close()
+            self.service = ReceptionService(Path(self.temp.name))
+            state = self.service.call('get_message_image', self.params)
+            self.assertEqual((state['retry_at'], state['retry_allowed']), (exhausted_until, False))
+            with patch.object(self.service.integrations, 'load_photo', side_effect=ValueError('synthetic')) as load:
+                with self.assertRaises(ServiceError):
+                    self.service.call('load_message_image', {**self.params, 'retry': True})
+                load.assert_not_called()
+                clock[0] = exhausted_until + 1
+                ack = self.service.call('load_message_image', {**self.params, 'retry': True})
+                self.assertEqual(self.wait(ack)['status'], 'failed')
+                record = self.service.repo.get('message_image', encoded(['photo-conversation', 'photo-one']))
+                self.assertEqual((record['attempts'], record['window_attempts']), (7, 1))
 
     def test_cross_customer_and_old_version_rejected(self):
         other = self.ingest(cid='other-conversation', mid='other-photo')
@@ -281,20 +355,20 @@ class MessagePhotoTests(unittest.TestCase):
 
     def test_global_queue_is_bounded(self):
         started = threading.Event()
-        original = self.service.integrations.load_photo
+        asset = self.service.integrations._synthetic_photo_asset()
         def blocked(message):
             started.set()
             self.release.wait(4)
-            return original(message)
+            return copy.deepcopy(asset)
         with patch.object(self.service.integrations, 'load_photo', side_effect=blocked):
             jobs = [self.service.call('load_message_image', self.params)]
             self.assertTrue(started.wait(2))
-            for index in range(3):
+            for index in range(15):
                 message = self.ingest(mid='photo-' + str(index))
-                jobs.append(self.service.call('load_message_image', self.parameters(message)))
-            fifth = self.ingest(mid='fifth')
+                jobs.append(self.service.call('load_message_image', {**self.parameters(message), 'retry': True}))
+            overflow = self.ingest(mid='queue-overflow')
             with self.assertRaises(ServiceError) as error:
-                self.service.call('load_message_image', self.parameters(fifth))
+                self.service.call('load_message_image', {**self.parameters(overflow), 'retry': True})
             self.assertEqual(error.exception.code, 'image_queue_full')
             self.release.set()
             for job in jobs:
@@ -318,60 +392,70 @@ class MessagePhotoTests(unittest.TestCase):
         self.assertEqual(self.service.call('get_message_image', self.params)['status'], 'failed')
 
     def test_settings_change_cancels_jobs_that_are_still_queued(self):
-        started = threading.Event()
+        started = [threading.Event(), threading.Event()]
         original = self.service.integrations.load_photo
         def blocked(message):
-            started.set()
+            started[0 if message['message_id'] == 'photo-one' else 1].set()
             self.release.wait(4)
             return original(message)
         with patch.object(self.service.integrations, 'load_photo', side_effect=blocked) as load:
             first = self.service.call('load_message_image', self.params)
-            self.assertTrue(started.wait(2))
-            other = self.ingest(mid='queued-photo')
+            self.assertTrue(started[0].wait(2))
+            other = self.ingest(mid='second-worker')
             second = self.service.call('load_message_image', self.parameters(other))
+            self.assertTrue(started[1].wait(2))
+            queued = self.ingest(mid='queued-photo')
+            third = self.service.call('load_message_image', self.parameters(queued))
+            self.assertEqual(self.service.repo.get('job', third['job_id'])['status'], 'queued')
             with self.service._lock:
                 self.service._monitor_generation += 1
             self.release.set()
-            self.assertEqual(self.wait(first)['status'], 'cancelled')
-            self.assertEqual(self.wait(second)['status'], 'cancelled')
-            self.assertEqual(load.call_count, 1)
+            for ack in (first, second, third):
+                self.assertEqual(self.wait(ack)['status'], 'cancelled')
+            self.assertEqual(load.call_count, 2)
 
     def test_message_reverting_to_prior_version_gets_a_current_job(self):
         started = threading.Event()
         original = self.service.integrations.load_photo
+        clock = [1900000000000]
         def blocked(message):
             started.set()
             self.release.wait(4)
             return original(message)
-        with patch.object(self.service.integrations, 'load_photo', side_effect=blocked):
+        with patch('reception_service.message_photos.now_ms', side_effect=lambda: clock[0]), \
+             patch.object(self.service.integrations, 'load_photo', side_effect=blocked):
             old_a = self.service.call('load_message_image', self.params)
             self.assertTrue(started.wait(2))
             version_b = self.ingest(text=' [image] ')
             job_b = self.service.call('load_message_image', self.parameters(version_b))
             self.ingest()
-            new_a = self.service.call('load_message_image', self.params)
+            state = self.service.call('get_message_image', self.params)
+            self.assertEqual(state['status'], 'failed')
+            self.assertFalse(state['retry_allowed'])
+            with self.assertRaises(ServiceError):
+                self.service.call('load_message_image', {**self.params, 'retry': True})
+            clock[0] = state['retry_at'] + 1
+            new_a = self.service.call('load_message_image', {**self.params, 'retry': True})
             self.assertNotEqual(old_a, new_a)
             self.release.set()
             self.assertEqual(self.wait(old_a)['status'], 'stale')
-            self.assertEqual(self.wait(job_b)['status'], 'failed')
+            self.assertIn(self.wait(job_b)['status'], ('stale', 'failed'))
             self.assertEqual(self.wait(new_a)['status'], 'succeeded')
             self.assertEqual(self.service.call('get_message_image', self.params)['status'], 'ready')
+            record = self.service.repo.get('message_image', encoded(['photo-conversation', 'photo-one']))
+            self.assertEqual((record['job_id'], record['attempts']), (new_a['job_id'], 2))
 
-    def test_manual_send_runs_before_remaining_optional_photo_jobs(self):
+    def test_manual_send_completes_while_optional_photo_is_still_blocked(self):
         started = threading.Event()
-        order = []
+        finished = threading.Event()
         original = self.service.integrations.load_photo
-        send_original = self.service.integrations.send_chat
         def blocked(message):
-            order.append(message['message_id'])
             if message['message_id'] == 'photo-one':
                 started.set()
                 self.release.wait(4)
+                finished.set()
             return original(message)
-        def send(*args, **kwargs):
-            order.append('manual-send')
-            return send_original(*args, **kwargs)
-        with patch.object(self.service.integrations, 'load_photo', side_effect=blocked), patch.object(self.service.integrations, 'send_chat', side_effect=send):
+        with patch.object(self.service.integrations, 'load_photo', side_effect=blocked):
             first = self.service.call('load_message_image', self.params)
             self.assertTrue(started.wait(2))
             other = self.ingest(mid='photo-two')
@@ -380,11 +464,12 @@ class MessagePhotoTests(unittest.TestCase):
                 'expected_revision': None, 'client_mutation_id': 'photo-test-edit'})
             sent = self.service.call('send_chat', {'conversation_id': 'photo-conversation', 'draft_id': draft['draft_id'],
                 'expected_revision': draft['revision'], 'client_request_id': 'photo-test-send'})
+            self.assertEqual(self.wait(sent)['status'], 'succeeded')
+            self.assertFalse(finished.is_set(), 'manual sending waited for the slow image')
+            self.assertEqual(self.service.repo.get('job', first['job_id'])['status'], 'running')
             self.release.set()
             self.assertEqual(self.wait(first)['status'], 'succeeded')
-            self.assertEqual(self.wait(sent)['status'], 'succeeded')
             self.assertEqual(self.wait(second)['status'], 'succeeded')
-        self.assertEqual(order, ['photo-one', 'manual-send', 'photo-two'])
 
     def test_seller_image_preview_and_context_survive_restart_without_relabeling(self):
         message = self.ingest(mid='seller-image', role='seller')

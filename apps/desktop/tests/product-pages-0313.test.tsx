@@ -166,13 +166,47 @@ it('shows customer counts and readable platforms while preserving supplier enum 
   expect(within(select).getByRole('option', { name: '其他' })).toHaveValue('other');
 });
 
+it('uses projected product specifications and offer counts without inventing supplier totals', async () => {
+  const invoke = setup(); const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (method: string, params: unknown = {}) => method === 'list_products'
+    ? { items: [{ ...product, specifications_summary: '蓝色 / 500ml', offer_count: 3, customer_count: 2 }] }
+    : original(method, params));
+  render(<ProductsPage />);
+  const list = await screen.findByRole('region', { name: '产品目录' });
+  expect(await within(list).findByText('蓝色 / 500ml')).toBeInTheDocument();
+  expect(within(list).getByText('3 条供货方案')).toBeInTheDocument();
+  expect(within(list).getByText('2')).toBeInTheDocument();
+});
+
 it('keeps inquiry unavailable and reconciles a selected unknown procurement task', async () => {
   const invoke = setup(); render(<ProcurementPage />);
   fireEvent.click(screen.getByText('找货设置'));
   expect(await screen.findByLabelText('供应商上限')).toHaveAttribute('max', '3');
   expect(screen.queryByLabelText('自动询价')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '关闭自动找货' }));
   fireEvent.click(await screen.findByRole('button', { name: /123.*结果未知/ }));
-  fireEvent.click(screen.getByRole('button', { name: '核查原任务' }));
+  fireEvent.click(screen.getByRole('button', { name: '核查结果' }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('reconcile_procurement', { task_id: 't1' }));
   expect(invoke).not.toHaveBeenCalledWith('request_procurement', expect.anything());
+});
+
+it('opens the associated customer using the projected conversation id', async () => {
+  const invoke = setup(); const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (method: string, params: unknown = {}) => method === 'get_product'
+    ? { product, offers: [], suppliers: [], tasks: [], customers: [{ buyer_id: 'buyer1', customer_name: 'Emma', conversation_id: 'conversation1', case_id: 'case1', case_ids: ['case1'] }] }
+    : original(method, params));
+  const open = vi.fn(); render(<ProductsPage initialProductId="p1" onOpenConversation={open} />);
+  expect(await screen.findByText('Emma')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '查看会话' }));
+  expect(open).toHaveBeenCalledWith('conversation1');
+});
+
+it('saves the supplier region with the existing revision', async () => {
+  const invoke = setup(); render(<SuppliersPage />);
+  fireEvent.click(await screen.findByRole('button', { name: /供应商甲/ }));
+  fireEvent.click(await screen.findByRole('button', { name: '编辑资料' }));
+  fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'alibaba' } });
+  fireEvent.change(screen.getByLabelText('地区'), { target: { value: '浙江' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存供应商' }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('save_supplier', expect.objectContaining({ supplier_id: 's1', expected_revision: 2, region: '浙江' })));
 });

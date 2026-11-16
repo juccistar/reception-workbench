@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { MAX_ORIGINAL_BYTES } from '../shared/media-limits';
 import type { WhatsAppContact, WhatsAppHostInfo } from '../shared/whatsapp';
 import type { WhatsAppEvent } from './whatsapp/events';
 import type { FrozenIntent, LedgerRecord, SendResult } from './whatsapp/ledger';
@@ -143,7 +144,7 @@ export class WhatsAppCoordinator {
                 const hash = createHash('sha256'); let offset = 0;
                 for await (const chunk of chunks) {
                   check();
-                  if (!chunk.length || chunk.length > 256 * 1024 || offset + chunk.length > 6 * 1024 * 1024) throw new Error('WhatsApp image chunk invalid');
+                  if (!chunk.length || chunk.length > 256 * 1024 || offset + chunk.length > MAX_ORIGINAL_BYTES) throw new Error('WhatsApp image chunk invalid');
                   hash.update(chunk);
                   const result = await this.options.invoke<{ next_offset: number }>('_wa_media_chunk', { ...identity, transfer_id: transferId, offset, data_base64: chunk.toString('base64') });
                   check();

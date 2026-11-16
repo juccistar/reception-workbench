@@ -37,6 +37,21 @@ function setup() {
   return { manager, backends, release };
 }
 describe('account manager shutdown', () => {
+  it('rechecks a generation through its merchant broker and delivers the changed lease only to its owner', async () => {
+    const { manager, backends } = setup();
+    await manager.connect(A); await manager.connect(B);
+    const active = (manager as any).active.get(A);
+    const request = { request_id: 'request', account_id: 'account', chat_id: 'chat', merchant_id: A, conversation_id: null, binding_revision: 1 };
+    const merchant = { record_id: A, seller_id: '10001', verified_at: 1 };
+    const lease = { revision: 'changed' };
+    (manager as any).options.broker.request = vi.fn(async () => lease);
+    backends[0].invoke.mockImplementation(async method => (method === '_wa_check_generation_context' ? { active: false } : undefined) as any);
+    await (manager as any).watchGenerationContext(active, request, merchant);
+    expect((manager as any).options.broker.request).toHaveBeenCalledWith(merchant, request);
+    expect(backends[0].invoke).toHaveBeenCalledWith('_wa_check_generation_context', { request, context: lease, error: null });
+    expect(backends[1].invoke).not.toHaveBeenCalledWith('_wa_check_generation_context', expect.anything());
+    await manager.close();
+  });
   it('lists without starting services and isolates two accounts on exit', async () => {
     const { manager, backends, release } = setup();
     expect((await manager.snapshot()).accounts).toHaveLength(2);

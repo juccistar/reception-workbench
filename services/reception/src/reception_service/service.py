@@ -33,6 +33,7 @@ from .business_supplement import supplement_fingerprint
 from . import policy_library
 from .integrations.generation_metadata import applied_policy_summaries, checked_metadata
 from .translation_service import TranslationMixin
+from .feishu_settings import FeishuSettingsMixin
 from .message_monitor import MessageMonitorMixin
 from .conversation_style import social_intent
 from .repository import Repository, encoded, new_id, now_ms
@@ -58,14 +59,12 @@ FAST = frozenset({'get_snapshot', 'get_executor_health', 'get_conversation', 'ge
                   'set_reception', 'takeover', 'begin_manual_edit', 'save_chat_draft', 'prepare_send', 'inject_demo', 'mark_messages_read',
                   'save_conversation_supplement', 'upload_supplement_attachment', 'remove_supplement_attachment',
                   'generate_manual_suggestion', 'cancel_manual_suggestion', 'get_translations', 'request_translations',
-                  'get_translation_info', 'get_translation_config', 'save_translation_settings',
-                  'configure_translation_credential', 'validate_translation_settings',
-                  'check_translation_provider', 'clear_translation_cache', 'set_case_category', 'create_procurement_case',
+                  'get_translation_info', '_save_feishu_configuration', '_configure_feishu_credential', '_feishu_credential_requests', '_grant_feishu_write', 'set_case_category', 'create_procurement_case',
                   'list_products', 'get_product', 'get_product_main_image', 'request_product_images', 'list_suppliers', 'get_supplier', 'save_supplier', 'save_product_offer',
                   'select_supplier_offer', 'bind_requirement_product', 'set_product_default_offer', 'get_procurement_settings',
                   'save_procurement_settings', 'set_procurement_enabled', 'list_procurement_tasks', 'request_procurement',
                   'reconcile_procurement', '_image_prepare', '_image_status', '_image_transfer_chunk', '_image_cancel',
-                  '_set_translation_enabled', '_product_link_for_reference', '_copy_text_for_reference',
+                  '_product_link_for_reference', '_copy_text_for_reference',
                   'get_whatsapp_state', 'save_whatsapp_binding', 'get_whatsapp_context', 'set_whatsapp_reception',
                   'takeover_whatsapp', 'reconcile_whatsapp_operation', '_wa_set_account', '_wa_ingest',
                   '_wa_prepare_send', '_wa_transport_result', '_wa_ack', '_wa_media_begin', '_wa_media_chunk',
@@ -74,6 +73,7 @@ FAST = frozenset({'get_snapshot', 'get_executor_health', 'get_conversation', 'ge
 DEFAULT_SETTINGS = {'workctl_path': '', 'poll_seconds': 30, 'probe_seconds': 2, 'merge_seconds': 1,
                     'required_fields': ['product', 'quantity', 'specifications', 'destination'],
                     'image_batch_mib': 64, 'image_prepare_seconds': 60, 'image_parallelism': 2,
+                    'reception_images_enabled': True, 'context_message_count': 50,
                     'generation_retry_limit': 3, 'translation_parallelism': 2,
                     'translation_context_messages': 2, 'translation_context_bytes': 300,
                     'max_questions_per_reply': 2, 'max_questions_per_field': 2,
@@ -84,6 +84,7 @@ SYNC_PAGE_LIMIT = 10
 HISTORY_PAGE_LIMIT = 1000
 ADVANCED_INTEGER_SETTINGS = {
     'image_batch_mib': (8, 256), 'image_prepare_seconds': (10, 300), 'image_parallelism': (1, 4),
+    'context_message_count': (1, 200),
     'generation_retry_limit': (1, 10), 'translation_parallelism': (1, 4),
     'translation_context_messages': (0, 10), 'translation_context_bytes': (0, 6000),
     'max_questions_per_reply': (1, 2), 'max_questions_per_field': (1, 10),
@@ -100,7 +101,7 @@ def coverage():
             'next_cursor': None, 'message': '尚未读取历史消息'}
 
 
-class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin, ProductLibraryMixin, RequirementMediaMixin, ExecutionMixin, ProcurementMixin, ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
+class ReceptionService(FeishuSettingsMixin, ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMixin, RequirementChangesMixin, CachedMediaMixin, ProductLibraryMixin, RequirementMediaMixin, ExecutionMixin, ProcurementMixin, ConversationAssistanceMixin, TranslationMixin, ContinuityMixin, MessagePhotosMixin, MessageMonitorMixin, ManualChatMixin):
     def __init__(self, data_root: Path, mode='live', seller_id='', emit=None, *, _integration_factory=None, _fixture_initializer=None):
         if mode != 'live' and not (mode == 'demo' and _integration_factory and _fixture_initializer):
             raise ServiceError('invalid_mode', '运行模式无效')
@@ -183,7 +184,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
             (self.data_root / RECEIPTS).mkdir(parents=True, exist_ok=True)
         self.settings = copy.deepcopy(DEFAULT_SETTINGS)
         self.settings.update(self._control.get('meta', 'settings', {}))
-        self.settings['feishu']['write_enabled'] = False
+        self._init_feishu_settings()
         self._integration_factory = integration_factory or build_integrations
         self.integrations = self._integration_factory(mode, self.data_root / mode, copy.deepcopy(self.settings))
         configure_router = getattr(self.integrations, 'configure_model_router', None)
@@ -319,6 +320,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                 self.repo = Repository(self.data_root / 'live' / 'sellers' / seller_dir / 'workspace.sqlite3', seller)
                 self.seller_id = seller
                 self.account_verified = True
+                self._retire_translation_settings()
                 self._recover()
                 self._load_scope()
                 self._init_whatsapp()
@@ -475,7 +477,26 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                     self._freeze_reception_model()
                 except ServiceError:
                     checks['ai'] = {**blank_check(), 'status': 'blocked', 'message': '接待模型配置不可用或已变化'}
-            conversations = [self._summary(c, projection) for c in self.repo.list('conversation')]
+            source_conversations = self.repo.list('conversation')
+            owners = {c['conversation_id']: c for c in source_conversations if c.get('seller_id') == self.seller_id}
+            latest = {}
+            for case in projection.cases.values():
+                owner = owners.get(case.get('conversation_id'))
+                if (not owner or case.get('seller_id') != self.seller_id
+                        or case.get('buyer_id') != owner.get('buyer_id') or not case.get('case_id')):
+                    continue
+                key = (case.get('updated_at') or 0, case['case_id'])
+                if case['conversation_id'] not in latest or key > latest[case['conversation_id']][0]:
+                    requirements = case.get('requirements') or {}
+                    def field(name):
+                        item = requirements.get(name)
+                        value = item.get('value') if isinstance(item, dict) else None
+                        return value if isinstance(value, str) and value.strip() else None
+                    latest[case['conversation_id']] = (key, {'case_id': case['case_id'],
+                        'product': field('product'), 'quantity': field('quantity'), 'updated_at': case.get('updated_at')})
+            conversations = [dict(self._summary(c, projection),
+                                  latest_requirement=latest.get(c['conversation_id'], (None, None))[1])
+                             for c in source_conversations]
             conversations.sort(key=lambda c: c['last_timestamp'] or 0, reverse=True)
             return {'app': {'version': __version__, 'mode': self.mode, 'seller_id': self.seller_id,
                             'seller_suffix': self.seller_id[-6:], 'account_verified': self.account_verified,
@@ -484,11 +505,11 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                                   'manual_only': self._manual_only, 'started_at_ms': self._started_at_ms,
                                   'scope': copy.deepcopy(self._scope), 'budget': self._budget()},
                     'checks': checks, 'conversations': conversations,
-                    'handoff_cases': sorted([project_case(self.repo, case) for case in self.repo.list('case') if case['state'] == 'waiting_quote'],
+                    'handoff_cases': sorted([project_case(self.repo, case) for case in projection.cases.values() if case['state'] == 'waiting_quote'],
                                             key=lambda case: case['updated_at'], reverse=True),
                     'policies': [policy_library.normalize_policy(p) for p in self.repo.list('policy')], 'jobs': self.list_jobs(), 'outbox': self.list_outbox(),
                     'executor_health': self._executor_health.snapshot(),
-                    'settings': copy.deepcopy(self.settings), 'message_sync': self._message_sync_snapshot(),
+                    'settings': self._feishu_settings_snapshot(), 'message_sync': self._message_sync_snapshot(),
                     'translation': self.get_translation_info()}
 
     def list_assistance_tasks(self, conversation_id=None, status=None):
@@ -1057,6 +1078,8 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                 lower, upper = ADVANCED_INTEGER_SETTINGS[key]
                 if type(value) is not int or not lower <= value <= upper:
                     raise ServiceError('invalid_settings', '高级处理设置超出允许范围')
+            if key == 'reception_images_enabled' and type(value) is not bool:
+                raise ServiceError('invalid_settings', '相关原图开关无效')
             if key == 'workctl_path' and (not isinstance(value, str) or '\x00' in value or len(value) > 4096):
                 raise ServiceError('invalid_settings', 'workctl 路径无效')
             if key == 'poll_seconds' and (type(value) not in (int, float) or not 5 <= value <= 3600):
@@ -1080,7 +1103,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                 value = {label: list(dict.fromkeys(['product'] + fields)) for label, fields in value.items()}
             if key == 'feishu':
                 allowed = {'enabled', 'write_enabled', 'cli_path', 'base_token', 'table', 'table_id',
-                           'form_share_token', 'account_option', 'initial_status', 'fields'}
+                           'form_share_token', 'account_option', 'initial_status', 'fields', 'app_id', 'table_url'}
                 if (not isinstance(value, dict) or set(value) - allowed
                         or any(type(v) is not bool for k, v in value.items() if k in ('enabled', 'write_enabled'))
                         or any(not isinstance(v, str) or len(v) > 4096 or '\x00' in v for k, v in value.items()
@@ -1095,8 +1118,22 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                             or entry['type'] not in ('text', 'select', 'number', 'attachment', 'datetime', 'auto_number')
                             for role, entry in fields.items())):
                         raise ServiceError('invalid_settings', '飞书字段映射格式无效')
-                value = {**updated['feishu'], **value}
+                if value.get('write_enabled') is True:
+                    raise ServiceError('authorization_required', '请单独授权本次飞书写入。')
+                if 'app_id' in value:
+                    # New application settings replace the retired CLI form configuration.
+                    value = {k: v for k, v in value.items() if k in ('enabled', 'app_id', 'table_url', 'fields', 'account_option', 'initial_status')}
+                    legacy = updated['feishu'].get('legacy_cli_config')
+                    if not legacy and updated['feishu'].get('cli_path'):
+                        legacy = {**updated['feishu'], 'write_enabled': False}
+                    if isinstance(legacy, dict):
+                        value['legacy_cli_config'] = copy.deepcopy(legacy)
+                else:
+                    value = {**updated['feishu'], **value}
+                value['revision'] = self._feishu_revision() + 1
+                value['write_enabled'] = False
             updated[key] = value
+        updated['feishu']['write_enabled'] = False
         with self._lock, self.repo.transaction():
             self._wa_enabled = False
             self._wa_cancel()
@@ -1125,6 +1162,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
         configure_router = getattr(replacement, 'configure_model_router', None)
         if configure_router is not None:
             configure_router(self._model_router)
+        self._configure_feishu_integration(replacement)
         with self._lock:
             self.integrations = replacement
             if self._fixture_initializer is not None:
@@ -2568,7 +2606,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                     self._queue_outbox(case)
                 return {'message': '客户已要求停止联系；未调用 AI 或发送'}
             messages = self.repo.list('message', conversation_id=case['conversation_id'])
-            has_photos = bool(get_reception_source_images(self.repo, conversation, case, messages))
+            has_photos = self.settings.get('reception_images_enabled', True) and bool(get_reception_source_images(self.repo, conversation, case, messages))
         with self._job_phase(job_id, 'photo_prepare_ms'):
             photo_guard = self._prepare_direct_photos(case['conversation_id'], job_id, epoch, facade) if has_photos else None
         with self._lock:

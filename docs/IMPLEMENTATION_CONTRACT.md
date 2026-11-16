@@ -115,7 +115,7 @@ requirements_revision仅正式需求及有效依据变化时递增，缺失旧�
 
 各图片DTO可含image_ref，按消息／需求／产品／补充种类绑定真实归属、来源版本和SHA。getImageOriginal、showImageMenu及openProductLink为专用preload能力，main验证工作台主frame和生命周期；不接收任意文件路径、资源URL或菜单模板。
 
-宿主私有_image_original_describe/_image_original_chunk读取本地原图，每块最多256 KiB原始字节，原图继续限制6 MiB、8192单边、2000万像素。复制专用_image_copy_describe/_image_copy_chunk用PIL生成校正EXIF方向、保留透明度的全尺寸PNG，最多80 MiB、两份会话和30秒有效期；逐块复核来源，最后一块释放会话。完整内容、块序号和SHA由宿主核对，不提高普通JSON行预算。这些方法均不进入普通API_METHODS。
+宿主私有_image_original_describe/_image_original_chunk读取本地原图，每块最多256 KiB原始字节，0.4.2原图限制为20 MiB、32768单边及4000万像素，格式接受PNG/JPEG/WebP和静态GIF，动画及未验收编解码器不泛放。复制专用_image_copy_describe/_image_copy_chunk用PIL生成校正EXIF方向、保留透明度的全尺寸PNG，最多80 MiB、两份会话和30秒有效期；逐块复核来源，最后一块释放会话。完整内容、块序号和SHA由宿主核对，不提高普通JSON行预算。这些方法均不进入普通API_METHODS。
 
 主进程以Electron45异步ClipboardItem写入PNG，仅在明确选择固定菜单“复制图片”后执行。原图通过Uint8Array专用IPC返回，renderer以Blob URL显示并按生命周期释放；CSP仅img-src增加blob:。_product_link_for_reference根据当前商家真实case／产品取规范数字ID链接，main再次核对固定HTTPS格式后用系统浏览器打开，页面内导航和新窗口拦截继续执行。
 
@@ -125,7 +125,7 @@ Supplement新增attachments，按当前商家和conversation_id保存，字段�
 
 renderer通过chooseSupplementAttachments(conversationId)多选、uploadSupplementAttachments(conversationId,files)上传用户提供的{name,content_b64}，或pasteSupplementAttachments(conversationId)显式请求原生粘贴，返回{supplement,errors}批量结果，保留部分成功。路径只来自宿主文件选择或当前用户粘贴操作；Windows本地文件读取使用固定只读剪贴板命令，截图读取使用Electron异步剪贴板接口，具有超时、输出和字节限制，不接受renderer路径。旧chooseSupplementAttachment保留兼容。宿主逐项调用私有upload_supplement_attachment，该方法不在普通API_METHODS中。公开移除仍只接受会话及附件编号。
 
-支持PNG/JPEG/WebP、PDF、UTF-8 TXT/MD/CSV；单个6 MiB、最多5个、总计20 MiB。PDF最多10页、每附件提取16000字符，拒绝加密和无可提取文字的PDF；pypdf禁用外部jbig2dec并限制解压、解析工作量。专属展示缩略图最大256×256且JPEG不超过48 KiB，原始图片字节及哈希保持不变。上传JSON Lines仅为该私有方法放宽至8,400,000字符，其他方法沿用原预算。
+0.4.2支持PNG/JPEG/WebP、静态GIF、PDF、UTF-8 TXT/MD/CSV；单个20 MiB、最多10个、总计64 MiB。PDF最多10页、每附件提取16000字符，拒绝加密和无可提取文字的PDF；pypdf禁用外部jbig2dec并限制解压、解析工作量。专属展示缩略图最大256×256且JPEG不超过48 KiB，原始图片字节及哈希保持不变。上传JSON Lines只按该私有方法的单件字节及base64开销设置独立envelope，其他方法沿用原预算，不向renderer开放通用大报文入口。
 
 正文CAS保持，附件操作在最新补充记录上更新版本，不覆盖期间新正文；变更进入补充指纹并使旧未提交结果失效。图片以origin和attachment_id独立于聊天消息，0.4.0通过所选接待API与文字同轮附图，确切输入证据映射为supplement_image_reads并复核版本、归属及原图哈希；预览不代表已读，不以附件编号伪装聊天消息。当前明确补充图片可用于润色理解，但不补读历史聊天图或程序商品主图。文本和图片都是商家来源，不作为买家确认，也不恢复旧质量/协助提醒。
 
@@ -185,7 +185,7 @@ ConversationDetail.reply_batches投影批次状态、条目状态、来源类型
 
 ## 5. 图片、资料、翻译
 
-真实消息协议、受控下载、安全解码、原图与预览缓存继续保留。图片归属和消息版本必须核实；需求product_images使用get_requirement_media的确切media_id，只显示匹配的本地安全预览。AI只有本轮实际读取才可标记已看过；预览不等于读取，商家图不作为买家确认。普通润色不准备历史图片。默认整批64 MiB、准备最多60秒、下载并行2项，单图6 MiB；相关原图由当前接待API同轮附加，p1/p2与实际字节、角色、来源版本绑定。请求编码还受保守内存预留限制，64 MiB不是任意图片批次均能成功的承诺。模型编码与重像素处理共用512 MiB工作量预算，重像素单并发；它不包含解释器、SQLite及SDK隐藏分配，不是RSS硬上限。真实SKU全链和图搜尚未验收。
+真实消息协议、受控下载、安全解码、原图与预览缓存继续保留。图片归属和消息版本必须核实；需求product_images使用get_requirement_media的确切media_id，只显示匹配的本地安全预览。AI只有本轮实际读取才可标记已看过；预览不等于读取，商家图不作为买家确认。普通润色不准备历史图片。单图20 MiB，默认整批64 MiB、准备60秒、下载并行2项；整批预算8–256 MiB、准备10–300秒按实际配置生效，仍受编码和共享资源约束。整链截止为同一起点的准备时限加120秒，默认180秒；下载总时限60秒、连接10秒、空闲15秒，最多4次逐跳验证重定向。相关原图由当前接待API同轮附加，p1/p2与实际字节、角色、来源版本绑定，不静默缩图替换原图。请求编码按实际输入和处理阶段预留，64 MiB不是任意图片批次均能成功的承诺。模型编码与重像素处理共用512 MiB工作量预算，重像素单并发；它不包含解释器、SQLite及SDK隐藏分配，不是RSS硬上限。真实SKU全链和图搜尚未验收。
 
 政策按用途、启用、确认、有效期和产品范围选择。六份内置规则、三份模板默认关闭，采用后归当前商家；仅人工备注不进模型，公开口径与内部规则分开。适用风格选优先级最高的一份，同分按产品范围及稳定编号。公司名独立慢任务，快照不联网。
 

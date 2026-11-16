@@ -48,7 +48,7 @@ it('rejects bad MAC and replayed nonces', async () => {
 });
 it('searches with a verified lease and checks identity before and after reading', async () => {
   const { broker } = await setup(); let valid = true;
-  const search = vi.fn(async () => ({ seller_id: binding.seller_id, data_root: binding.data_root, candidates: [{ conversation_id: 'c1', name: 'Alice', revision: 'a'.repeat(64) }] }));
+  const search = vi.fn(async () => ({ seller_id: binding.seller_id, data_root: binding.data_root, candidates: [{ conversation_id: 'c1', name: 'Alice', buyer_id: 'buyer-1', revision: 'a'.repeat(64) }] }));
   const validate = vi.fn(() => { if (!valid) throw new Error('revoked'); });
   closers.push(await broker.publishVerifiedMerchant(binding, async () => value(), validate, search));
   const req = { request_id: 'search', account_id: 'account', chat_id: 'chat', merchant_id: binding.record_id, binding_revision: 1, query: 'Alice', limit: 25 };
@@ -68,9 +68,9 @@ it('rejects untrusted search response shapes and missing callback', async () => 
   let result: any = { seller_id: '999', data_root: binding.data_root, candidates: [] };
   closers.push(await broker.publishVerifiedMerchant(binding, async () => value(), () => {}, async () => result));
   await expect(broker.searchCustomers(binding, req)).rejects.toThrow();
-  result = { seller_id: binding.seller_id, data_root: binding.data_root, candidates: [{ conversation_id: 'c', name: 'Alice', revision: 'a'.repeat(64), secret: 'x' }] };
+  result = { seller_id: binding.seller_id, data_root: binding.data_root, candidates: [{ conversation_id: 'c', name: 'Alice', buyer_id: 'buyer-1', revision: 'a'.repeat(64), secret: 'x' }] };
   await expect(broker.searchCustomers(binding, req)).rejects.toThrow();
-  result = { seller_id: binding.seller_id, data_root: binding.data_root, candidates: Array(2).fill({ conversation_id: 'c', name: 'Alice', revision: 'a'.repeat(64) }) };
+  result = { seller_id: binding.seller_id, data_root: binding.data_root, candidates: Array(2).fill({ conversation_id: 'c', name: 'Alice', buyer_id: 'buyer-1', revision: 'a'.repeat(64) }) };
   await expect(broker.searchCustomers(binding, req)).rejects.toThrow();
 });
 it('rejects oversized exports and mismatched response identity', async () => {

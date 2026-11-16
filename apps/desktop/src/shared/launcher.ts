@@ -12,6 +12,8 @@ export interface LauncherMerchant {
 import type { WhatsAppAccountBridge } from './whatsapp-account';
 
 export interface LauncherBridge extends WhatsAppAccountBridge {
+  getInitialPage?(): Promise<import('./launcher-navigation').LauncherPage>;
+  onPageRequest?(listener: (page: import('./launcher-navigation').LauncherPage) => void): () => void;
   merchants(): Promise<LauncherMerchant[]>;
   importMerchants(): Promise<number>;
   openMerchant(id: string): Promise<void>;

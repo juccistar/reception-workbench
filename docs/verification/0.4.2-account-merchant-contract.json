@@ -1,0 +1,20 @@
+{
+  "scope": "0.4.2 WhatsApp account merchant selection and customer search",
+  "contract": {
+    "state_selected_merchant_ids": "Persisted account workspace selection, independent of automatic authorization; initially empty for existing workspaces.",
+    "state_allowed_merchant_ids": "In-memory authorized automatic reception scope; empty after disconnect or restart.",
+    "selection_save": "set_whatsapp_reception with identity and allowed_merchant_ids saves the selection even when enabled is false. To save without granting, pass enabled=false. To disable without changing selection, pass the existing selected_merchant_ids. Calls without allowed_merchant_ids only disable.",
+    "default": "default_merchant_id/default_revision remain independently saved with save_whatsapp_default_merchant and apply to new contacts.",
+    "selection_change": "Changing selection persists reception_paused on this account's existing contacts, cancels generation and preserves their human_owned state, bindings and operations. takeover_whatsapp(enabled=false) resumes a contact.",
+    "customer_search": "Each candidate includes conversation_id, name, buyer_id and revision; buyer_id comes from the merchant's saved conversation metadata."
+  },
+  "validation": [
+    {"test": "test_whatsapp_account_core_041.py", "result": "passed", "count": 21},
+    {"test": "test_whatsapp_account_generation_041.py", "result": "passed", "count": 19},
+    {"test": "test_whatsapp_customer_search_041.py", "result": "passed", "count": 7},
+    {"test": "vitest broker and customer panel targeted invocation", "result": "passed", "files": 4, "count": 62},
+    {"test": "desktop TypeScript noEmit", "result": "passed"},
+    {"test": "diff check on task files", "result": "passed"}
+  ],
+  "limits": ["Synthetic data and substitutes only; no live accounts, paid model requests, build or release.", "Launcher and extension UI need to consume selected_merchant_ids and buyer_id; existing frontend behavior is not changed by this task.", "Existing workspaces have no persisted merchant selection until saved; no prior in-memory authorization is inferred."]
+}

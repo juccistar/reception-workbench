@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import itertools
+import json
 import ntpath
 import os
 import queue
@@ -48,9 +49,8 @@ class _DemoTranslator:
 
 class TranslationMixin:
     def _init_translation(self):
-        self._translation_settings = {**_DEFAULT, **self._control.get('meta', 'translation_settings', {})}
-        if self.mode == 'demo' and self._translation_settings['revision'] == 0:
-            self._translation_settings['enabled'] = True
+        # Retired configuration is used only by the one-time cache migration.
+        self._translation_settings = dict(_DEFAULT)
         self._translation_key = ''
         self._translation_health = ''
         self._translation_message = ''
@@ -58,8 +58,67 @@ class TranslationMixin:
         self._translation_queue = queue.PriorityQueue(maxsize=200)
         self._translation_sequence = itertools.count()
         self._translation_active = {}
+        self._translation_migration_stop = threading.Event()
+        self._translation_migration_thread = None
+        if self.account_verified:
+            self._retire_translation_settings()
         self._translation_worker = threading.Thread(target=self._translation_loop, name='translation-worker', daemon=True)
         self._translation_worker.start()
+
+    def _retire_translation_settings(self):
+        """Move only the non-secret key inputs to a resumable seller-local migration."""
+        old = self._control.get('meta', 'translation_settings')
+        with self.repo.transaction():
+            state = self.repo.get('meta', 'translation_retirement')
+            if state is None and isinstance(old, dict):
+                ceiling = self.repo.db.execute("SELECT coalesce(max(rowid),0) FROM entities WHERE kind IN ('message','manual_suggestion')").fetchone()[0]
+                count = self.repo.db.execute("SELECT count(*) FROM entities WHERE kind='translation_v2'").fetchone()[0]
+                state = {'cursor': 0, 'ceiling': ceiling, 'matched': 0, 'total': count,
+                         'base_url': old.get('base_url', _DEFAULT['base_url']), 'model': old.get('model', '')}
+                self.repo.put('meta', 'translation_retirement', state)
+        if old is not None:
+            with self._control.transaction():
+                self._control.db.execute("DELETE FROM entities WHERE kind='meta' AND id='translation_settings'")
+                self._control.db.execute("DELETE FROM revisions WHERE kind='meta' AND id='translation_settings'")
+        if state and 'base_url' in state and self._translation_migration_thread is None:
+            self._translation_migration_thread = threading.Thread(target=self._migrate_translation_cache, daemon=True,
+                                                                   name='translation-cache-migration')
+            self._translation_migration_thread.start()
+
+    def _migrate_translation_cache(self):
+        while not self._translation_migration_stop.is_set():
+            with self._lock, self.repo.transaction():
+                state = self.repo.get('meta', 'translation_retirement')
+                if not state or 'base_url' not in state:
+                    return
+                rows = self.repo.db.execute("SELECT rowid,kind,data FROM entities WHERE kind IN ('message','manual_suggestion') AND rowid>? AND rowid<=? ORDER BY rowid LIMIT 20", (state['cursor'], state['ceiling'])).fetchall()
+                if not rows:
+                    state.pop('base_url', None)
+                    state.pop('model', None)
+                    state['unmatched'] = max(0, state['total'] - state['matched'])
+                    state['complete'] = True
+                    self.repo.put('meta', 'translation_retirement', state)
+                    return
+                for rowid, kind, raw in rows:
+                    source = json.loads(raw)
+                    try:
+                        cid = source['conversation_id']
+                        item = {'kind': kind, 'source_id': source['message_id' if kind == 'message' else 'suggestion_id']}
+                        if kind == 'manual_suggestion':
+                            item['source_hash'] = hashlib.sha256(source['body'].encode('utf-8')).hexdigest()
+                        identity, _, payload = self._translation_sources(cid, [item])[0]
+                        key = _hash([2, self.seller_id, cid, identity, 'zh-CN', state['base_url'],
+                                     state['model'], 'chat-v2', payload['context']])
+                        record = self.repo.get('translation_v2', key)
+                        if record and record.get('status') == 'ready':
+                            self.repo.put('translation_legacy_index', key, {**record, **identity,
+                                          'conversation_id': cid, 'seller_id': self.seller_id,
+                                          'context_hash': _hash(payload['context'])})
+                            state['matched'] += 1
+                    except (ServiceError, KeyError, TypeError, ValueError, AttributeError):
+                        pass
+                    state['cursor'] = rowid
+                self.repo.put('meta', 'translation_retirement', state)
 
     def _business_enter(self):
         # HTTP translation has no Native resource to yield to the business worker.
@@ -69,6 +128,12 @@ class TranslationMixin:
         pass
 
     def _stop_translation(self):
+        self._translation_migration_stop.set()
+        migration = self._translation_migration_thread
+        if migration is not None and migration is not threading.current_thread():
+            migration.join(timeout=10)
+            if migration.is_alive():
+                raise ServiceError('executor_unavailable', '翻译缓存迁移尚未退出。', stage='shutdown')
         with self._lock:
             for _, cancel in self._translation_active.values():
                 cancel.set()
@@ -95,6 +160,7 @@ class TranslationMixin:
                     and ntpath.normcase(os.path.realpath(root)) == ntpath.normcase(os.path.realpath(self.data_root)))
 
     def _set_translation_enabled(self, enabled, seller_id, data_root, revision):
+        raise ServiceError('method_not_found', '翻译设置入口已停用。')
         if (type(enabled) is not bool or type(revision) is not int or not isinstance(seller_id, str)
                 or not isinstance(data_root, str) or not data_root or len(data_root) > 32768):
             raise ServiceError('invalid_params', '翻译授权参数无效。')
@@ -130,21 +196,22 @@ class TranslationMixin:
                     configured = True
                 except ServiceError:
                     configured = False
-            enabled = self._translation_enabled_for_current_root()
+            enabled = True
             status = ('demo' if self.mode == 'demo' else 'not_configured' if not configured else
-                      'disabled' if not enabled else self._translation_health or 'ready')
+                      self._translation_health or 'ready')
             messages = {'demo': '演示翻译仅使用本地合成数据，不调用第三方。',
                         'not_configured': '请配置模型和 API Key；已保存译文仍可查看。',
                         'disabled': '第三方聊天翻译已关闭；已保存译文仍可查看。',
                         'ready': '聊天翻译已配置，首次调用或合成检查将核验服务。'}
             usage = self._control.get('meta', 'translation_usage', {})
-            return {**{key: settings[key] for key in ('base_url', 'model', 'revision')}, 'enabled': enabled,
+            return {'base_url': '', 'model': '', 'revision': getattr(self, '_translation_generation', 0), 'enabled': enabled,
                     'has_key': bool(self._translation_key) or (self.mode != 'demo' and configured), 'status': status,
                     'message': self._translation_message or messages.get(status, '正在检查翻译服务。'),
                     'usage': {key: int(usage.get(key, 0)) for key in
                               ('requests', 'prompt_tokens', 'completion_tokens', 'unknown_requests', 'cache_hits')}}
 
     def configure_translation_credential(self, credential_ref, api_key, revision):
+        raise ServiceError('method_not_found', '翻译设置入口已停用。')
         with self._lock:
             if revision != self._translation_settings['revision'] or credential_ref != self._translation_settings['credential_ref']:
                 raise ServiceError('revision_conflict', '翻译配置已变化，请重新读取。')
@@ -171,6 +238,7 @@ class TranslationMixin:
 
     def save_translation_settings(self, enabled, base_url, model, revision, credential_ref=None, api_key='',
                                   enabled_data_root=None):
+        raise ServiceError('method_not_found', '翻译设置入口已停用。')
         if (type(enabled) is not bool or type(revision) is not int or not isinstance(model, str)
                 or len(model) > 200 or any(ord(char) < 32 for char in model)
                 or credential_ref is not None and (not isinstance(credential_ref, str) or len(credential_ref) != 64
@@ -213,7 +281,7 @@ class TranslationMixin:
         router = getattr(self, '_translation_router', None) or getattr(self, '_model_router', None)
         if router is None:
             raise ServiceError('translation_not_configured', '请先配置第三方翻译服务。')
-        return router, router.resolve('translation', ('text', 'translation'))
+        return router, router.resolve('translation', ('text', 'translation'), allow_unchecked=True)
 
     def _translation_cache_model(self):
         if self.mode == 'demo':
@@ -297,11 +365,17 @@ class TranslationMixin:
                 legacy = False
                 old_provider = False
                 if not record and not self._control.get('meta', 'translation_legacy_hidden', False):
-                    old_v2_key = _hash([2, self.seller_id, conversation_id, identity, 'zh-CN', self._translation_settings['base_url'],
-                                        self._translation_settings['model'], 'chat-v2', payload['context']])
-                    previous = self.repo.get('translation_v2', old_v2_key)
-                    if previous and previous.get('status') == 'ready':
-                        record, legacy, old_provider = previous, True, True
+                    # Only records with explicit identity and context evidence can
+                    # be projected after the old provider configuration is erased.
+                    candidates = (self.repo.list('translation_v2', conversation_id=conversation_id)
+                                  + self.repo.list('translation_legacy_index', conversation_id=conversation_id))
+                    for previous in reversed(candidates):
+                        if (previous.get('status') == 'ready'
+                                and all(previous.get(k) == v for k, v in identity.items())
+                                and previous.get('context_hash') == _hash(payload['context'])
+                                and previous.get('seller_id', self.seller_id) == self.seller_id):
+                            record, legacy, old_provider = previous, True, True
+                            break
                 if not record and not self._control.get('meta', 'translation_legacy_hidden', False):
                     old_key = _hash([self.seller_id, conversation_id, identity, 'zh-CN', 'v1'])
                     previous = self.repo.get('translation', old_key)
@@ -341,8 +415,6 @@ class TranslationMixin:
                 suggestion = self._manual_suggestion(conversation_id)
                 if not suggestion or suggestion['status'] != 'ready':
                     raise ServiceError('source_changed', '人工建议依据已变化，请重新生成后再翻译。')
-            if not self._translation_enabled_for_current_root():
-                raise ServiceError('translation_disabled', '请先在设置中启用第三方聊天翻译。')
             if self._translation_queue.qsize() >= 190:
                 raise ServiceError('translation_busy', '翻译队列已满，请稍后重试。')
             provider = self._new_translation_provider()
@@ -384,6 +456,7 @@ class TranslationMixin:
         return {'job_id': job['job_id']}
 
     def check_translation_provider(self):
+        raise ServiceError('method_not_found', '翻译检查入口已停用。')
         with self._lock, self.repo.transaction():
             if self._translation_queue.qsize() >= 190:
                 raise ServiceError('translation_busy', '翻译队列已满。')
@@ -402,7 +475,7 @@ class TranslationMixin:
             for _, cancel in self._translation_active.values():
                 cancel.set()
             removed = self.repo.db.execute("SELECT COUNT(*) FROM entities WHERE kind='translation_v2'").fetchone()[0]
-            self.repo.db.execute("DELETE FROM entities WHERE kind IN ('translation_v2','translation_part_v2','translation_request_v2')")
+            self.repo.db.execute("DELETE FROM entities WHERE kind IN ('translation_v2','translation_part_v2','translation_request_v2','translation_legacy_index')")
             # Legacy entries have no embedded source kind. Hide their fallback
             # instead of deleting unrelated historical requirement translations.
             self._control.put('meta', 'translation_legacy_hidden', True)
@@ -456,8 +529,6 @@ class TranslationMixin:
         if isinstance(provider, RouterTranslator):
             provider.router.assert_current(provider.snapshot)
         if not task['check']:
-            if not self._translation_enabled_for_current_root():
-                raise TranslationProviderError('cancelled', '')
             sources = task.get('sources', task['work'])
             current = self._translation_sources(task['cid'], [identity for identity, _, _ in sources]) if sources else []
             if [key for _, key, _ in current] != [key for _, key, _ in sources]:
@@ -553,6 +624,7 @@ class TranslationMixin:
                               for index, _ in enumerate(_split(payload['text']))]
                     self.repo.put('translation_v2', key, {**identity, 'conversation_id': task['cid'], 'format': 2,
                                   'status': 'ready', 'text': '\n'.join(chunks), 'error': None, 'created_at': now_ms(),
+                                  'seller_id': self.seller_id,
                                   'model': self._translation_settings['model'], 'context_hash': _hash(payload['context'])})
                 self._translation_health = ''
                 self._translation_message = '演示翻译检查通过，未访问第三方。' if self.mode == 'demo' else '第三方聊天翻译请求成功。'

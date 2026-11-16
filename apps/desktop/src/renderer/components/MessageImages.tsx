@@ -16,11 +16,20 @@ type Props = { attachments: Record<string, unknown>[]; conversationId: string; m
 
 type RegisteredImage = { index: number; ref: ImageReference };
 
+function retryFailure(error: unknown): Pick<MessageImage, 'message' | 'retry_at' | 'retry_allowed'> {
+  const text = error instanceof Error ? error.message : '';
+  const wait = /请在 ([0-9]{1,4}) 秒后重试图片/.exec(text);
+  if (wait && Number(wait[1]) <= 300) return { message: `请在 ${wait[1]} 秒后重试图片`, retry_at: Date.now() + Number(wait[1]) * 1000, retry_allowed: false };
+  if (text.includes('图片读取队列已满')) return { message: '图片排队较多，请稍后重试', retry_at: Date.now() + 2000, retry_allowed: false };
+  return { message: '' };
+}
+
 function ImageCard({ attachment, conversationId, messageId, role, autoLoad, revision, bridge, index, gallery, register }: Omit<Props, 'attachments' | 'autoLoadIndices'> & { attachment: Record<string, unknown>; autoLoad: boolean; index: number; gallery: RegisteredImage[]; register: (index: number, ref?: ImageReference) => void }) {
   const sourceVersion = typeof attachment.source_version === 'string' ? attachment.source_version : '';
   const [image, setImage] = useState<MessageImage>({ status: 'not_loaded', source_version: sourceVersion, message: '' });
   const [dialog, setDialog] = useState<{ images: { ref?: ImageReference; label: string }[]; initial: number } | null>(null);
   const [copyStatus, setCopyStatus] = useState('');
+  const [clock, setClock] = useState(Date.now);
   const refreshRef = useRef<() => void>(() => {});
   const loadRef = useRef<(retry: boolean) => void>(() => {});
   const autoRef = useRef(autoLoad);
@@ -38,8 +47,8 @@ function ImageCard({ attachment, conversationId, messageId, role, autoLoad, revi
       setImage({ status: 'loading', source_version: sourceVersion, message: '' });
       void bridge.invoke('load_message_image', { ...params, ...(retry ? { retry: true } : {}) }).then(() => {
         if (active) { loading = false; refresh(); }
-      }).catch(() => {
-        if (active) { loading = false; setImage({ status: 'failed', source_version: sourceVersion, message: '' }); }
+      }).catch((error: unknown) => {
+        if (active) { loading = false; autoAttempted = true; setImage({ status: 'failed', source_version: sourceVersion, ...retryFailure(error) }); }
       });
     };
     const refresh = () => {
@@ -72,6 +81,19 @@ function ImageCard({ attachment, conversationId, messageId, role, autoLoad, revi
 
   useEffect(() => { refreshRef.current(); }, [revision, autoLoad]);
 
+  const retryAt = typeof image.retry_at === 'number' && Number.isFinite(image.retry_at) ? image.retry_at : 0;
+  useEffect(() => {
+    setClock(Date.now());
+    if (retryAt <= Date.now()) return;
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      setClock(now);
+      if (now >= retryAt) { window.clearInterval(timer); refreshRef.current(); }
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [retryAt, conversationId, messageId, sourceVersion]);
+  const retrySeconds = Math.max(0, Math.ceil((retryAt - clock) / 1000));
+
   const preview = image.status === 'ready' && image.source_version === sourceVersion && safePreview(image.data_url) ? image.data_url : null;
   const label = role === 'buyer' ? '客户发送的照片' : '商家发送的照片';
   const imageRefKey = preview && image.image_ref ? JSON.stringify(image.image_ref) : '';
@@ -79,7 +101,7 @@ function ImageCard({ attachment, conversationId, messageId, role, autoLoad, revi
     register(index, imageRefKey ? image.image_ref : undefined);
     return () => register(index);
   }, [register, index, imageRefKey]);
-  const status = image.status === 'ready' ? (preview ? '图片已加载' : '图片预览不可用') : ({ not_loaded: '图片尚未加载', loading: '图片加载中…', failed: '图片加载失败', unavailable: '图片暂不可用' } as const)[image.status];
+  const status = retrySeconds > 0 ? (image.message === '图片排队较多，请稍后重试' ? image.message : `请在 ${retrySeconds} 秒后重试图片`) : image.status === 'loading' && image.message === '图片排队中' ? image.message : image.status === 'ready' ? (preview ? '图片已加载' : '图片预览不可用') : ({ not_loaded: '图片尚未加载', loading: '图片加载中…', failed: '图片加载失败', unavailable: '图片暂不可用' } as const)[image.status];
   const observation = image.input_mode !== 'direct' && image.vision_status === 'ready' && typeof image.vision_description === 'string' && image.vision_description.trim() && image.vision_description.length <= 2000 ? image.vision_description : null;
   const visionLabel = image.input_mode === 'direct' ? '生成回复时结合此图片' : image.vision_status === 'processing' ? 'AI 正在识别照片…' : observation ? '图片观察 · 待客户确认' : image.vision_status === 'failed' || image.vision_status === 'unavailable' ? '暂未识别，可结合文字或人工确认' : '尚未识别';
   return <div className="message-image-notice"><strong>{label}</strong><small aria-live="polite">{status}</small>
@@ -89,7 +111,7 @@ function ImageCard({ attachment, conversationId, messageId, role, autoLoad, revi
       const initial = image.image_ref ? gallery.findIndex(item => item.ref.sha256 === image.image_ref?.sha256) : -1;
       setDialog(initial < 0 ? { images: [{ ref: image.image_ref, label }], initial: 0 } : { images: gallery.map(item => ({ ref: item.ref, label })), initial });
     }} onContextMenu={event => { event.preventDefault(); copyImageMenu(bridge, image.image_ref, setCopyStatus); }} aria-label={`放大查看${label}`}><img src={preview} alt={label} /></button>{dialog && <OriginalImageDialog bridge={bridge} images={dialog.images} initial={dialog.initial} onClose={() => setDialog(null)} />}</>}{copyStatus && <small role="status">{copyStatus}</small>}
-    {(image.status === 'not_loaded' || image.status === 'failed') && <button type="button" className="message-image-load" onClick={() => loadRef.current(true)}>{image.status === 'failed' ? '重试加载图片' : '加载图片'}</button>}
+    {(image.status === 'not_loaded' || image.status === 'failed') && <button type="button" className="message-image-load" disabled={retrySeconds > 0} onClick={() => loadRef.current(true)}>{retrySeconds > 0 ? '稍后重试' : image.status === 'failed' ? '重试加载图片' : '加载图片'}</button>}
   </div>;
 }
 

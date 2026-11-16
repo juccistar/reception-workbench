@@ -1,7 +1,7 @@
 {
   "version": "0.4.2",
   "date": "2026-11-16",
-  "status": "final_desktop_built_pending_extended_windows",
+  "status": "design_fidelity_corrections_and_translation_settings_retirement_in_progress",
   "baseline_commit": "f8339ad",
   "plan": "docs/0.4.2开发方案.md",
   "design": "docs/design/reception-redesign/README.md",
@@ -43,10 +43,11 @@
     {
       "status": "passed",
       "scope": "selected_backend_files",
-      "files": 9,
-      "tests": 170,
-      "command": "node scripts/verify-backend-042.mjs --label final-002",
-      "report": "artifacts/verification/backend-042-final-002/report.json",
+      "files": 11,
+      "tests": 193,
+      "command": "node scripts/verify-backend-042.mjs --label final-003",
+      "report": "artifacts/verification/backend-042-final-003/report.json",
+      "stage": "before_additional_image_boundary_optimization",
       "changed_inputs": [],
       "individual_files": {
         "test_message_monitor.py": 65,
@@ -57,15 +58,18 @@
         "test_whatsapp_account_generation_041.py": 19,
         "test_model_runtime_040.py": 4,
         "test_projection_performance_042.py": 2,
-        "test_performance_042.py": 5
+        "test_performance_042.py": 5,
+        "test_product_library_0313.py": 17,
+        "test_whatsapp_account_media_041.py": 6
       }
     },
     {
       "status": "passed",
       "scope": "selected_desktop_host_files",
       "files": 12,
-      "tests": 240,
-      "log": "artifacts/verification/042-desktop-final-001.log",
+      "tests": 243,
+      "log": "artifacts/verification/042-final-targeted-003-ui.log",
+      "stage": "before_additional_image_boundary_optimization",
       "workbench_file_tests": 124
     },
     {
@@ -94,7 +98,8 @@
     "Initial direct legacy Python runs lacked synthetic test support, and some concurrent runs shared a budget directory. Final runs use the project runner and a fresh budget directory per file.",
     "042-backend-final-001.log invoked the single-file runner with multiple filenames and failed argument parsing; no regression result is claimed for that invocation.",
     "The extension resource test originally pinned 0.4.1 and failed after the version bump. It now uses the package version and still checks restricted capabilities; all three selected tool tests passed.",
-    "Independent reviews identified history/native-head, late model settlement, automatic failure and supplement conflict defects; fixes and focused regressions were included before the recorded final runs."
+    "Independent reviews identified history/native-head, late model settlement, automatic failure and supplement conflict defects; fixes and focused regressions were included before the recorded final runs.",
+    "Workbench source-004 and source-005 failed on Chinese supplier save because isolated Python ignored PYTHONIOENCODING in the fixture entrypoint. The fixture now explicitly configures UTF-8 like the production entrypoint; source-006 passed all 20 checks, including actual Chinese supplier save."
   ],
   "reply_self_echo_repair": {
     "report": "artifacts/verification/reply-self-echo-fix-041-002/final-repair-report.json",
@@ -111,6 +116,20 @@
     "final_measurement_artifact": "artifacts/verification/042-performance-final-002.json"
   },
   "windows": [
+    {
+      "kind": "source_workbench_final_interface",
+      "status": "passed",
+      "report": "artifacts/verification/workbench-042-source-006/report.json",
+      "screenshots": 36,
+      "screenshots_visually_reviewed": 36,
+      "checks": 20,
+      "actual_window": true,
+      "actual_release_exe_entry": false,
+      "synthetic_business": true,
+      "real_ai_calls": 0,
+      "real_customer_sends": 0,
+      "includes_chinese_supplier_save_and_narrow_forms": true
+    },
     {
       "kind": "source_workbench",
       "status": "passed",
@@ -165,15 +184,28 @@
       "command": "node scripts/build.mjs",
       "log": "artifacts/verification/042-desktop-build-002.log",
       "completed_on": "2026-11-16",
-      "immediate_local_commit": true
+      "immediate_local_commit": true,
+      "commit": "5c97dcc"
     }
   ],
   "release": {
-    "status": "not_started_authentication_failed",
+    "status": "awaiting_final_candidate_and_github_login",
     "published": false,
     "public_baseline_observed": "v0.3.21",
-    "authentication_failure": "GitHub device flow token exchange failed with a network timeout; authentication was not completed",
+    "authentication_status": "not_logged_in",
+    "previous_authentication_failure": "GitHub device flow token exchange failed with a network timeout; authentication was not completed",
+    "public_baseline_report": "artifacts/verification/042-public-baseline-001/report.json",
     "fixed_update_key_preflight": "existing key matched the published Ed25519 trust anchor; no key created or rotated"
+  },
+  "image_boundary_optimization": {
+    "status": "parallel_implementation_and_targeted_checks_pending_handoff",
+    "contract": "artifacts/verification/image-limit-update-042-001/implementation-contract.json",
+    "planned_original_image_bytes": 20971520,
+    "planned_supplement_files": 10,
+    "planned_supplement_total_bytes": 67108864,
+    "generic_rpc_budget_must_remain_unchanged": true,
+    "frozen_backend_probe": "scripts/probes/account-images-042.mjs",
+    "frozen_probe_status": "prepared_syntax_checked_not_executed"
   },
   "limits": {
     "full_suite_run": false,

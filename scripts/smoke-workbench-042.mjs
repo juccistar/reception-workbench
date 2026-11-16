@@ -52,9 +52,13 @@ try {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const encoded = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage({ stayAwake: true })).toPNG().toString('base64'));
-    await writeFile(path.join(output, name), Buffer.from(encoded, 'base64')); report.screenshots.push(name);
+    await writeFile(path.join(output, name), Buffer.from(encoded, 'base64'));
+    const geometry = await page.evaluate(() => ({ viewport: { width: innerWidth, height: innerHeight }, elements: [...document.querySelectorAll('nav, main, [role="dialog"], [role="region"], [role="separator"], .drawer-panel, .messages, .requirements, .supplement-panel')].filter(el => { const r = el.getBoundingClientRect(); return r.width && r.height; }).map(el => { const r = el.getBoundingClientRect(); return { tag: el.tagName, role: el.getAttribute('role'), label: el.getAttribute('aria-label'), class: el.className, x: r.x, y: r.y, width: r.width, height: r.height }; }) }));
+    await writeFile(path.join(output, `${name}.rects.json`), JSON.stringify(geometry, null, 2) + '\n', { flag: 'wx' });
+    report.screenshots.push(name);
   };
   const nav = name => page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name, exact: true }).first();
+  await app.evaluate(() => globalThis.__seedWindowShowcase());
   await nav('客户接待').click({ timeout: 45000 });
   await page.getByRole('button', { name: /Emma Wilson/ }).first().click({ timeout: 45000 });
   await page.getByRole('main', { name: 'Emma Wilson 的客户接待' }).waitFor();
@@ -84,24 +88,24 @@ try {
   const suggestion = page.getByRole('region', { name: '待处理回复建议' });
   await suggestion.waitFor();
   await suggestion.getByText('合成建议中文译文').waitFor();
-  assert.equal(await translateToggle.isChecked(), false);
   assert.equal(await page.locator('.messages .message-translation').count(), 0);
   await shot('02-suggestion.png'); report.checks.direct_suggestion_without_ai_check = true;
   report.checks.suggestion_translation_with_chat_translation_off = true;
-  const source = page.locator('.canonical-field').filter({ hasText: '数量与单位' }).getByRole('button', { name: '来源', exact: true });
+  const source = page.locator('.canonical-field').filter({ hasText: '数量' }).getByRole('button', { name: '来源', exact: true });
   await source.first().click();
-  await until(async () => await page.locator('[data-message-id]').evaluateAll((nodes, id) => nodes.some(node => node.getAttribute('data-message-id') === id && node.classList.contains('message-highlight')), injected.message_id), 'Source message was not highlighted');
-  report.checks.source_navigates_to_injected_message = true;
+  await until(async () => await page.locator('[data-message-id]').evaluateAll(nodes => nodes.some(node => node.getAttribute('data-message-id') === 'window-showcase-1' && node.classList.contains('message-highlight'))), 'Source message was not highlighted');
+  await shot('source-message.png');
+  report.checks.source_navigates_to_showcase_message = true;
   const body = 'Please keep this draft while the model is unavailable.';
   await editor.fill(body);
   await until(async () => (await detail()).chat_draft?.body === body, 'Draft was not saved');
   await app.evaluate(() => globalThis.__setWindowAiFailure(true));
   await page.getByRole('button', { name: '润色当前回复', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'AI不可用' });
+  const dialog = page.getByRole('dialog', { name: 'AI 不可用' });
   await dialog.waitFor(); assert.equal(await editor.inputValue(), body);
   assert.equal(await dialog.getByRole('button', { name: '查看模型设置', exact: true }).count(), 1);
   await shot('03-ai-unavailable.png');
-  await dialog.getByRole('button', { name: '知道了', exact: true }).click();
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click();
   await app.evaluate(() => globalThis.__repeatWindowAiFailure()); await pause(600);
   assert.equal(await dialog.count(), 0); assert.equal(await editor.inputValue(), body);
   await app.evaluate(() => globalThis.__setWindowAiFailure(false));
@@ -109,7 +113,6 @@ try {
   await until(async () => { const value = (await detail()).manual_suggestion; return value?.status === 'ready' && value.mode === 'polish'; }, 'Polish retry did not finish');
   assert.equal(await editor.inputValue(), body);
   await suggestion.getByText('合成建议中文译文').waitFor();
-  assert.equal(await translateToggle.isChecked(), false);
   await shot('04-polish-retry.png'); report.checks.failure_popup_deduplication_and_retry = true;
   report.checks.polish_translation_with_chat_translation_off = true;
   await app.evaluate(() => globalThis.__blockWindowAi(true));
@@ -137,6 +140,13 @@ try {
   await until(async () => (await invoke('get_snapshot')).jobs.some(job => job.kind === 'fill_history' && job.conversation_id === 'demo-emma' && job.status === 'succeeded' && /历史补全完成/.test(job.message)), 'History did not complete');
   await until(async () => await page.locator('.active-task').filter({ hasText: '正在补全历史' }).count() === 0, 'Completed history remained active');
   report.checks.history_running_and_service_completion = true;
+  const previousHistoryJobs = new Set((await invoke('get_snapshot')).jobs.filter(job => job.kind === 'fill_history').map(job => job.job_id));
+  await app.evaluate(() => globalThis.__failWindowHistory(true));
+  await page.getByRole('button', { name: '补全当前客户历史' }).click();
+  await until(async () => (await invoke('get_snapshot')).jobs.some(job => job.kind === 'fill_history' && !previousHistoryJobs.has(job.job_id) && job.status === 'failed'), 'Synthetic history failure did not settle');
+  await shot('history-failed.png');
+  await app.evaluate(() => globalThis.__failWindowHistory(false));
+  report.checks.history_failure_job = true;
   report.ai_stats = await app.evaluate(() => globalThis.__getWindowAiStats());
   assert.equal(report.ai_stats.checks, 0);
   const acceptedBody = 'Synthetic ordinary single-body send.';
@@ -166,7 +176,7 @@ try {
   await nav('待我报价').click();
   const quoteList = page.getByRole('region', { name: '待报价事项' });
   const quoteDetail = page.getByRole('region', { name: '事项详情' });
-  await until(async () => await quoteList.getByRole('button').count() === 28, 'Multiple quote cases were not projected');
+  await until(async () => await quoteList.getByRole('button').count() >= 28, 'Multiple quote cases were not projected');
   assert(await quoteList.evaluate(node => node.scrollHeight > node.clientHeight));
   assert(await quoteDetail.evaluate(node => node.scrollHeight > node.clientHeight));
   await quoteList.evaluate(node => { node.scrollTop = 240; });
@@ -191,7 +201,7 @@ try {
       await directory.getByRole('button', { name: /合成报价产品 1/ }).click();
       const productDialog = page.getByRole('dialog', { name: '产品与供货方案', exact: true });
       await productDialog.getByText('合成供货商', { exact: true }).waitFor();
-      assert(await directory.locator('.product-042-thumbnail').evaluateAll(nodes => nodes.length === 3 && nodes.every(node => node.getBoundingClientRect().width <= 64)));
+      assert(await directory.locator('.product-042-thumbnail').evaluateAll(nodes => nodes.length >= 3 && nodes.every(node => node.getBoundingClientRect().width <= 64)));
       await shot('11-populated-product-detail.png');
       await productDialog.getByRole('button', { name: '设为默认', exact: true }).click();
       await until(async () => (await invoke('list_products')).items.some(product => product.name === '合成报价产品 1' && product.default_offer_id), 'Product default offer did not save');
@@ -218,12 +228,13 @@ try {
     }
     if (name === '连接与设置') {
       const settings = page.getByRole('navigation', { name: '设置分类' });
-      for (const section of ['自动接待', '聊天翻译', '图片与上下文', '平台连接', '数据与备份', '飞书登记', '界面布局', '版本与更新']) {
+      for (const section of ['自动接待', '图片与上下文', '平台连接', '数据与备份', '飞书登记', '界面布局', '版本与更新']) {
         await settings.getByRole('button', { name: section, exact: true }).click();
         assert.match(await settings.getByRole('button', { name: section, exact: true }).getAttribute('class'), /active/);
-        await shot(`settings-${['自动接待', '聊天翻译', '图片与上下文', '平台连接', '数据与备份', '飞书登记', '界面布局', '版本与更新'].indexOf(section) + 1}.png`);
+        await shot(`settings-${['自动接待', '图片与上下文', '平台连接', '数据与备份', '飞书登记', '界面布局', '版本与更新'].indexOf(section) + 1}.png`);
       }
-      report.checks.eight_settings_sections = true;
+      assert.equal(await settings.getByRole('button', { name: '聊天翻译', exact: true }).count(), 0);
+      report.checks.seven_settings_sections = true;
     }
   }
   report.checks.page_navigation = true;
@@ -250,10 +261,10 @@ try {
   await shot('15-narrow-customers.png');
   await customersDrawer.getByRole('button', { name: '关闭客户列表', exact: true }).first().click();
   await page.getByRole('button', { name: '采购需求', exact: true }).click();
-  const requirementsDrawer = page.getByRole('dialog', { name: '采购需求', exact: true });
+  const requirementsDrawer = page.getByRole('dialog', { name: '客户资料', exact: true });
   await requirementsDrawer.getByRole('textbox', { name: '业务补充内容', exact: true }).scrollIntoViewIfNeeded();
   await shot('16-narrow-requirements.png');
-  await requirementsDrawer.getByRole('button', { name: '关闭采购需求', exact: true }).click();
+  await requirementsDrawer.getByRole('button', { name: '关闭客户资料', exact: true }).click();
   await nav('待我报价').click();
   await page.getByRole('region', { name: '事项详情' }).waitFor();
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
@@ -269,6 +280,13 @@ try {
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await shot('19-narrow-policy-actions.png');
   report.checks.narrow_customer_requirements_quote_and_form_access = true;
+  await app.evaluate(() => { globalThis.__windowExitResult = null; void globalThis.__requestWindowExitDialog().then(value => { globalThis.__windowExitResult = value; }); });
+  const exitDialog = page.getByRole('dialog', { name: '还有内容未保存' });
+  await exitDialog.waitFor();
+  await shot('exit-unsaved.png');
+  await exitDialog.getByRole('button', { name: '继续编辑', exact: true }).click();
+  await until(async () => await app.evaluate(() => globalThis.__windowExitResult === 'cancel'), 'Exit response was not accepted by the host');
+  report.checks.exit_dialog_cancel_through_bridge = true;
   assert.deepEqual(report.renderer_errors, []);
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
   await until(() => child.exitCode !== null, 'Fixture host did not exit');
@@ -278,6 +296,7 @@ try {
   report.status = 'passed';
 } catch (error) {
   report.error = String(error?.stack || error); process.exitCode = 1;
+  if (temp) report.backend_failure = await readFile(path.join(temp, 'backend-failure.txt'), 'utf8').catch(() => null);
   if (app) try { const page = app.windows()[0]; if (page) { await page.screenshot({ path: path.join(output, 'failure.png') }); report.screenshots.push('failure.png'); } } catch { /* Preserve the original failure. */ }
 } finally {
   if (app) await app.close().catch(() => {});

@@ -21,8 +21,31 @@ function setup(initial = state()) {
 }
 
 describe('UpdatesPanel', () => {
+  it('shows the version and check action first, with source settings tucked away', async () => {
+    const { bridge } = setup();
+    await screen.findByText('当前版本：0.2.16');
+    expect(screen.getByRole('heading', { name: '版本与更新' })).toBeInTheDocument();
+    expect(screen.getByText('已安装')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled();
+    expect(screen.getByText('更新来源设置').closest('details')).not.toHaveAttribute('open');
+    expect(screen.queryByRole('button', { name: '下载更新' })).not.toBeInTheDocument();
+    expect(bridge.checkForUpdates).not.toHaveBeenCalled();
+  });
+  it('prevents repeated installation while an install is pending', async () => {
+    const { bridge } = setup(state({ status: 'downloaded' }));
+    const pending = deferred<UpdateInfo>();
+    bridge.installUpdate.mockReturnValueOnce(pending.promise);
+    const button = await screen.findByRole('button', { name: '安装并重启' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(bridge.installUpdate).toHaveBeenCalledOnce();
+    expect(button).toBeDisabled();
+    await act(async () => pending.resolve(state({ status: 'installing' })));
+    expect(screen.getByRole('button', { name: '安装并重启' })).toBeDisabled();
+  });
   it('accepts canonical HTTPS settings and clearing, while rejecting credentials and queries', async () => {
     const { bridge } = setup();
+    fireEvent.click(await screen.findByText('更新来源设置'));
     const input = await screen.findByRole('textbox', { name: 'HTTPS 更新源' });
     const save = screen.getByRole('button', { name: '保存更新源' });
     bridge.saveUpdateSettings.mockResolvedValueOnce(state({ feed_url: 'https://example.com/releases/' }));
@@ -40,6 +63,7 @@ describe('UpdatesPanel', () => {
   });
   it('recognizes and saves a canonical GitHub repository from a releases URL', async () => {
     const { bridge } = setup();
+    fireEvent.click(await screen.findByText('更新来源设置'));
     const input = await screen.findByRole('textbox', { name: 'HTTPS 更新源' });
     expect(screen.getByText('更新源类型：静态 HTTPS 目录')).toBeInTheDocument();
     fireEvent.change(input, { target: { value: 'https://github.com/juccistar/reception-workbench-releases/releases' } });
@@ -51,6 +75,7 @@ describe('UpdatesPanel', () => {
   });
   it('rejects invalid GitHub paths and keeps later edits during a GitHub save', async () => {
     const { bridge } = setup();
+    fireEvent.click(await screen.findByText('更新来源设置'));
     const input = await screen.findByRole('textbox', { name: 'HTTPS 更新源' });
     const save = screen.getByRole('button', { name: '保存更新源' });
     fireEvent.change(input, { target: { value: 'https://github.com/juccistar/reception-workbench-releases/releases/latest' } });
@@ -95,6 +120,7 @@ describe('UpdatesPanel', () => {
   });
   it('preserves edits across late refresh and save responses', async () => {
     const { bridge, emit } = setup(state({ status: 'downloaded' }));
+    fireEvent.click(await screen.findByText('更新来源设置'));
     const input = await screen.findByRole('textbox', { name: 'HTTPS 更新源' });
     const pending = deferred<UpdateInfo>();
     bridge.getUpdateInfo.mockReturnValueOnce(pending.promise);

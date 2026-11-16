@@ -4,6 +4,7 @@ import { Button, fieldLabels } from './ui';
 
 const defaults = {
   image_batch_mib: 64, image_prepare_seconds: 60, image_parallelism: 2,
+  reception_images_enabled: true, context_message_count: 50,
   generation_retry_limit: 3, translation_parallelism: 2,
   translation_context_messages: 2, translation_context_bytes: 300,
   max_questions_per_reply: 2, max_questions_per_field: 2,
@@ -14,16 +15,10 @@ export function processingParameters(settings?: Settings): ProcessingParameters 
   return Object.fromEntries(Object.entries(defaults).map(([key, value]) =>
     [key, settings?.[key as keyof Settings] ?? value])) as ProcessingParameters;
 }
-const numbers: { key: Exclude<keyof ProcessingParameters, 'required_fields_by_category'>; label: string; min: number; max: number }[] = [
-  { key: 'image_batch_mib', label: '每轮原图总量（MiB）', min: 8, max: 256 },
-  { key: 'image_prepare_seconds', label: '图片准备时限（秒）', min: 10, max: 300 },
-  { key: 'image_parallelism', label: '同时下载图片数', min: 1, max: 4 },
+const numbers: { key: 'generation_retry_limit' | 'max_questions_per_reply' | 'max_questions_per_field'; label: string; min: number; max: number }[] = [
   { key: 'generation_retry_limit', label: '同一来源连续生成失败上限', min: 1, max: 10 },
   { key: 'max_questions_per_reply', label: '每轮最多追问字段数', min: 1, max: 2 },
   { key: 'max_questions_per_field', label: '同一字段最多受理追问次数', min: 1, max: 10 },
-  { key: 'translation_parallelism', label: '同时翻译请求数', min: 1, max: 4 },
-  { key: 'translation_context_messages', label: '翻译参考前文条数', min: 0, max: 10 },
-  { key: 'translation_context_bytes', label: '翻译参考前文总量（UTF-8 字节）', min: 0, max: 6000 },
 ];
 export function ProcessingSettings({ value, onChange }: {
   value: ProcessingParameters;

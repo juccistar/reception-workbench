@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { MAX_ORIGINAL_BYTES } from '../../shared/media-limits';
 import { execFile } from 'node:child_process';
 import { lstat } from 'node:fs/promises';
 import path from 'node:path';
@@ -381,7 +382,7 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
       try {
         check();
         const metadata = await bounded<{ size: number; mime: string }>(handle.evaluate((blob: Blob | null, id: string) => ({ size: blob?.size ?? 0, mime: (window as any).require('WAWebCollections').Msg.get(id)?.mimetype || 'application/octet-stream' }), messageId)); check();
-        if (!Number.isSafeInteger(metadata.size) || metadata.size <= 0 || metadata.size > 6 * 1024 * 1024) throw new Error('WhatsApp image too large');
+        if (!Number.isSafeInteger(metadata.size) || metadata.size <= 0 || metadata.size > MAX_ORIGINAL_BYTES) throw new Error('WhatsApp image too large');
         async function* chunks() {
           for (let offset = 0; offset < metadata.size; offset += 256 * 1024) {
             check();

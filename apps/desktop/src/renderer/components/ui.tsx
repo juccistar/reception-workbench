@@ -27,7 +27,7 @@ export function Button({ children, loading, variant = 'secondary', className = '
 export function IconButton({ label, children, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) { return <button type="button" {...props} className={`icon-button ${props.className ?? ''}`} aria-label={label} title={label}>{children}</button>; }
 export function Empty({ title, children, icon }: { title: string; children?: ReactNode; icon?: ReactNode }) { return <div className="empty">{icon ?? <Inbox size={32} strokeWidth={1.3} />}<strong>{title}</strong>{children && <p>{children}</p>}</div>; }
 export function Feedback({ children, tone = 'amber' }: { children: ReactNode; tone?: 'amber' | 'red' | 'green' }) { return <div className={`feedback feedback-${tone}`} role={tone === 'red' ? 'alert' : 'status'}>{tone === 'green' ? <Check size={16} /> : <AlertCircle size={16} />}<div>{children}</div></div>; }
-export function Drawer({ title, children, onClose, side = 'right', className = '' }: { title: string; children: ReactNode; onClose: () => void; side?: 'left' | 'right'; className?: string }) {
+export function Drawer({ title, children, onClose, side = 'right', className = '' }: { title: string; children: ReactNode; onClose: () => void; side?: 'left' | 'right' | 'center'; className?: string }) {
   const root = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose); onCloseRef.current = onClose;
   useEffect(() => {

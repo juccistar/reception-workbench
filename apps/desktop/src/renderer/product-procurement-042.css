@@ -1,0 +1,64 @@
+.pp042-page { max-width: 1400px; margin: 0 auto; padding: 36px 5%; color: #263955; }
+.pp042-page .page-title { margin-bottom: 30px; }
+.pp042-page .page-title h1 { font-size: 24px; }
+.pp042-page .page-title p { color: #8190a8; font-size: 12px; }
+.pp042-page .eyebrow { display: none; }
+.pp042-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin-bottom: 22px; }
+.pp042-toolbar .directory-search { margin: 0; }
+.pp042-page .directory-search input { width: 268px; max-width: 100%; }
+.pp042-page .record-tabs { display: flex; gap: 6px; margin: 0; }
+.pp042-page .record-tabs button { border: 0; border-radius: 5px; padding: 9px 13px; background: transparent; color: #7486a0; font-size: 12px; }
+.pp042-page .record-tabs button.active { color: #3155d9; background: #e8edff; }
+.pp042-page .product-042-list, .pp042-page .supplier-042-list, .pp042-page .procurement-042-list { overflow: hidden; border: 1px solid #dce5f1; border-radius: 10px; background: white; }
+.pp042-page .product-042-header, .pp042-page .supplier-042-header, .pp042-page .procurement-042-header, .pp042-page .product-042-list > button, .pp042-page .supplier-042-list > button, .pp042-page .procurement-042-list > button { display: grid; align-items: center; gap: 12px; width: 100%; text-align: left; }
+.pp042-page .product-042-header, .pp042-page .product-042-list > button { grid-template-columns: minmax(200px, 2.4fr) 1.15fr 1fr .75fr .8fr .7fr; }
+.pp042-page .supplier-042-header, .pp042-page .supplier-042-list > button { grid-template-columns: 2fr 1fr 1fr .8fr .9fr; }
+.pp042-page .procurement-042-header, .pp042-page .procurement-042-list > button { grid-template-columns: 2fr .8fr 1.6fr .8fr .7fr; }
+.pp042-page .product-042-header, .pp042-page .supplier-042-header, .pp042-page .procurement-042-header { padding: 15px 20px; background: #fafbfd; color: #8a97ab; font-size: 11px; }
+.pp042-page .product-042-list > button, .pp042-page .supplier-042-list > button, .pp042-page .procurement-042-list > button { min-height: 84px; padding: 17px 20px; border: 0; border-top: 1px solid #edf0f5; background: white; color: #65758d; font-size: 12px; cursor: pointer; }
+.pp042-page .product-042-list > button:hover, .pp042-page .supplier-042-list > button:hover, .pp042-page .procurement-042-list > button:hover { background: #f8faff; }
+.pp042-page .product-042-name, .pp042-page .procurement-042-item { display: flex; gap: 13px; align-items: center; min-width: 0; }
+.pp042-page .product-042-thumbnail { width: 45px; height: 45px; flex: none; border-radius: 7px; border: 1px solid #e2e8e5; background: #eef2ef; overflow: hidden; }
+.pp042-page .product-042-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+.pp042-page .product-042-list strong, .pp042-page .supplier-042-list strong, .pp042-page .procurement-042-list strong { color: #3b4d6b; font-size: 13px; font-weight: 500; }
+.pp042-page .product-042-list small, .pp042-page .supplier-042-list small, .pp042-page .procurement-042-list small { display: block; margin-top: 4px; color: #94a0b2; font-size: 10px; }
+.pp042-link { color: #5579ca; white-space: nowrap; }
+.pp042-badge { display: inline-block; padding: 5px 8px; border-radius: 4px; font-size: 10px; font-style: normal; color: #8594a9; background: #eef1f5; }
+.pp042-badge.blue { color: #5277c4; background: #e9efff; }
+.drawer-panel.pp042-drawer { width: min(650px, 100vw); max-width: 100vw; overflow-y: auto; }
+.pp042-drawer .profile-card { padding: 26px 28px; }
+.pp042-drawer .handoff-card { border: 1px solid #dce5f1; border-radius: 8px; padding: 16px; margin: 10px 0; }
+@media (max-width: 700px) {
+ .pp042-page { padding: 24px 16px; }
+ .pp042-toolbar { align-items: stretch; flex-direction: column; }
+ .pp042-toolbar .directory-search input { width: 100%; }
+ .pp042-page .product-042-header { display: none; }
+ .pp042-page .product-042-list > button { grid-template-columns: minmax(0, 1fr) auto; gap: 12px 8px; padding: 17px 16px; }
+ .pp042-page .product-042-list > button .product-042-name { grid-column: 1 / -1; }
+ .pp042-page .product-042-list > button .pp042-spec, .pp042-page .product-042-list > button > span:nth-child(5) { display: none; }
+ .pp042-page .product-042-list > button > span:last-child { grid-column: 1 / -1; text-align: right; }
+ .pp042-page .supplier-042-list, .pp042-page .procurement-042-list { overflow-x: auto; }
+ .pp042-page .supplier-042-header, .pp042-page .supplier-042-list > button, .pp042-page .procurement-042-header, .pp042-page .procurement-042-list > button { min-width: 680px; }
+}
+
+.drawer-panel.pp042-drawer { overflow: hidden; }
+.pp042-drawer > .profile-card { flex: 1; min-height: 0; overflow-y: auto; }
+.pp042-drawer > .drawer-title { flex: none; }
+.pp042-footer { flex: none; display: flex; justify-content: flex-end; gap: 10px; padding: 16px 28px; border-top: 1px solid #e8edf4; background: #fff; }
+.pp042-summary { display: flex; align-items: center; gap: 18px; padding-bottom: 20px; border-bottom: 1px solid #edf0f5; }
+.pp042-summary .product-042-thumbnail { display: block; width: 96px; height: 96px; flex: none; border: 1px solid #e2e8e5; border-radius: 8px; overflow: hidden; background: #eef2ef; }
+.pp042-summary .product-042-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+.pp042-summary h2 { margin: 8px 0; font-size: 19px; }
+.pp042-summary p { color: #8190a8; margin: 4px 0; }
+.pp042-section { margin-top: 24px; }
+.pp042-section h3 { margin-bottom: 14px; }
+.pp042-customer { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #edf0f5; }
+.pp042-note { padding: 14px; border-radius: 6px; background: #f2f5fa; line-height: 1.6; }
+.pp042-facts { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; font-size: 13px; }
+.pp042-facts dt { color: #8190a8; }
+.pp042-facts dd { margin: 0; overflow-wrap: anywhere; }
+.pp042-drawer .handoff-card h3 { margin: 0 0 8px; }
+.pp042-drawer .handoff-card p { color: #6c7c93; line-height: 1.6; }
+.pp042-drawer .form-card { box-shadow: none; }
+.pp042-page button:focus-visible, .pp042-drawer button:focus-visible { outline: 2px solid #5277c4; outline-offset: 2px; }
+@media (max-width: 700px) { .pp042-summary .product-042-thumbnail { width: 72px; height: 72px; } .pp042-drawer .profile-card { padding: 20px 16px; } .pp042-footer { padding: 14px 16px; } }

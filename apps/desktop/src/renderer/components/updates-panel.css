@@ -1,0 +1,19 @@
+.updates-panel { color: #243956; }
+.updates-panel h2 { margin: 0 0 10px; font-size: 16px; color: #172b49; }
+.updates-panel .updates-intro { margin: 0 0 24px; color: #8192ad; font-size: 12px; }
+.updates-line { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 17px 0; border-top: 1px solid #e7ecf4; }
+.updates-line strong { font-size: 13px; font-weight: 500; }
+.updates-line p, .updates-advanced p, .updates-progress p { margin: 8px 0 0; color: #8192ad; font-size: 12px; }
+.updates-version-badge { padding: 4px 8px; border-radius: 4px; color: #4163bd; background: #edf2ff; font-size: 11px; white-space: nowrap; }
+.updates-status { margin: 0 0 12px; color: #637a9d; font-size: 12px; }
+.updates-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.updates-progress { display: grid; gap: 4px; margin: 12px 0; font-size: 12px; }
+.updates-progress progress { width: 100%; }
+.updates-notes { margin: 12px 0; font-size: 12px; }
+.updates-notes p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.updates-note { padding: 14px; border: 1px solid #d9e4fa; border-radius: 6px; background: #f4f7fd; color: #6982aa; font-size: 12px; line-height: 1.6; }
+.updates-advanced { margin-top: 18px; color: #7184a2; font-size: 12px; }
+.updates-advanced summary { cursor: pointer; }
+.updates-feed { display: grid; gap: 6px; margin-top: 14px; }
+.updates-advanced .button { margin-top: 12px; }
+@media (max-width: 520px) { .updates-line { align-items: flex-start; } }

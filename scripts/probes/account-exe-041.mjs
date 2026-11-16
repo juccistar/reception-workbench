@@ -19,7 +19,9 @@ const temporary = await mkdtemp(path.join(os.tmpdir(), 'arw-account-exe-041-'));
 const workspace = randomUUID(), account = '19990001@c.us';
 const env = {};
 for (const [key, value] of Object.entries(process.env)) if (/^(SystemRoot|WINDIR|SystemDrive|PATH|PATHEXT|ComSpec|TEMP|TMP|USERPROFILE|LOCALAPPDATA|APPDATA|ProgramFiles|ProgramFiles\(x86\)|ProgramW6432)$/i.test(key)) env[key] = value;
-Object.assign(env, { PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' });
+Object.assign(env, { PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1',
+  LOCALAPPDATA: path.join(temporary, 'local'), APPDATA: path.join(temporary, 'roaming'),
+  RECEPTION_MODEL_BUDGET_DIRECTORY: path.join(temporary, 'model-budget') });
 function start(directory) {
   const child = spawn(executable, ['--whatsapp-account', '--workspace-id', workspace, '--data-dir', directory], { cwd: root, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const pending = new Map(); let next = 0; let stderr = '';

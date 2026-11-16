@@ -131,6 +131,59 @@ class ProductLibraryTests(unittest.TestCase):
                 repo.put('requirement_product_binding', case_id, updated)
         self.assertEqual(self.service.get_product(product_id)['product']['customer_count'], 0)
 
+    def test_catalog_projection_counts_customers_and_region_compatibility(self):
+        case = self.demand(specifications='厚棉布')
+        product = self.product()
+        supplier = self.supplier()
+        self.offer(product, supplier)
+        self.offer(product, supplier)
+        item = self.product()
+        self.assertEqual((item['supplier_count'], item['offer_count'], item['specifications_summary']), (1, 2, '厚棉布'))
+        self.assertEqual(self.service.list_suppliers()['items'][0]['product_count'], 1)
+        base = dict(name=supplier['name'], platform=supplier['platform'], platform_supplier_id=supplier['platform_supplier_id'],
+                    product_url=None, contact='', notes='', supplier_id=supplier['supplier_id'], expected_revision=1)
+        updated = self.service.save_supplier(**base, region='浙江', client_mutation_id='region')
+        legacy = dict(base, expected_revision=updated['revision'], client_mutation_id='legacy')
+        result = self.service.save_supplier(**legacy)
+        self.assertEqual(result['region'], '浙江')
+        self.assertEqual(self.service.save_supplier(**legacy), result)
+        with self.assertRaises(ServiceError):
+            self.service.save_supplier(**dict(legacy, client_mutation_id='bad-region', region='x' * 201))
+        repo = self.service.repo
+        with self.service._lock, repo.transaction():
+            binding = repo.get('requirement_product_binding', case['case_id'])
+            for case_id, seller, buyer in [('duplicate', self.service.seller_id, case['buyer_id']),
+                                            ('foreign', 'foreign', case['buyer_id']),
+                                            ('invalid', self.service.seller_id, 'other')]:
+                repo.put('case', case_id, dict(case, case_id=case_id, seller_id=seller, buyer_id=buyer))
+                repo.put('requirement_product_binding', case_id, dict(binding, case_id=case_id))
+        customers = self.service.get_product(product['local_product_id'])['customers']
+        self.assertEqual(len(customers), 1)
+        self.assertEqual(set(customers[0]['case_ids']), {case['case_id'], 'duplicate'})
+        self.assertEqual(customers[0]['buyer_id'], case['buyer_id'])
+
+    def test_snapshot_requirement_uses_loaded_cases_without_reading_messages(self):
+        case = self.demand()
+        repo = self.service.repo
+        with self.service._lock, repo.transaction():
+            newer = dict(case, case_id='newer-case', updated_at=(case.get('updated_at') or 0) + 1000)
+            newer['requirements'] = copy.deepcopy(case['requirements'])
+            newer['requirements']['product']['value'] = '新产品'
+            repo.put('case', newer['case_id'], newer)
+        original = repo.list
+        calls = []
+        def tracked(kind, **kwargs):
+            calls.append(kind)
+            return original(kind, **kwargs)
+        with patch.object(repo, 'list', side_effect=tracked):
+            snapshot = self.service.get_snapshot()
+        conversation = next(c for c in snapshot['conversations'] if c['conversation_id'] == case['conversation_id'])
+        self.assertEqual(conversation['latest_requirement']['product'], '新产品')
+        self.assertEqual(conversation['latest_requirement']['quantity'], '100件')
+        self.assertNotIn('message', calls)
+        self.assertLessEqual(calls.count('case'), 2)
+        self.assertEqual(repo.get('conversation', case['conversation_id'])['case_id'], case['case_id'])
+
     def test_product_link_is_derived_from_id_and_ignores_model_url(self):
         case = self.demand(product_url='https://example.invalid/guessed_999.html')
         expected = 'https://www.alibaba.com/product-detail/_1600000000123.html'

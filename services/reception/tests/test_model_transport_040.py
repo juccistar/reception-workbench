@@ -2,7 +2,12 @@ import asyncio
 import threading
 import hashlib
 import json
+import base64
+import io
+import random
 import unittest
+
+from PIL import Image
 
 import httpx
 
@@ -25,6 +30,52 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
 
     async def call(self, **kwargs):
         return await self.transport.generate(profile=self.profile, api_key='private', system_prompt='system', user_payload={'text': '你好'}, **kwargs)
+
+    async def test_resolved_originals_reach_both_protocols_within_budget(self):
+        from reception_service.model_inputs import resolve_whatsapp_images
+        from reception_service.model_media import OwnedInput, estimate_input_reservation
+        from reception_service.media_resources import PROCESS_MEDIA_BUDGET
+        random_pixels = random.Random(9).randbytes(1400 * 1400 * 3)
+        image = Image.frombytes('RGB', (1400, 1400), random_pixels)
+        stream = io.BytesIO()
+        image.save(stream, format='PNG')
+        image.close()
+        large = stream.getvalue()
+        self.assertGreater(len(large), 5 * 1024 * 1024)
+        self.assertLess(len(large), 6 * 1024 * 1024)
+        stream = io.BytesIO()
+        Image.new('RGB', (2, 2), 'red').save(stream, format='PNG')
+        small = stream.getvalue()
+        for data, count in ((large, 4), (small, 12)):
+            digest = hashlib.sha256(data).hexdigest()
+            asset = {'original_b64': base64.b64encode(data).decode(), 'mime': 'image/png', 'sha256': digest}
+            refs = [dict(source_id=f's{i}', source_version='v', image_id=f'i{i}', sha256=digest, role='buyer') for i in range(count)]
+            context = {'model_image_refs': refs, 'whatsapp_messages': [
+                {'source_id': ref['source_id'], 'role': 'buyer', 'media': {'source_version': 'v'}} for ref in refs]}
+            before = PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes']
+            owner = OwnedInput(estimate_input_reservation(context, None))
+            try:
+                images, manifest = resolve_whatsapp_images(context, lambda ref: asset, owner=owner)
+                self.assertEqual(len(manifest), count)
+                for protocol in ('chat-completions', 'anthropic'):
+                    self.profile['protocol'] = protocol
+                    self.response = ({'choices': [{'finish_reason': 'stop', 'message': {'content': '{"ok":true}'}}]}
+                        if protocol == 'chat-completions' else
+                        {'id': 'msg_test', 'type': 'message', 'role': 'assistant', 'model': 'test',
+                         'content': [{'type': 'text', 'text': '{"ok":true}'}], 'stop_reason': 'end_turn',
+                         'stop_sequence': None, 'usage': {'input_tokens': 2, 'output_tokens': 3}})
+                    result = await self.call(images=images)
+                    self.assertEqual(result['output'], {'ok': True})
+                    body = json.loads(self.requests.pop().content)
+                    blocks = body['messages'][-1]['content'][1:]
+                    self.assertEqual(len(blocks), count)
+                    for block in blocks:
+                        encoded = (block['image_url']['url'].split(',', 1)[1] if protocol == 'chat-completions'
+                                   else block['source']['data'])
+                        self.assertEqual(hashlib.sha256(base64.b64decode(encoded)).hexdigest(), digest)
+            finally:
+                owner.close()
+            self.assertEqual(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], before)
 
     async def test_chat_request_and_digest(self):
         result = await self.call()

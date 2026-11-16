@@ -17,6 +17,19 @@ function setup(policies: unknown[] = [], catalog: unknown[] = [builtin]) {
 }
 
 describe('资料与内置内容', () => {
+  it('显示首份资料，预览保留修改并阻止切换，放弃后可切换目录', () => {
+    const { invoke } = setup([old]);
+    expect(screen.getByRole('textbox', { name: '资料内容' })).toHaveValue('原有正文');
+    fireEvent.change(screen.getByRole('textbox', { name: '资料内容' }), { target: { value: '尚未保存的正文' } });
+    fireEvent.click(screen.getByRole('button', { name: '预览' }));
+    expect(screen.getByText('尚未保存的正文')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '内置内容' }));
+    expect(screen.getByText(/当前表单有未保存修改/)).toBeInTheDocument();
+    expect(invoke.mock.calls.filter(call => call[0] === 'save_policy')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: '放弃修改' }));
+    fireEvent.click(screen.getByRole('button', { name: '内置内容' }));
+    expect(screen.getByText('选择内置内容查看全文')).toBeInTheDocument();
+  });
   it('默认关闭，模板先查看再填写，不提交占位内容', async () => {
     const { invoke } = setup();
     fireEvent.click(screen.getByRole('button', { name: '内置内容' }));

@@ -48,7 +48,7 @@ class ConversationAssistanceMixin:
             owner = self._chat_owner(conversation_id)
             rows = attachment_rows(self.repo, conversation_id)
             if len(rows) >= MAX_COUNT or sum(row['size'] for row in rows) + item['size'] > MAX_TOTAL:
-                raise ServiceError('attachment_limit', '最多 5 个附件，合计不超过 20 MiB')
+                raise ServiceError('attachment_limit', '最多 10 个附件，合计不超过 64 MiB')
             previous = self._supplement(conversation_id)
             item.update(conversation_id=conversation_id, seller_id=owner['seller_id'],
                         buyer_id=owner['buyer_id'], original_b64=original)
@@ -258,7 +258,7 @@ class ConversationAssistanceMixin:
             case = self.repo.get('case', context.get('case_id')) if context.get('case_id') else None
             messages = self.repo.list('message', conversation_id=cid)
             owner = self._require('conversation', cid)
-            has_photos = bool(get_reception_source_images(self.repo, owner, case, messages))
+            has_photos = self.settings.get('reception_images_enabled', True) and bool(get_reception_source_images(self.repo, owner, case, messages))
         if context.get('unsent_reply') or not has_photos:
             with self._lock:
                 token = self._read_token(facade)

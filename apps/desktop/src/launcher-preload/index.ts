@@ -2,6 +2,14 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { LauncherBridge } from '../shared/launcher';
 
 const bridge: LauncherBridge = Object.freeze<LauncherBridge>({
+  getInitialPage: () => ipcRenderer.invoke('launcher:page:get'),
+  onPageRequest: listener => {
+    const handler = (_event: unknown, page: unknown) => {
+      if (page === 'home' || page === 'models') listener(page);
+    };
+    ipcRenderer.on('launcher:page:changed', handler);
+    return () => ipcRenderer.removeListener('launcher:page:changed', handler);
+  },
   getWhatsAppAccounts: () => ipcRenderer.invoke('launcher:wa:get'),
   getWhatsAppAccount: workspaceId => ipcRenderer.invoke('launcher:wa:detail', workspaceId),
   createWhatsAppAccount: label => ipcRenderer.invoke('launcher:wa:create', label),

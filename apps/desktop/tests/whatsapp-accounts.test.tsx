@@ -33,12 +33,19 @@ it('retains unsaved drafts and reports a partial save', async () => {
   const { bridge } = setup();
   fireEvent.click(await screen.findByLabelText('编辑账号a'));
   fireEvent.change(await screen.findByLabelText('账号名称'), { target: { value: '新名称' } });
-  fireEvent.click(screen.getByLabelText('自动接待'));
-  fireEvent.change(screen.getByLabelText('新联系人默认商家'), { target: { value: 'm' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: /自动接待/ }));
+  fireEvent.change(screen.getByLabelText(/新联系人默认商家/), { target: { value: 'm' } });
   fireEvent.click(screen.getByText('保存'));
   expect(await screen.findByText(/已保存名称；其余未保存/)).toBeTruthy();
   expect((screen.getByLabelText('账号名称') as HTMLInputElement).value).toBe('新名称');
   expect(bridge.renameWhatsAppAccount).toHaveBeenCalledWith({ workspace_id: 'a', label: '新名称', expected_revision: 1 });
+});
+it('saves the selected merchant while automatic reception is off', async () => {
+  const { bridge } = setup();
+  fireEvent.click(await screen.findByLabelText('编辑账号a'));
+  fireEvent.change(await screen.findByLabelText(/当前商家/), { target: { value: 'm' } });
+  fireEvent.click(screen.getByText('保存'));
+  await waitFor(() => expect(bridge.setWhatsAppAccountReception).toHaveBeenCalledWith({ workspace_id: 'a', expected_account_id: 'account', expected_connection_epoch: 'epoch', enabled: false, allowed_merchant_ids: ['m'] }));
 });
 it('does not let a late detail replace another account', async () => {
   const { bridge } = setup(); let resolve!: (value: ReturnType<typeof detail>) => void;

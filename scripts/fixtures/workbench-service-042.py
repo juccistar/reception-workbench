@@ -4,6 +4,11 @@ import os
 import sys
 import threading
 
+# Isolated Python ignores PYTHONIOENCODING; match the production JSONL entrypoint.
+for stream in (sys.stdin, sys.stdout, sys.stderr):
+    if hasattr(stream, 'reconfigure'):
+        stream.reconfigure(encoding='utf-8', errors='strict')
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'services/reception/test_support'))
 import synthetic_service
@@ -22,7 +27,7 @@ def create_window_service(*args, **kwargs):
     ai_entered = threading.Event()
     history_release = threading.Event()
     history_entered = threading.Event()
-    history_state = {'block': False}
+    history_state = {'block': False, 'fail': False}
     original_read_page = service.integrations.read_message_page
 
     def read_message_page(*args, **kwargs):
@@ -30,6 +35,8 @@ def create_window_service(*args, **kwargs):
             history_entered.set()
             if not history_release.wait(20):
                 raise RuntimeError('synthetic history wait timed out')
+        if history_state['fail'] and len(args) >= 3 and args[2] == 'demo-emma':
+            raise RuntimeError('合成历史读取失败')
         return original_read_page(*args, **kwargs)
 
     service.integrations.read_message_page = read_message_page
@@ -85,6 +92,96 @@ def create_window_service(*args, **kwargs):
             return {'released': True}
         if method == '_fixture_send_stats' and not params:
             return {**send_state, 'entered': send_entered.is_set()}
+        if method == '_fixture_seed_showcase' and not params:
+            import io
+            from PIL import Image, ImageDraw
+            from reception_service.image_assets import decode_image
+            from reception_service.repository import now_ms
+            stamp = now_ms()
+            with service._lock, service.repo.transaction():
+                conversation = service._require('conversation', 'demo-emma')
+                cid = conversation['conversation_id']
+                samples = [
+                    ('buyer', 'We need 500 sage green travel mugs, 450 ml, with our logo. Product reference: 1601902417143. Delivery to Hamburg, Germany.'),
+                    ('seller', 'Thank you. We can review the logo and sample requirements before preparing a quotation.'),
+                    ('buyer', 'Please use our logo on one side. We would like to see a sample first.'),
+                    ('seller', 'Could you confirm the packaging and requested delivery date?'),
+                    ('buyer', 'Individual boxes, please. We need delivery before December 15. Can we see a sample first?'),
+                ]
+                messages = [{'message_id': f'window-showcase-{index + 1}', 'seller_id': service.seller_id,
+                             'buyer_id': conversation['buyer_id'], 'conversation_id': cid, 'role': role,
+                             'text': text, 'timestamp_ms': stamp - 300000 + index * 45000,
+                             'attachments': [], 'own': role == 'seller'}
+                            for index, (role, text) in enumerate(samples)]
+                service._ingest(conversation, messages, has_more=False, full=True, history=True)
+                service.integrations.messages.extend(message for message in messages
+                    if not any(old.get('message_id') == message['message_id'] for old in service.integrations.messages))
+                conversation = service._require('conversation', cid)
+                case = service._require('case', conversation['case_id'])
+                values = {'product': 'Luma 随行保温杯', 'product_id': '1601902417143',
+                          'quantity': '500只', 'specifications': '450 ml，鼠尾草绿，双层不锈钢杯身',
+                          'customization': '杯身单面印制客户 Logo，先确认样品', 'destination': '德国汉堡',
+                          'delivery': '12月15日前送达', 'packaging': '独立包装盒',
+                          'budget': None, 'certifications': None, 'contact': None, 'product_url': None}
+                requirements = {key: {'value': value, 'evidence_ids': [
+                    'window-showcase-1' if key in ('product', 'product_id', 'quantity', 'specifications', 'destination')
+                    else 'window-showcase-3' if key == 'customization' else 'window-showcase-5'] if value else []}
+                    for key, value in values.items()}
+                requirements['product_images'] = {'value': [], 'evidence_ids': []}
+                case.update(requirements=requirements, requirements_format='ai-v1',
+                            requirements_revision=case.get('requirements_revision', 0) + 1,
+                            revision=case.get('revision', 0) + 1, state='waiting_quote', updated_at=stamp)
+                service.repo.put('case', case['case_id'], case, history=True)
+                service._sync_requirement_product(case)
+                binding = service.repo.get('requirement_product_binding', case['case_id'])
+                product_id = binding['local_product_id']
+                gallery = []
+                for index, color in enumerate(('#a5b398', '#99aa8e', '#aeba9f', '#a0af95', '#b4bea8')):
+                    image = Image.new('RGB', (560, 460), '#edf1eb')
+                    draw = ImageDraw.Draw(image)
+                    draw.ellipse((166, 400, 394, 425), fill='#dce2d6')
+                    draw.polygon([(170, 110), (390, 110), (355, 398), (205, 398)], fill=color)
+                    draw.ellipse((170, 75, 390, 145), fill='#6f7e62')
+                    draw.ellipse((185, 87, 375, 132), fill='#bac5ad')
+                    draw.ellipse((202, 94, 358, 125), fill='#7d8d6f')
+                    draw.text((262, 246), 'LUMA', fill='#5e7150')
+                    stream = io.BytesIO()
+                    image.save(stream, 'PNG')
+                    asset = decode_image(stream.getvalue(), 'image/png')
+                    service.repo.put('image_asset', asset['sha256'], asset)
+                    gallery.append({'status': 'ready', 'asset_sha256': asset['sha256']})
+                service.repo.put('product_main_image', product_id, {'seller_id': service.seller_id,
+                    'local_product_id': product_id, 'product_id': values['product_id'], 'status': 'ready',
+                    'updated_at': stamp, 'asset_sha256': gallery[0]['asset_sha256'], 'images': gallery,
+                    'primary_verified': False, 'available_count': len(gallery), 'message': '合成演示参考图'})
+                service.repo.put('conversation_summary', cid, {'conversation_id': cid, 'seller_id': service.seller_id,
+                    'buyer_id': conversation['buyer_id'], 'body': '采购500只鼠尾草绿随行杯，定制Logo；发往德国汉堡，先确认样品与交期。',
+                    'revision': 1, 'updated_at': stamp, 'source_fingerprint': 'synthetic-window-showcase'})
+                conversation.update(human_owned=True, revision=conversation.get('revision', 0) + 1)
+                service.repo.put('conversation', cid, conversation, history=True)
+                from copy import deepcopy
+                extras = [('oliver', 'Oliver Smith', '英国', 'Please confirm the lead time.'),
+                          ('mia', 'Mia Rossi', '意大利', 'Can you share the packaging options?'),
+                          ('liam', 'Liam Brown', '澳大利亚', 'Do you have an ivory white version?'),
+                          ('hana', 'Hana Kim', '韩国', 'Thank you, I will review the sample details.'),
+                          ('alex', 'Alex Morgan', '德国', 'Could you quote for 300 pieces?')]
+                for offset, (key, name, country, text) in enumerate(extras, 1):
+                    extra_id = 'demo-' + key
+                    if service.repo.get('conversation', extra_id):
+                        continue
+                    extra = deepcopy(conversation)
+                    extra.update(conversation_id=extra_id, buyer_id='synthetic-' + key, customer_name=name,
+                                 country=country, case_id=None, human_owned=False, revision=1,
+                                 last_message=text, last_timestamp=stamp - offset * 60000)
+                    service.repo.put('conversation', extra_id, extra, history=True)
+                    service._ingest(extra, [{'message_id': 'showcase-' + key, 'seller_id': service.seller_id,
+                        'buyer_id': extra['buyer_id'], 'conversation_id': extra_id, 'role': 'buyer', 'text': text,
+                        'timestamp_ms': stamp - offset * 60000, 'attachments': [], 'own': False}], has_more=False, full=True, history=True)
+            supplement = service._supplement(cid)
+            service.save_conversation_supplement(cid, '定制 Logo 需确认图稿与印刷尺寸。\n客户希望先看样品，再确认大货。',
+                                                supplement['revision'], f'window-showcase-supplement-{stamp}')
+            service._changed(cid)
+            return {'conversation_id': cid, 'case_id': case['case_id'], 'local_product_id': product_id}
         if method == '_fixture_seed_quotes' and not params:
             from copy import deepcopy
             from reception_service.repository import now_ms
@@ -104,9 +201,10 @@ def create_window_service(*args, **kwargs):
                     case['requirements']['product']['value'] = f'合成报价产品 {index + 1}'
                     case['requirements']['quantity']['value'] = '100件'
                     case['requirements']['specifications']['value'] = '仅用于隔离窗口滚动验收的合成规格。' * 90
-                    service.repo.put('case', case['case_id'], case, history=True)
                     if index < 3:
                         case['requirements']['product_id']['value'] = f'定制-{7600001 + index}'
+                    service.repo.put('case', case['case_id'], case, history=True)
+                    if index < 3:
                         service._sync_requirement_product(case)
                         binding = service.repo.get('requirement_product_binding', case['case_id'])
                         service.save_product_offer(binding['local_product_id'], supplier['supplier_id'],
@@ -123,6 +221,9 @@ def create_window_service(*args, **kwargs):
             else:
                 history_release.set()
             return {'enabled': history_state['block']}
+        if method == '_fixture_history_failure' and isinstance(params, dict) and set(params) == {'enabled'} and type(params['enabled']) is bool:
+            history_state['fail'] = params['enabled']
+            return {'enabled': history_state['fail']}
         if method == '_fixture_history_state' and not params:
             return {'entered': history_entered.is_set()}
         if direct_ai:
@@ -161,9 +262,16 @@ def create_window_service(*args, **kwargs):
                 ai_state['checks'] += 1
                 raise ValueError('Manual AI window fixture does not permit capability prechecks')
         if method != '_fixture_inject':
-            result = original_call(method, params or {})
+            try:
+                result = original_call(method, params or {})
+            except Exception:
+                if os.environ.get('HARNESS_TEMP'):
+                    import traceback
+                    (Path(os.environ['HARNESS_TEMP']) / 'backend-failure.txt').write_text(
+                        f'{method}\n' + traceback.format_exc(), encoding='utf-8')
+                raise
             if direct_ai and method == 'get_snapshot':
-                result['app'] = {**result['app'], 'mode': 'live', 'account_verified': True}
+                result['app'] = {**result['app'], 'mode': 'live', 'account_verified': True, 'company_name': '澄野生活'}
             return result
         if params != {'conversation_id': 'demo-emma', 'text': 'I need 100 pieces'}:
             raise ValueError('Unsupported window fixture input')

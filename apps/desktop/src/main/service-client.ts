@@ -3,6 +3,7 @@ import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { ServiceEvent } from '../shared/api';
+import { SUPPLEMENT_UPLOAD_ENVELOPE_BYTES } from '../shared/media-limits';
 
 export class BackendError extends Error {
   constructor(public code: string, message: string) { super(message); this.name = 'BackendError'; }
@@ -62,6 +63,11 @@ export class ServiceClient extends EventEmitter {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new BackendError('rpc_timeout', '后台尚未确认此操作；请核查任务记录，不要重复提交。')); }, 30000);
       this.pending.set(id, { resolve: value => resolve(value as T), reject, timer });
       const line = JSON.stringify({ id, method, params }) + '\n';
+      if (method === 'upload_supplement_attachment' && Buffer.byteLength(line, 'utf8') > SUPPLEMENT_UPLOAD_ENVELOPE_BYTES) {
+        this.pending.delete(id); clearTimeout(timer);
+        reject(new BackendError('request_too_large', '请求超过大小限制。'));
+        return;
+      }
       this.child.stdin.write(line, 'utf8', error => {
         if (error) { const item = this.pending.get(id); this.pending.delete(id); clearTimeout(timer); item?.reject(new BackendError('backend_unavailable', '后台通信不可用。')); }
       });

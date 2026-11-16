@@ -96,7 +96,7 @@ describe('private customer panel bridge', () => {
   it('shows only labelled ai-v1 values and limits customer search', async () => {
     const f = fixture();
     f.options.getContext.mockResolvedValue({ binding_revision: 0, wa_summary: '', international_background: { requirements: { product: { value: '收纳盒', evidence_ids: ['secret'] }, quantity: { value: null }, product_images: { value: ['media-secret'] }, budget: { value: '100 元', source_excerpts: ['private'] }, unknown: { value: 'hidden' } } } });
-    f.options.searchCustomers.mockResolvedValue(Array.from({ length: 30 }, (_, i) => ({ conversation_id: String(i), name: '客户' })));
+    f.options.searchCustomers.mockResolvedValue(Array.from({ length: 30 }, (_, i) => ({ conversation_id: String(i), name: '客户', buyer_id: `buyer-${i}` })));
     await f.controller.poll(0);
     await vi.waitFor(() => expect(f.controller.view?.context_status).toBe('ready'));
     const view = f.messages.filter(m => m.kind === 'view').at(-1).view;
@@ -107,6 +107,7 @@ describe('private customer panel bridge', () => {
     expect(f.options.searchCustomers).not.toHaveBeenCalled();
     await f.controller.handleBinding(f.event('search', { merchant_id: 'merchant', query: 'a'.repeat(80) }), 0);
     expect(f.messages.at(-1).result).toHaveLength(25);
+    expect(f.messages.at(-1).result[0].buyer_id).toBe('buyer-0');
     await f.controller.close();
   });
   it('keeps an explicitly unassigned customer separate from the default merchant for new contacts', async () => {

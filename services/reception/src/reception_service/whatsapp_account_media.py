@@ -10,10 +10,11 @@ import time
 import uuid
 
 from .errors import ServiceError
-from .image_assets import decode_image, ImageAssetError, MAX_BYTES
+from .image_assets import validate_original, ImageAssetError, MAX_BYTES
+from .media_resources import PROCESS_MEDIA_BUDGET, ResourceLimitError
 
 _CHUNK = 256 * 1024
-_TOTAL = 24 * 1024 * 1024
+_TOTAL = 80 * 1024 * 1024
 
 
 def _key(*parts):
@@ -33,6 +34,8 @@ class AccountMediaMixin:
         transfer = self._account_media_transfers.pop(transfer_id, None)
         if transfer:
             transfer['timer'].cancel()
+            transfer['data'].clear()
+            transfer['lease'].close()
         return transfer
 
     def _cancel_account_media(self):
@@ -82,7 +85,7 @@ class AccountMediaMixin:
         with self.repo.lock:
             identity = (account_id, connection_epoch, chat_id, message_id, source_version)
             row = self._account_media_source(*identity)
-            if mime_type not in ('image/png', 'image/jpeg', 'image/webp', 'application/octet-stream'):
+            if mime_type not in ('image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/octet-stream'):
                 _error('invalid_params')
             for tid, transfer in list(self._account_media_transfers.items()):
                 if transfer['deadline'] <= time.monotonic() or transfer['identity'][:2] != (self.account, self.epoch):
@@ -96,13 +99,25 @@ class AccountMediaMixin:
             existing = self.repo.db.execute('SELECT status FROM account_media WHERE id=?', (media_id,)).fetchone()
             if existing and existing[0] == 'ready':
                 _error('transfer_unavailable')
-            self.repo.db.execute('INSERT INTO account_media (id,account_id,epoch,chat_id,message_id,source_version,segment_id,status) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status',
-                                 (media_id, account_id, connection_epoch, chat_id, message_id, source_version, row['segment_id'], 'pending'))
+            try:
+                lease = PROCESS_MEDIA_BUDGET.acquire(5 * _CHUNK)
+            except ResourceLimitError:
+                _error('transfer_unavailable')
+            try:
+                self.repo.db.execute('INSERT INTO account_media (id,account_id,epoch,chat_id,message_id,source_version,segment_id,status) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status',
+                                     (media_id, account_id, connection_epoch, chat_id, message_id, source_version, row['segment_id'], 'pending'))
+            except Exception:
+                lease.close()
+                raise
             tid = uuid.uuid4().hex
             timer = threading.Timer(60, self._account_media_expire, args=(tid, identity))
             timer.daemon = True
-            self._account_media_transfers[tid] = {'identity': identity, 'mime': mime_type, 'data': bytearray(), 'deadline': time.monotonic() + 60, 'timer': timer}
-            timer.start()
+            self._account_media_transfers[tid] = {'identity': identity, 'mime': mime_type, 'data': bytearray(), 'deadline': time.monotonic() + 60, 'timer': timer, 'lease': lease}
+            try:
+                timer.start()
+            except Exception:
+                self._account_media_drop(tid)
+                raise
             return {'transfer_id': tid}
 
     def _account_media_transfer(self, transfer_id, identity):
@@ -128,8 +143,14 @@ class AccountMediaMixin:
                 data = base64.b64decode(data_base64, validate=True)
                 if not data or len(data) > _CHUNK or len(transfer['data']) + len(data) > MAX_BYTES or sum(len(t['data']) for t in self._account_media_transfers.values()) + len(data) > _TOTAL:
                     raise ValueError()
+                # Admit the next buffer growth and its finish-time copies before
+                # extending, rather than charging every tiny image for 20 MiB.
+                transfer['lease'].resize(4 * max(_CHUNK, len(transfer['data']) + len(data)) + _CHUNK)
                 transfer['data'].extend(data)
                 return {'next_offset': len(transfer['data'])}
+            except ResourceLimitError:
+                self._account_media_terminate(transfer_id, transfer['identity'])
+                _error('transfer_unavailable')
             except (ValueError, binascii.Error):
                 self._account_media_terminate(transfer_id, transfer['identity'])
                 _error('invalid_media')
@@ -142,7 +163,7 @@ class AccountMediaMixin:
                 data = bytes(transfer['data'])
                 if type(size) is not int or size != len(data) or not isinstance(sha256, str) or hashlib.sha256(data).hexdigest() != sha256:
                     raise ValueError()
-                image = decode_image(data, transfer['mime'])
+                image = validate_original(data, transfer['mime'])
                 row = self._account_media_source(*identity)
                 media_id = _key(*identity)
                 result = self.repo.db.execute("UPDATE account_media SET status='ready',mime=?,sha256=?,data=? WHERE id=? AND status='pending' AND segment_id=?", (image['mime'], sha256, data, media_id, row['segment_id']))
@@ -157,9 +178,17 @@ class AccountMediaMixin:
                     if callable(schedule):
                         schedule()
                 return {'status': 'ready', 'media_id': media_id, 'sha256': sha256}
+            except ServiceError:
+                self._account_media_terminate(transfer_id, identity)
+                raise
             except (ValueError, ImageAssetError):
                 self._account_media_terminate(transfer_id, identity)
                 _error('invalid_media')
+            except Exception:
+                # Resource admission and storage failures also retire pending.
+                # The exact live transfer is checked before touching its source.
+                self._account_media_terminate(transfer_id, identity)
+                raise
             finally:
                 self._account_media_drop(transfer_id)
 
@@ -223,7 +252,7 @@ class AccountMediaMixin:
             if row['segment_id'] != segment or row['from_me'] is not False or not isinstance(data, bytes):
                 _error()
             try:
-                image = decode_image(data, mime)
+                image = validate_original(data, mime)
                 if image['sha256'] != digest:
                     raise ValueError()
             except (ValueError, ImageAssetError):

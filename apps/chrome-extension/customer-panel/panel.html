@@ -1,11 +1,13 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>客户信息</title><link rel="stylesheet" href="panel.css"><script defer src="panel.js"></script></head>
-<body><header><h1>客户信息</h1><button id="close" aria-label="收起客户侧栏">×</button></header>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>客户资料</title><link rel="stylesheet" href="panel.css"><script defer src="panel.js"></script></head>
+<body><header><div><span class="eyebrow">客户资料</span><h1 id="name"></h1></div><button id="close" aria-label="收起客户侧栏">◫</button></header>
 <main><p id="empty" role="status">正在连接侧栏</p><section id="content" hidden>
-<h2 id="name"></h2><p class="muted">WhatsApp · 当前聊天</p><p id="basic-merchant" class="muted"></p><p id="context-status" role="status" class="muted"></p>
-<div id="details" hidden><label>接待商家<select id="merchant"></select></label>
-<label>国际站客户<input id="query" maxlength="80" placeholder="搜索客户名称或买家标识"></label><div id="results"></div><p id="selected" class="muted"></p><button id="save">保存关联</button><p class="muted">更改接待商家后将暂停该客户的自动接待。</p>
-<hr><h3>客户摘要</h3><p id="summary" class="text"></p><hr><h3>需求摘要</h3><p id="requirements" class="text"></p>
-<hr><label for="supplement">业务补充</label><textarea id="supplement" maxlength="4000" placeholder="填写当前客户的业务补充"></textarea><button id="save-supplement">保存补充</button><p id="supplement-status" class="muted" role="status"></p>
-<footer><span id="reception"></span><button id="takeover"></button></footer><p id="send-status" class="muted" role="status"></p></div>
-</section><p id="error" role="alert"></p></main></body></html>
+<p id="basic-merchant" class="muted"></p><p id="context-status" role="status" class="muted"></p>
+<div id="details" hidden><div class="reception"><span id="reception"></span><button id="takeover" class="link"></button></div><p id="send-status" class="muted" role="status"></p>
+<section class="side-section"><div class="section-heading"><h2>接待商家</h2><button id="change-merchant" class="link">更改</button></div><p id="merchant-display"></p></section>
+<section class="side-section"><div class="section-heading"><h2>国际站客户</h2><button id="change-customer" class="link">关联客户</button></div><p id="selected"></p></section>
+<section class="side-section"><h2>客户摘要</h2><p id="summary" class="text"></p></section><section class="side-section"><h2>当前需求</h2><p id="requirements" class="text"></p></section>
+<section class="side-section"><label for="supplement">业务补充</label><textarea id="supplement" maxlength="4000" placeholder="记录与该客户有关的补充信息"></textarea><button id="save-supplement">保存补充</button><p id="supplement-status" class="muted" role="status"></p></section></div>
+</section><p id="error" role="alert"></p></main>
+<div id="association-sheet" class="sheet-overlay" hidden><section class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"><div class="sheet-header"><h2 id="sheet-title">关联国际站客户</h2><button id="close-sheet" aria-label="关闭">×</button></div><div class="sheet-content"><div id="merchant-fields" hidden><label>接待商家<select id="merchant"></select></label><p class="muted">更换商家后，此客户接待将暂停，原账本保持不变。</p></div><div id="customer-fields"><p id="search-intro" class="muted"></p><label>搜索客户<input id="query" maxlength="80" placeholder="客户姓名或买家标识"></label><div id="results"></div></div><p id="sheet-error" role="alert"></p></div><div class="sheet-footer"><button id="cancel-sheet">取消</button><button id="save" class="primary">保存</button></div></section></div>
+</body></html>

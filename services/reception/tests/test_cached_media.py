@@ -3,11 +3,14 @@ import hashlib
 import io
 import threading
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 
 from reception_service.cached_media import CachedMediaMixin
 from reception_service.errors import ServiceError
+from reception_service.image_transfer import PNG_LIMIT, TTL, _BoundedOutput
+from reception_service.media_resources import ResourceBudget
 
 
 class Repo:
@@ -38,6 +41,69 @@ class CachedMediaTests(unittest.TestCase):
         self.host = Host()
         self.host.repo = Repo({('conversation', 'c'): {'seller_id': 'seller', 'buyer_id': 'buyer'},
                                ('supplement_attachment', 'a'): self.attachment})
+
+    def tearDown(self):
+        self.host._image_transfer_close()
+
+    def test_copy_reservations_release_on_final_chunk_and_close(self):
+        budget = ResourceBudget()
+        with patch('reception_service.cached_media._lease', side_effect=budget.acquire):
+            first = self.host._image_copy_describe(self.ref)
+            self.assertEqual(budget.snapshot()['reserved_bytes'], first['size'])
+            self.assertEqual(budget.snapshot()['pixel_workers'], 0)
+            second = self.host._image_copy_describe(self.ref)
+            self.assertEqual(budget.snapshot()['reserved_bytes'], first['size'] + second['size'])
+            with self.assertRaises(ServiceError):
+                self.host._image_copy_describe(self.ref)
+            self.host._image_copy_chunk(self.ref, first['token'], 0, first['sha256'])
+            self.assertEqual(budget.snapshot()['reserved_bytes'], second['size'])
+            self.host._image_transfer_close()
+            self.assertEqual(budget.snapshot()['reserved_bytes'], 0)
+
+    def test_copy_expiry_and_source_failure_release_reservations(self):
+        budget = ResourceBudget()
+        with patch('reception_service.cached_media._lease', side_effect=budget.acquire), \
+                patch('reception_service.cached_media.threading.Timer') as timer:
+            desc = self.host._image_copy_describe(self.ref)
+            self.assertEqual(timer.call_args.args[0], 60.0)
+            self.assertEqual(TTL, 60.0)
+            timer.call_args.args[1]()
+            self.assertEqual(budget.snapshot()['reserved_bytes'], 0)
+            timer.return_value.cancel.assert_called()
+            desc = self.host._image_copy_describe(self.ref)
+            self.attachment['status'] = 'removed'
+            with self.assertRaises(ServiceError):
+                self.host._image_copy_chunk(self.ref, desc['token'], 0, desc['sha256'])
+            self.assertEqual(budget.snapshot()['reserved_bytes'], 0)
+
+    def test_copy_invalid_chunk_and_conversion_failure_release_reservation(self):
+        budget = ResourceBudget()
+        with patch('reception_service.cached_media._lease', side_effect=budget.acquire):
+            desc = self.host._image_copy_describe(self.ref)
+            with self.assertRaises(ServiceError):
+                self.host._image_copy_chunk(self.ref, desc['token'], 1, desc['sha256'])
+            self.assertEqual(budget.snapshot()['reserved_bytes'], 0)
+            with patch('reception_service.cached_media.ImageOps.exif_transpose', side_effect=ValueError):
+                with self.assertRaises(ServiceError):
+                    self.host._image_copy_describe(self.ref)
+            self.assertEqual(budget.snapshot()['reserved_bytes'], 0)
+
+    def test_small_copy_uses_actual_source_size_under_shared_pressure(self):
+        budget = ResourceBudget(32 * 1024 * 1024)
+        with patch('reception_service.cached_media._lease', side_effect=budget.acquire):
+            desc = self.host._image_copy_describe(self.ref)
+            result = self.host._image_copy_chunk(self.ref, desc['token'], 0, desc['sha256'])
+            self.assertEqual(hashlib.sha256(base64.b64decode(result['data_b64'])).hexdigest(), desc['sha256'])
+            self.assertEqual(budget.snapshot()['reserved_bytes'], 0)
+            self.assertLessEqual(budget.snapshot()['peak_reserved_bytes'], budget.limit)
+
+    def test_copy_png_limit_boundary(self):
+        self.assertEqual(PNG_LIMIT, 128 * 1024 * 1024)
+        with _BoundedOutput() as output:
+            output.seek(PNG_LIMIT - 1)
+            self.assertEqual(output.write(b'x'), 1)
+            with self.assertRaises(ValueError):
+                output.write(b'x')
 
     def test_read_and_check_each_chunk(self):
         desc = self.host._image_original_describe(self.ref)
@@ -83,7 +149,7 @@ class CachedMediaTests(unittest.TestCase):
             self.host._image_copy_chunk(self.ref, desc['token'], 0, desc['sha256'])
 
     def test_maximum_original_bytes(self):
-        for size, valid in [(6 * 1024 * 1024, True), (6 * 1024 * 1024 + 1, False)]:
+        for size, valid in [(20 * 1024 * 1024, True), (20 * 1024 * 1024 + 1, False)]:
             data = self.data + bytes(size - len(self.data))
             sha = hashlib.sha256(data).hexdigest()
             self.attachment.update(sha256=sha, size=size, original_b64=base64.b64encode(data).decode())

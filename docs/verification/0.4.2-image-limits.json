@@ -1,0 +1,257 @@
+{
+  "format": "image-limit-update-verification-v1",
+  "version": "0.4.2",
+  "date": "2026-11-16",
+  "status": "source_and_targeted_verification_complete",
+  "baseline_commit": "5c97dcc0ca2caf3d4eb2ed76963164f9bbefb55c",
+  "scope": "本记录仅覆盖图片限制、准备、传输、复制、附件、模型输入资源及失败恢复；同期界面设计还原与最终发行由0.4.2整体集成处理。",
+  "limits": {
+    "original_bytes": {
+      "before": 6291456,
+      "after": 20971520
+    },
+    "maximum_dimension": {
+      "before": 8192,
+      "after": 32768
+    },
+    "maximum_pixels": {
+      "before": 20000000,
+      "after": 40000000
+    },
+    "formats": [
+      "PNG",
+      "JPEG",
+      "WebP",
+      "static GIF"
+    ],
+    "animated_images": false,
+    "download_seconds": {
+      "before": 15,
+      "after": 60
+    },
+    "connect_seconds": 10,
+    "idle_seconds": 15,
+    "checked_redirects": 4,
+    "preparation_seconds": {
+      "default": 60,
+      "minimum": 10,
+      "maximum": 300
+    },
+    "model_chain_seconds": "configured preparation seconds + 120 from the same monotonic start",
+    "original_batch_mib": {
+      "default": 64,
+      "minimum": 8,
+      "maximum": 256
+    },
+    "supplement": {
+      "file_mib": {
+        "before": 6,
+        "after": 20
+      },
+      "total_mib": {
+        "before": 20,
+        "after": 64
+      },
+      "count": {
+        "before": 5,
+        "after": 10
+      },
+      "pdf_pages": 10,
+      "text_characters": 16000,
+      "preview_bytes": 49152
+    },
+    "copy_png_mib": {
+      "before": 80,
+      "after": 128
+    },
+    "transfer_ttl_seconds": {
+      "before": 30,
+      "after": 60
+    },
+    "copy_sessions": 2,
+    "retained_transfer_payload_mib": 256,
+    "whatsapp": {
+      "transfers": 4,
+      "original_buffer_mib": 80,
+      "ttl_seconds": 60,
+      "reservations_grow_before_chunk_allocation": true
+    },
+    "optional_previews": {
+      "shared_media_workers": 2,
+      "automatic_active": 4,
+      "explicit_active": 16,
+      "actual_source_attempts_per_version_per_window": 6,
+      "window_seconds": 300,
+      "retry_delay_seconds": [
+        5,
+        10,
+        20,
+        40,
+        60
+      ],
+      "charged_on_read_start": true,
+      "version_restore_and_restart_preserve_allowance": true
+    },
+    "process_reservation_mib": 512,
+    "pixel_workers": 1,
+    "png_metadata": {
+      "encoded_and_expanded_bytes": 2097152,
+      "chunks": 128
+    }
+  },
+  "behavior": [
+    "原图字节与SHA保持不变；预览及复制转换不替换模型的原图证据。",
+    "图片下载离开业务消费线程，使用现有有界媒体池；取消后实际任务结束才释放资源。",
+    "接收、像素处理、编码结果按阶段交接资源；已完成结果在调用方使用期间保留租约。",
+    "旧兼容复制接口与现行传输接口均在读完、过期、来源失效或关闭后清理保留的PNG及租约。",
+    "WhatsApp资源不足和输入失败先记录当前来源failed再退役传输；旧transfer迟到错误不覆盖新任务或ready。",
+    "透明PNG业务补充可正常解析，缩略图保留透明通道且不超过48KiB。",
+    "普通RPC请求仍限制2000000字符；仅已有私有补充附件上传允许20MiB原文所需的Base64信封。",
+    "保留商家、账号、连接代次、会话、消息、来源版本、发送方及完整性校验；不新增聊天附件或任意文件接口。"
+  ],
+  "verification": {
+    "backend": {
+      "files": 20,
+      "tests": 186,
+      "passed": true,
+      "log": "artifacts/verification/image-limit-update-042-001/isolated-final-backend-summary.log",
+      "manifest": "artifacts/verification/image-limit-update-042-001/isolated-final-backend.json"
+    },
+    "desktop": {
+      "files": 9,
+      "tests": 76,
+      "passed": true,
+      "log": "artifacts/verification/image-limit-update-042-001/stable-desktop.log",
+      "manifest": "artifacts/verification/image-limit-update-042-001/stable-desktop.json"
+    },
+    "typecheck": {
+      "passed": true,
+      "log": "artifacts/verification/image-limit-update-042-001/stable-typecheck.log",
+      "manifest": "artifacts/verification/image-limit-update-042-001/stable-typecheck.json"
+    },
+    "selected_inputs": {
+      "count": 57,
+      "before_after_equal": true,
+      "hashes": {
+        "services/reception/src/reception_service/image_limits.py": "b8d989d9c5e30b25e33b5c3d043334849ce41a517315edff76c751f56699eabc",
+        "services/reception/src/reception_service/image_assets.py": "052d79bfcfb38e5f8ed38e6851799a37a412ced1d0c923b5d4b3c19e91e2f578",
+        "services/reception/src/reception_service/cached_media.py": "c4b421d8e4e0e874a1332e88b05beae0b32bc4168e80aa6f1228da251b8f07ea",
+        "services/reception/src/reception_service/image_transfer.py": "d09cc85c7d37718b090ff165bf309aa7a8711b099c79c7f2d8e09cce5e4cae01",
+        "services/reception/src/reception_service/message_photos.py": "7b55a1faa652022c221b422c3a41093bd6a82fb1158b0ed0662ca4c57f8dc0c7",
+        "services/reception/src/reception_service/model_inputs.py": "535c5ee1f4d1357a50cd277d6141971f4dfa4b892ff8f2d0d5565ad5a1428a8b",
+        "services/reception/src/reception_service/model_media.py": "baaadea6ca6883abe9d52e6cca0e8755d1bcd1dd30933d827318642d54efe654",
+        "services/reception/src/reception_service/model_router.py": "05900b594e3483d3f533382298ca0da8828783630a9eba075607cf2d5bb2800a",
+        "services/reception/src/reception_service/model_providers/encoding.py": "ec697e148c7eb502df813b826c6f9e03e3af3a948b2e024692cb8f906e634b31",
+        "services/reception/src/reception_service/integrations/live.py": "3d8dffb3618d1f834917a8e45c7855287a1fb490c48a6499244028213613aaa1",
+        "services/reception/src/reception_service/whatsapp_account_generation.py": "0d63e0aa8b39bb543c0d19151c4734ae844c2ac4b0c283934a32fbd251f55e5f",
+        "services/reception/src/reception_service/whatsapp_account_media.py": "8919a37853f36dd10486c7d018d46091ff617b432fb2c9d4d475fc7a2a947166",
+        "services/reception/src/reception_service/whatsapp_media.py": "fe833f017a90e7f055e980e1b5ad8844436cf1f49b65728258acc822a277775a",
+        "services/reception/src/reception_service/supplement_attachments.py": "eb468e76e32dcd34df4791f8f1300603868de007b83be4cd98266fa9646aa802",
+        "services/reception/src/reception_service/conversation_assistance.py": "0fbd2fad2cf5de02e318979918fd1acf36a34dec82916ceef08598183c0172cb",
+        "services/reception/src/reception_service/__main__.py": "48ec460f8ae55ad1b84e96e5c3ab7963e6a47793577ff141c7e9e4aa04a64c40",
+        "services/reception/tests/test_image_assets.py": "8ec2b16b97379cf52a9ab5b1a4a0706ffb9695b9a75447be714aa4f4d9980d76",
+        "services/reception/tests/test_cached_media.py": "bd6c05db1279ffa82ba30639fa30b33104b3083cb424dc504d9cca0d3e94c62b",
+        "services/reception/tests/test_image_transfer_040.py": "154066662e95a34b725f0aebbf72f1a696172586da731f35abe0fd14ccd3e14f",
+        "services/reception/tests/test_image_transfer_metadata_040.py": "fea40bc57cd348d76519963e8c2f3dc64f4893d13c3a05f0de54db1cfb5d5320",
+        "services/reception/tests/test_message_photos.py": "679b33195469a7ed8f2cc37dd312fd401695f5ab1cc7c6b3b15fb44e66bb911f",
+        "services/reception/tests/test_photo_source.py": "bb8fd378de07ffb9c91dbf04e0e4f50fa509b681477eee86b759d6ab3a47a313",
+        "services/reception/tests/test_supplement_attachments.py": "0480d5c2a477cd30b3c39764aa06e5bfcbb466a68b84f9992ae647ec229f7d72",
+        "services/reception/tests/test_whatsapp_media_lifetime.py": "0de37f2f2d6d05f7649fcb939b4cce00d56fcf5a8a4ec31374a8be834f2f6bab",
+        "services/reception/tests/test_whatsapp_account_media_041.py": "713ffe4b9e95d9cbdfbc5f7c100866306e8117cc5f37354775fe878adf65499d",
+        "services/reception/tests/test_model_resource_budget_040.py": "886082c0ba96ffb8f7fc9e24a7cf6f5ee7ca28adbf83b4592ce2d99659e0ce8c",
+        "services/reception/tests/test_model_runtime_040.py": "fd28df70b40fe2ec92d76e215a7a53195581d83b5bc21b6d97fb3187994d525d",
+        "services/reception/tests/test_input_ownership_runtime_040.py": "a6834cd9db7eb035af6d835e5c7a64a10ec1856b2c5ec99c65961dc88adff640",
+        "services/reception/tests/test_model_inputs_040.py": "6530f2f3c3d8e9d2ff77fb82d516b33d1cb67136336cc87796760e3266cb40dc",
+        "services/reception/tests/test_model_image_interleave_040.py": "8fd2ecdbb0a55d1c90ac595c9828880bbfe52c2d074eac92dbbb7e14c77af6ba",
+        "services/reception/tests/test_native_image_requests_041.py": "6fab0e14814241f51b8db5cf83f23e4d3bedddc057dda3741488631ce6444aaa",
+        "services/reception/tests/test_reception_image_selection_041.py": "646609273af155a1baced53a59e978f73fd06c746c2bcaddada5f93a06c23c44",
+        "services/reception/tests/test_whatsapp_account_generation_041.py": "fef862c7999fec2059148f36a125b53c6c9afd7101db8851cf934edd810c364d",
+        "services/reception/tests/test_model_transport_040.py": "c64c0c6f6bd8a19f958eddb47bb8bd18f91ae106fc9cbae620a23645f5b4973d",
+        "services/reception/tests/test_model_router_040.py": "1781de3fab4f43b5c47f3f904e83954c2d7b230c11d33b4cbaf0638924b6b4f5",
+        "services/reception/tests/test_context_deduplication_041.py": "6dd3115bc28b3e658a196e0a89405af7fc8029b3297b0aedd91d6fc1cacd9b71",
+        "apps/desktop/src/shared/media-limits.ts": "9a82ee2abf457392e3ff2e914e6e13ba3bc79ef54cb3ab91c6ec5aa99d30d313",
+        "apps/desktop/src/shared/api.ts": "01d1365a05cddf5027028f3e050acc416ea8c48e97b4fc09aa8f2d743ccc2d51",
+        "apps/desktop/src/main/media-host.ts": "915528fedee439456a0e5b0cb93a2e648047e547019d9754a62563072310119e",
+        "apps/desktop/src/main/supplement-host.ts": "61f31cd1cff41b036199678b2b5495d4cadacfe489a56ceac806c456c51b24be",
+        "apps/desktop/src/main/service-client.ts": "4c7db986b0968b97b971c3aca21fc21506d6db485ac98c0452ddf3e2edea4f91",
+        "apps/desktop/src/main/whatsapp-coordinator.ts": "c8c4bec2c99a3f193b67ade458ff31d0bc016f54579f433f9e96b48983d2e1d2",
+        "apps/desktop/src/main/whatsapp/chrome-host.ts": "a9c24c8a843c31b4cb886d9a316b6f13d7231c324365b50f260586413fd47887",
+        "apps/desktop/src/preload/index.ts": "1faf9da69554827d1df30df9bff1d38d1a9afd35cfccd331a30b43f86dd779b3",
+        "apps/desktop/src/main/index.ts": "0cc11746f5aea08f7ebfa642679eaa8522fb011d9dc418cddc3f93bf4e93fb5f",
+        "apps/desktop/src/renderer/hooks/useWorkbench.ts": "74081e5a40db8387e55b2033959bfaed3e8d4ce7308f277b25040cea7d408526",
+        "apps/desktop/src/renderer/components/MessageImages.tsx": "938b2666ca08bfcc0bfdf83426412020f4434e001fc8aa2f2e969b11b4c066da",
+        "apps/desktop/src/renderer/components/SupplementPanel.tsx": "2d186989c3744601b4c1bf53763377e68e3d3d78e3890ef8b97bf600fe1a8b7f",
+        "apps/desktop/tests/media-host.test.ts": "347ee2dc74b1828e4f901e653de757728adab10640bd3106a748b7473753e0fe",
+        "apps/desktop/tests/supplement-host.test.ts": "d5799ee5786ffdd22e8c7c89701bf56f4e6f21e666f43b2795f9b8f15f841438",
+        "apps/desktop/tests/message-images.test.tsx": "74826e83f2bb18f1dcdfe88ef7364f646ba536d90989b32399c22b58d8ac89b3",
+        "apps/desktop/tests/whatsapp-coordinator.test.ts": "797890c8f7823e1a670700127f5748f1af490e3323969f278feb4f5edf53396f",
+        "apps/desktop/tests/chrome-host.test.ts": "676a99dab2d77756d6675275e4aecf186e99ac43bfa1f9a89fed120e4d94de20",
+        "apps/desktop/tests/original-image-dialog.test.tsx": "29f3e42058b3cf739f3d500390a54850f1b4324170a55da19db820a0d92b375b",
+        "apps/desktop/tests/chat-service-client.test.ts": "dc8e39fa42770ed441e4e532c08587b428d06ecad4f7883d03f3a596b2d22ac1",
+        "apps/desktop/tests/service-client-lifecycle.test.ts": "5daa7f586d896877c1e6f30020ea06d6e3d6fa1161c563d0ea8ad65da22da70a",
+        "apps/desktop/tests/requirements-media-protocol.test.ts": "dfa9e2f0272da0476b0e4b1705324d8c8bc77e46ccb05d33392d7e1281c0e8a8"
+      }
+    },
+    "whole_repository_frozen": false,
+    "final_model_budget_isolation": "Each backend file sets RECEPTION_MODEL_BUDGET_DIRECTORY under the ignored verification directory; runtime/ownership/account-generation cases also use their own temporary directory.",
+    "early_run_budget_note": "Before isolation was corrected, some model tests used the default local cross-process request-budget metadata ledger. This ledger stores task owners and slots, not customer text, images, model keys or send receipts. No manual shared-ledger inspection or clearing, and no user-process termination, was performed.",
+    "input_scope_note": "哈希覆盖本轮列出的图片实现及测试。同期其他UI和产品投影文件由另一会话维护；设计合并后的整体构建、类型及窗口验证属于集成阶段。",
+    "git_diff_check": "passed",
+    "real_platform_requests": false,
+    "paid_model_calls": false,
+    "real_customer_databases": false,
+    "synthetic_http": [
+      "chat-completions",
+      "anthropic"
+    ],
+    "focused_cases": [
+      "20MiB与下一字节",
+      "40MP合法压缩图",
+      "长边32768及下一像素",
+      "静态GIF及拒绝动画",
+      "原图分块及SHA",
+      "图片来源与角色隔离",
+      "取消及实际结束后释放",
+      "A-B-A及重启重试额度",
+      "人工发送在图片仍阻塞时完成",
+      "普通RPC预算与中文UTF-8",
+      "退出后迟到stdout被忽略",
+      "PNG压缩元数据及块数边界",
+      "六路20MiB合成接收的阶段资源准入"
+    ],
+    "retained_failure_evidence": [
+      "artifacts/verification/image-limit-update-042-001/message-photos-queue-ledger.log",
+      "artifacts/verification/image-limit-update-042-001/account-media-final.log",
+      "artifacts/verification/image-limit-update-042-001/stable-test_native_image_requests_041.py.log",
+      "artifacts/verification/image-limit-update-042-001/transparent-supplement-before-fix.log",
+      "artifacts/verification/image-limit-update-042-001/concurrent-receive-before.json",
+      "artifacts/verification/image-limit-update-042-001/concurrent-receive-after.json",
+      "artifacts/verification/image-limit-update-042-001/complete-test_model_runtime_040.py.log",
+      "artifacts/verification/image-limit-update-042-001/complete-test_input_ownership_runtime_040.py.log",
+      "artifacts/verification/image-limit-update-042-001/complete-test_whatsapp_account_generation_041.py.log"
+    ],
+    "failure_resolution": [
+      "队列夹具改为预制合法图，避免无关的同步像素槽竞争；真实下载像素等待单独验证。",
+      "ServiceError继承ValueError，现优先处理资源异常且保留failed终态。",
+      "独立WhatsApp原图请求测试装配正式初始化方法，保留原同轮原图和提示词断言。",
+      "透明补充PNG拒绝问题已复现并修复。",
+      "短时并发探针曾因阶段预留导致全部繁忙；最终5秒回归验证六路均完成且资源归零。",
+      "跨进程模型预算改为每文件及相关单用例临时隔离；清理测试在on_finished确认预算释放后再关闭，保持原有取消与资源保留断言。"
+    ]
+  },
+  "limitations": [
+    "512MiB是应用任务准入预留，不是进程实际RSS上限。",
+    "64MiB是默认整批原图准备预算；具体组合仍受编码、上下文、像素资源及提供方限制，并不保证任意64MiB均可发送。",
+    "未取得用户原失败图片的现场回执，不能把某一限制认定为该图的唯一原因，亦不以合成测试宣称实号问题已验收。",
+    "未验证真实提供方的图片效果；AVIF/HEIC及动画继续关闭。"
+  ],
+  "delivery": {
+    "built_in_this_session": false,
+    "committed_in_this_session": false,
+    "installed": false,
+    "migrated_real_data": false,
+    "published": false,
+    "pushed_private_source": false,
+    "integration": "交接0.4.2整体集成后统一冻结、构建、立即本地提交并验证候选。"
+  }
+}

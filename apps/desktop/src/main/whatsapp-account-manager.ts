@@ -209,7 +209,8 @@ export class WhatsAppAccountManager {
         if (!merchant || active.closing) throw new Error('merchant_unavailable');
         const context = await this.options.broker.request(merchant, request);
         if (active.closing || this.active.get(active.workspaceId) !== active) throw new Error('account_changed');
-        await active.backend.invoke('_wa_set_merchant_context', { request, context });
+        const result = await active.backend.invoke<{ accepted: boolean }>('_wa_set_merchant_context', { request, context });
+        if (result.accepted) void this.watchGenerationContext(active, request, merchant);
       } catch {
         await active.backend.invoke('_wa_set_merchant_context', { request, context: null, error: 'merchant_unavailable' }).catch(() => {});
         throw new Error('接待商家暂不可用，请重新授权该商家工作台。');
@@ -217,6 +218,23 @@ export class WhatsAppAccountManager {
     })();
     active.contexts.set(request.request_id, work);
     try { await work; } finally { active.contexts.delete(request.request_id); }
+  }
+  private async watchGenerationContext(active: Active, request: WhatsAppContextRequest, merchant: LauncherMerchant): Promise<void> {
+    // The broker authenticates every lease and rechecks the live binding. Only
+    // one request is in flight per watcher, including on timeout or shutdown.
+    while (!active.closing && this.active.get(active.workspaceId) === active) {
+      await new Promise<void>(resolve => { const timer = setTimeout(resolve, 1000); timer.unref?.(); });
+      if (active.closing || this.active.get(active.workspaceId) !== active) return;
+      let context = null;
+      let error: string | null = null;
+      try { context = await this.options.broker.request(merchant, request); }
+      catch { error = 'merchant_unavailable'; }
+      if (active.closing || this.active.get(active.workspaceId) !== active) return;
+      try {
+        const result = await active.backend.invoke<{ active: boolean }>('_wa_check_generation_context', { request, context, error });
+        if (!result.active) return;
+      } catch { return; }
+    }
   }
   private async merchantChoices(): Promise<WhatsAppMerchantChoice[]> {
     // A display projection only. Context export and mutation authorization still

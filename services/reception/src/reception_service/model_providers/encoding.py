@@ -11,7 +11,7 @@ MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_JSON_DEPTH = 64
 MAX_JSON_NODES = 20000
 MAX_JSON_STRING = 262144
-MAX_REQUEST_RESERVATION = 256 * 1024 * 1024
+MAX_REQUEST_RESERVATION = 512 * 1024 * 1024
 MAX_INPUT_TEXT = 4 * 1024 * 1024
 _MIMES = frozenset(('image/jpeg', 'image/png', 'image/gif', 'image/webp'))
 
@@ -99,9 +99,10 @@ def validate_request_budget(system_prompt, user_payload, images):
                 stack.extend(item)
         raw_bytes = sum(len(item['data']) for item in images)
         encoded = sum(4 * ((len(item['data']) + 2) // 3) for item in images)
-        # Conservative SDK/JSON copies, including non-BMP text expansion.
-        reservation = raw_bytes + 8 * encoded + 32 * chars
-        if raw_bytes > 64 * 1024 * 1024 or reservation > MAX_REQUEST_RESERVATION:
+        # Blocks, potentially four-byte-wide JSON text, and UTF-8 wire bytes
+        # can coexist in the HTTP and SDK serializers.
+        reservation = raw_bytes + 6 * encoded + 32 * chars
+        if raw_bytes > 256 * 1024 * 1024 or reservation > MAX_REQUEST_RESERVATION:
             raise ValueError()
         return reservation
     except (KeyError, TypeError, ValueError, RecursionError):

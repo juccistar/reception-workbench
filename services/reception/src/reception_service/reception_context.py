@@ -21,8 +21,9 @@ _TOPICS = (
 _CARD = re.compile(r'\[card\]|\b(?:address|contact|product) card\b|地址卡|联系卡|商品卡|This is a .*card', re.I)
 
 
-def dialogue_window(messages, case, continuation=None, pending_message_ids=()):
-    """Select 50 text messages and only missing, explicitly referenced evidence."""
+def dialogue_window(messages, case, continuation=None, pending_message_ids=(), limit=50):
+    """Select recent text messages and missing, explicitly referenced evidence."""
+    limit = limit if type(limit) is int and 1 <= limit <= 200 else 50
     def references(value):
         if isinstance(value, dict):
             for key, child in value.items():
@@ -39,13 +40,13 @@ def dialogue_window(messages, case, continuation=None, pending_message_ids=()):
                  and isinstance(m.get('text'), str) and m['text'].strip()
                  and m['text'].strip() != '[image]'
                  and not m['text'].strip().casefold().startswith('[card]')]
-    selected = {m['message_id'] for m in text_rows[-50:]}
+    selected = {m['message_id'] for m in text_rows[-limit:]}
     required = set(references(case)) | set(references(continuation)) | set(pending_message_ids)
     required.update(references([m for m in messages if m['message_id'] in selected]))
     # Include associated cards and images in the chronological window without
     # consuming text slots; older attachments enter only through references.
     start = (next((i for i, m in enumerate(messages) if m['message_id'] in selected), 0)
-             if len(text_rows) > 50 else 0)
+             if len(text_rows) > limit else 0)
     selected.update(m['message_id'] for m in messages[start:]
                     if m.get('attachments') or has_photo(m)
                     or m.get('text', '').strip().casefold().startswith('[card]'))
@@ -88,9 +89,12 @@ def shared_context(repo, owner, case, *, task_mode, continuation=None, settings=
     from .requirement_media import get_reception_source_images
     from .requirement_changes import case_catalog
     catalogue = case_catalog(repo, owner) if task_mode != 'polish' else []
+    settings = settings or {}
+    images_enabled = settings.get('reception_images_enabled', True)
     sources = get_reception_source_images(repo, owner, case, raw) if task_mode != 'polish' else []
     source_ids = {m['message_id'] for m in sources}
-    recent, historical = dialogue_window(messages, {'selected': case or {}, 'catalogue': catalogue}, continuation, source_ids)
+    recent, historical = dialogue_window(messages, {'selected': case or {}, 'catalogue': catalogue}, continuation, source_ids,
+                                         limit=settings.get('context_message_count', 50))
     policies = select_policy_inputs(repo.list('policy'), case or {'facts': {}, 'procurement_key': ''})
     knowledge = policies['knowledge']
     result = {'prompt_version': PROMPT_VERSION, 'task_mode': task_mode,
@@ -101,12 +105,12 @@ def shared_context(repo, owner, case, *, task_mode, continuation=None, settings=
               'style_conflicts': policies.get('style_conflicts', []),
               'supplement': supplement_context(repo, owner['conversation_id']),
               'conversation_summary': repo.get('conversation_summary', owner['conversation_id']),
-              'photo_context': direct_photo_context(repo, [m for m in historical + recent if m['message_id'] in source_ids])}
+              'photo_context': direct_photo_context(repo, [m for m in historical + recent if images_enabled and m['message_id'] in source_ids])}
     result['supplement_image_refs'] = [
         {'origin': 'business_supplement', 'attachment_id': row['id'], 'image_id': row['id'],
          'image_sha256': row['sha256'], 'seller_id': owner['seller_id'], 'buyer_id': owner['buyer_id'],
          'conversation_id': owner['conversation_id'], 'supplement_revision': result['supplement']['revision']}
-        for row in result['supplement']['attachments'] if row['media_type'].startswith('image/')]
+        for row in result['supplement']['attachments'] if images_enabled and row['media_type'].startswith('image/')]
     latest = next((m for m in reversed(recent) if m['role'] == 'buyer'), None)
     result['reply_target'] = {'source_message_id': latest['message_id'] if latest else None}
     if task_mode != 'polish':

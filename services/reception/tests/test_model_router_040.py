@@ -56,9 +56,18 @@ class ModelRouterTest(unittest.TestCase):
         self.assertEqual(error.exception.code, 'model_not_ready')
         snapshot = self.router.resolve('reception', ['text', 'single_image'], allow_unchecked=True)
         self.router.assert_current(snapshot)
+        self.settings['routes']['translation'] = {'profile_id': 'p', 'route_revision': 1}
+        self.write()
+        self.router.configure({'format': 'model-runtime-v1', 'authority_file': str(self.path),
+                               'settings': self.settings, 'credentials': {'p': 'private-key'}})
         with self.assertRaises(ServiceError):
-            self.router.resolve('translation', ['text'], allow_unchecked=True)
+            self.router.resolve('translation', ['text', 'translation'])
+        translation = self.router.resolve('translation', ['text', 'translation'], allow_unchecked=True)
+        self.router.assert_current(translation)
         self.settings['profiles'][0]['config_revision'] += 1
+        self.write()
+        with self.assertRaises(ServiceError):
+            self.router.assert_current(translation)
         self.write()
         with self.assertRaises(ServiceError):
             self.router.assert_current(snapshot)

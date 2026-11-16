@@ -172,7 +172,7 @@ class WhatsAppAccountService(AccountMediaMixin, AccountGenerationMixin):
                    'set_whatsapp_reception', 'takeover_whatsapp', 'get_whatsapp_context', '_wa_save_supplement',
                    'reconcile_whatsapp_operation', '_wa_get_reconcile_record', '_wa_set_account', '_wa_ingest', '_wa_ack',
                    '_wa_prepare_send', '_wa_transport_result', '_wa_get_context_request',
-                   '_wa_set_merchant_context', '_wa_set_legacy_status', '_wa_verify_legacy_sources', '_configure_models',
+                   '_wa_set_merchant_context', '_wa_check_generation_context', '_wa_set_legacy_status', '_wa_verify_legacy_sources', '_configure_models',
                    '_wa_media_begin', '_wa_media_chunk', '_wa_media_finish', '_wa_media_fail',
                    'get_whatsapp_writeback_capabilities', '_wa_writeback_preview', '_wa_writeback_submit', 'shutdown'}
         if method not in methods or not isinstance(params, dict):
@@ -226,8 +226,9 @@ class WhatsAppAccountService(AccountMediaMixin, AccountGenerationMixin):
         bindings = [self.repo.get('binding', _key(account, r['chat_id'])) for r in rows]
         ops = [r for r in self.repo.list('operation') if r['account_id'] == account and r['status'] in ('prepared', 'sending', 'unknown')]
         default = self.repo.get('meta', 'default', {'merchant_id': None, 'revision': 0})
+        selection = self.repo.get('meta', 'merchant_selection', {'merchant_ids': []})
         return {'workspace_id': self.workspace_id, 'account_id': account, 'connection_epoch': self.epoch,
-                'connected': self.connected, 'enabled': self.enabled, 'default_merchant_id': default['merchant_id'],
+                'connected': self.connected, 'enabled': self.enabled, 'selected_merchant_ids': selection['merchant_ids'], 'default_merchant_id': default['merchant_id'],
                 'default_revision': default['revision'], 'allowed_merchant_ids': self.allowed,
                 'conversations': [{**{k: r[k] for k in ('chat_id', 'name', 'human_owned', 'pending')}, 'reception_paused': r.get('reception_paused', False), 'error_code': r.get('error_code')} for r in rows],
                 'bindings': [{k: b[k] for k in ('chat_id', 'merchant_id', 'conversation_id', 'revision', 'segment_id', 'requested_binding', 'requested_binding_revision') if k in b} for b in bindings], 'pending_operations': [{k: o.get(k) for k in ('operation_id','chat_id','merchant_id','status','message_id','ack')} for o in ops],
@@ -296,13 +297,23 @@ class WhatsAppAccountService(AccountMediaMixin, AccountGenerationMixin):
     def set_whatsapp_reception(self, enabled, allowed_merchant_ids=None, expected_account_id=None, expected_connection_epoch=None):
         if type(enabled) is not bool:
             _error('invalid_params', '接待设置无效')
-        if enabled:
+        update_selection = allowed_merchant_ids is not None
+        if enabled or update_selection:
             self._identity(expected_account_id, expected_connection_epoch)
-            if not isinstance(allowed_merchant_ids, list) or any(not isinstance(x, str) or not x for x in allowed_merchant_ids):
+            if not isinstance(allowed_merchant_ids, list) or len(allowed_merchant_ids) > 512 or any(not isinstance(x, str) or not x for x in allowed_merchant_ids) or len(set(allowed_merchant_ids)) != len(allowed_merchant_ids):
                 _error('invalid_params', '接待设置无效')
         self.enabled = False
         self.allowed = []
         self._cancel_account_generation()
+        if update_selection:
+            old = self.repo.get('meta', 'merchant_selection', {'merchant_ids': []})['merchant_ids']
+            with self.repo.transaction():
+                if set(old) != set(allowed_merchant_ids):
+                    for row in self.repo.list('conversation'):
+                        if row.get('account_id') == self.account:
+                            row['reception_paused'] = True
+                            self.repo.put('conversation', _key(self.account, row['chat_id']), row)
+                self.repo.put('meta', 'merchant_selection', {'merchant_ids': list(allowed_merchant_ids)})
         if enabled:
             if not allowed_merchant_ids or self._legacy_projection(self.account)['status'] != 'ready':
                 _error('checks_required', '接待商家或旧来源核验尚未就绪')
@@ -389,13 +400,13 @@ class WhatsAppAccountService(AccountMediaMixin, AccountGenerationMixin):
         self._changed()
         return self.get_whatsapp_state()
 
-    def get_whatsapp_context(self, chat_id):
+    def get_whatsapp_context(self, chat_id, *, message_count=50):
         self._conversation(chat_id)
         binding = self.repo.get('binding', _key(self.account, chat_id))
         rows = self.repo.list_owned('message', self.account, chat_id, binding['segment_id'])
         rows.sort(key=lambda r: (r['timestamp_ms'], r['id']))
         return {'task_mode': 'whatsapp_reply', 'whatsapp_messages': [{'source_id': 'wa_' + _key(self.account, r['id'])[:20],
-                'role': 'seller' if r['from_me'] else 'buyer', 'timestamp_ms': r['timestamp_ms'], 'text': r['body'][:3000]} for r in rows[-30:]],
+                'role': 'seller' if r['from_me'] else 'buyer', 'timestamp_ms': r['timestamp_ms'], 'text': r['body'][:3000]} for r in rows[-message_count:]],
                 'wa_summary': self.repo.get('wa_summary', _key(self.account, chat_id, binding['segment_id']), {}).get('body', ''),
                 'wa_supplement': {**self.repo.get('wa_supplement', _key(self.account, chat_id, binding['segment_id']), {'body': '', 'revision': 0}),
                                   'source_id': 'wa_note_' + _key(self.account, chat_id, binding['segment_id'])[:20]},
@@ -611,6 +622,37 @@ class WhatsAppAccountService(AccountMediaMixin, AccountGenerationMixin):
             _error('source_changed', '商家绑定已变化')
         self.context_leases[operation_id] = context.copy()
         return {'accepted': True}
+
+    def _wa_check_generation_context(self, request, context=None, error=None):
+        job = self._generation_active
+        if not isinstance(request, dict) or not job or any(job.get(key) != request.get(key) for key in
+                ('request_id', 'account_id', 'chat_id', 'merchant_id', 'conversation_id', 'binding_revision')):
+            return {'active': False}
+        if not self._generation_current(job):
+            return {'active': False}
+        original = job['merchant_context']
+        changed = error is not None or context is None
+        if not changed:
+            try:
+                self._validate_account_context(request, context)
+                changed = any(context.get(key) != original.get(key) for key in
+                              ('seller_id', 'data_root', 'instance_id', 'revision'))
+            except ServiceError:
+                changed = True
+        if changed:
+            job['cancel'].set()
+            for operation in self.repo.list('operation'):
+                if (operation.get('account_id') == job['account_id']
+                        and operation.get('connection_epoch') == job['connection_epoch']
+                        and operation.get('chat_id') == job['chat_id']
+                        and operation.get('merchant_id') == job['merchant_id']
+                        and operation.get('binding_revision') == job['binding_revision']
+                        and operation.get('context_instance_id') == original['instance_id']
+                        and operation.get('context_revision') == original['revision']):
+                    self._cancel_account_prepared(operation)
+            self._changed()
+            return {'active': False}
+        return {'active': True}
 
     def _validate_account_context(self, request, context):
         now = time.time_ns() // 1_000_000

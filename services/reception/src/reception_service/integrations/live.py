@@ -24,6 +24,7 @@ from .accio_native.vendor.diagnostics import CODES, process_diagnostics
 
 from .reception_prompts import AUTOMATIC, MANUAL, POLISH, REQUIREMENTS, WHATSAPP
 from .generation_metadata import checked_metadata
+from .feishu_dispatch import FeishuDispatch
 
 AI_INSTRUCTIONS = AUTOMATIC
 
@@ -67,6 +68,7 @@ class LiveIntegration:
         # Runtime send grants can never be restored from persistent settings.
         self.settings = {key: deepcopy(value) for key, value in settings.items() if not key.startswith('_runtime_')}
         self.native = NativeGateway(self.settings, Path(data_dir))
+        self.native.feishu = FeishuDispatch(self.native)
         self._visual_workspace_identity = None
         self._query_state = threading.local()
         self._model_router = None
@@ -74,6 +76,9 @@ class LiveIntegration:
 
     def configure_model_router(self, router):
         self._model_router = router
+
+    def configure_feishu_credential(self, app_id, secret):
+        self.native.feishu.configure_secret(app_id, secret)
 
     def configure_whatsapp_image_resolver(self, resolver):
         self._whatsapp_image_resolver = resolver
@@ -249,10 +254,10 @@ class LiveIntegration:
     def _business_query_owned(self, instructions, context, photo_inputs, *, on_call_start=None, cancel_event=None, photo_deadline=None):
         now = time.monotonic()
         seconds = self.settings.get('image_prepare_seconds', 60)
-        seconds = min(seconds, 60) if type(seconds) is int and 1 <= seconds <= 600 else 60
+        seconds = seconds if type(seconds) is int and 10 <= seconds <= 300 else 60
         started = min(now, getattr(photo_deadline, 'started', photo_deadline - seconds)) if photo_deadline is not None else now
-        chain_deadline = started + 180
-        photo_deadline = min(photo_deadline, started + 60) if photo_deadline is not None else started + 60
+        chain_deadline = started + seconds + 120
+        photo_deadline = min(photo_deadline, started + seconds) if photo_deadline is not None else started + seconds
         if now >= chain_deadline:
             raise ServiceError('model_timeout', '模型请求超过时间预算', stage='model')
         self.last_ai_diagnostics = {}
@@ -291,12 +296,13 @@ class LiveIntegration:
                                 if (item.get('attachment') or {}).get('origin') == 'business_supplement']
             settings = self.settings if isinstance(self.settings, dict) else {}
             batch_mib = settings.get('image_batch_mib', 64)
-            if type(batch_mib) is not int or not 1 <= batch_mib <= 1024:
+            if type(batch_mib) is not int or not 8 <= batch_mib <= 256:
                 batch_mib = 64
             if isinstance(payload, dict) and payload.get('task_mode') == 'whatsapp_reply':
                 from ..model_inputs import resolve_whatsapp_images
                 images, manifest = resolve_whatsapp_images(payload, getattr(self, '_whatsapp_image_resolver', None),
-                                                           cancel=cancel_event, deadline=photo_deadline)
+                                                           cancel=cancel_event, deadline=photo_deadline,
+                                                           owner=owner, batch_mib=batch_mib)
                 payload.pop('model_image_refs', None)
                 payload['image_manifest'] = manifest
                 refs = []
@@ -552,7 +558,8 @@ class LiveIntegration:
         return value
 
     def register(self, case, previous, operation_id, *, authorization=None):
-        if not self.native.feishu.enabled():
+        existing = self.native.ledger.get(operation_id) if isinstance(operation_id, str) else None
+        if not existing and not self.native.feishu.enabled():
             return self._registration_result(dict(status='disabled', record_id=previous.get('record_id', ''), number=previous.get('number', '')))
         try:
             self.resolve_identity(case.get('seller_id'))

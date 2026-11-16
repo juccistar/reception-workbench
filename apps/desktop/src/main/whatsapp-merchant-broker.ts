@@ -11,7 +11,7 @@ import { createMetadataDecrypter } from './metadata-decryption';
 
 type Exported = Pick<WhatsAppMerchantContext, 'seller_id' | 'data_root' | 'conversation_id' | 'revision' | 'context'>;
 export type WhatsAppCustomerSearchRequest = { request_id: string; account_id: string; chat_id: string; merchant_id: string; binding_revision: number; query: string; limit: number };
-export type WhatsAppCustomerCandidate = { conversation_id: string; name: string; revision: string };
+export type WhatsAppCustomerCandidate = { conversation_id: string; name: string; buyer_id?: string; revision: string };
 export type WhatsAppCustomerSearchExport = { seller_id: string; data_root: string; candidates: WhatsAppCustomerCandidate[] };
 export type WhatsAppCustomerSearchLease = WhatsAppCustomerSearchExport & { format: 'wa-merchant-customer-search-v1'; merchant_id: string; instance_id: string; observed_at_ms: number; expires_at_ms: number };
 type Stored = { version: 1; binding: ActivationBinding; instance: string; key: string; endpoint: string };
@@ -38,8 +38,8 @@ function searchRequestOf(v: WhatsAppCustomerSearchRequest, binding: ActivationBi
 function searchExported(value: WhatsAppCustomerSearchExport, binding: ActivationBinding, limit: number): WhatsAppCustomerSearchExport {
   if (!value || value.seller_id !== binding.seller_id || value.data_root !== binding.data_root || !Array.isArray(value.candidates) || value.candidates.length > limit || value.candidates.length > 25) throw new Error('wa_broker_identity');
   const candidates = value.candidates.map(row => {
-    if (!row || Object.keys(row).sort().join(',') !== 'conversation_id,name,revision' || typeof row.conversation_id !== 'string' || !row.conversation_id.trim() || row.conversation_id.length > 300 || /[\x00-\x1f\x7f-\x9f]/.test(row.conversation_id) || typeof row.name !== 'string' || !row.name.trim() || Array.from(row.name).length > 120 || /[\x00-\x1f\x7f-\x9f]/.test(row.name) || typeof row.revision !== 'string' || !/^[a-f0-9]{64}$/.test(row.revision)) throw new Error('wa_broker_identity');
-    return { conversation_id: row.conversation_id, name: row.name, revision: row.revision };
+    if (!row || Object.keys(row).sort().join(',') !== 'buyer_id,conversation_id,name,revision' || typeof row.buyer_id !== 'string' || !row.buyer_id.trim() || Array.from(row.buyer_id).length > 120 || /[\x00-\x1f\x7f-\x9f]/.test(row.buyer_id) || typeof row.conversation_id !== 'string' || !row.conversation_id.trim() || row.conversation_id.length > 300 || /[\x00-\x1f\x7f-\x9f]/.test(row.conversation_id) || typeof row.name !== 'string' || !row.name.trim() || Array.from(row.name).length > 120 || /[\x00-\x1f\x7f-\x9f]/.test(row.name) || typeof row.revision !== 'string' || !/^[a-f0-9]{64}$/.test(row.revision)) throw new Error('wa_broker_identity');
+    return { conversation_id: row.conversation_id, name: row.name, buyer_id: row.buyer_id, revision: row.revision };
   });
   return { seller_id: value.seller_id, data_root: value.data_root, candidates };
 }

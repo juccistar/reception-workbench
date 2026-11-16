@@ -1,4 +1,4 @@
-"""Version-bound photo previews on the existing business worker.
+"""Version-bound photo previews on the bounded shared media pool.
 
 Original messages stay unchanged. Both image bytes and the association are inside
 seller SQLite, so the existing full database backup includes them. Pixel loading
@@ -18,9 +18,16 @@ from .photos import (has_photo, is_photo_placeholder, photo_version, with_photo_
 from .repository import encoded, new_id, now_ms
 
 _ACTIVE = frozenset({'queued', 'running'})
-_MAX_ACTIVE = 4
-_MAX_ATTEMPTS = 3
+# Optional previews share the bounded two-worker media pool. Automatic discovery
+# keeps four pending slots; explicit loading has a finite sixteen-item queue.
+_MAX_ACTIVE = 16
+_MAX_AUTOMATIC_ACTIVE = 4
+_MAX_ATTEMPTS = 3  # Retired observation compatibility; not the preview lifetime cap.
 _RETRY_MS = 60_000
+_PHOTO_WINDOW_MS = 5 * 60_000
+_PHOTO_WINDOW_ATTEMPTS = 6
+_PHOTO_RETRY_BASE_MS = 5_000
+_PHOTO_RETRY_MAX_MS = 60_000
 
 
 class MessagePhotosMixin:
@@ -41,6 +48,71 @@ class MessagePhotosMixin:
             raise ServiceError('source_changed', '图片消息已变化，请刷新后查看')
         return message
 
+    @staticmethod
+    def _photo_retry_policy(state, stamp=None):
+        stamp = now_ms() if stamp is None else stamp
+        attempted = state.get('attempted_at', 0)
+        attempted = attempted if type(attempted) is int and attempted > 0 else 0
+        window = state.get('attempt_window_started_at', attempted)
+        window = window if type(window) is int and window > 0 else stamp
+        attempts = state.get('window_attempts', state.get('attempts', 0))
+        attempts = attempts if type(attempts) is int and attempts >= 0 else 0
+        if stamp - window >= _PHOTO_WINDOW_MS:
+            window, attempts = stamp, 0
+        retry_at = 0
+        if attempted:
+            delay = min(_PHOTO_RETRY_MAX_MS, _PHOTO_RETRY_BASE_MS * 2 ** min(5, max(0, attempts - 1)))
+            retry_at = attempted + delay
+        if attempts >= _PHOTO_WINDOW_ATTEMPTS:
+            retry_at = max(retry_at, window + _PHOTO_WINDOW_MS)
+        return {'window': window, 'attempts': attempts, 'retry_at': retry_at,
+                'allowed': retry_at <= stamp}
+
+    def _begin_photo_attempt(self, params, job_id):
+        """Charge an actual source read once, not a queue reservation or new job."""
+        with self._lock, self.repo.transaction():
+            job = self._require('job', job_id)
+            if job.get('photo_attempt_started'):
+                return
+            message = self._photo_target(params['conversation_id'], params['message_id'], params['source_version'])
+            key = encoded([message['conversation_id'], message['message_id']])
+            record = self.repo.get('message_image', key, {})
+            if record.get('job_id') != job_id or record.get('source_version') != params['source_version']:
+                raise ServiceError('cancelled', '图片读取任务已被替代')
+            record.update(self._photo_retry_record(message, record))
+            policy = self._photo_retry_policy(record)
+            if not policy['allowed']:
+                seconds = max(1, (policy['retry_at'] - now_ms() + 999) // 1000)
+                raise ServiceError('image_retry_wait', f'请在 {seconds} 秒后重试图片')
+            record.update(attempts=record.get('attempts', 0) + 1, attempted_at=now_ms(),
+                          attempt_window_started_at=policy['window'], window_attempts=policy['attempts'] + 1,
+                          message='正在读取照片')
+            self.repo.put('message_image', key, record, history=True)
+            self._save_photo_retry_record(record)
+            job['photo_attempt_started'] = True
+            self.repo.put('job', job_id, job, history=True)
+
+    def _photo_retry_record(self, message, fallback=None):
+        key = encoded([message['conversation_id'], message['message_id'], photo_version(message)])
+        saved = self.repo.get('message_image_retry', key, {})
+        if (saved.get('source_version') != photo_version(message) or any(saved.get(k) != message.get(k)
+                for k in ('seller_id', 'buyer_id', 'conversation_id', 'message_id'))):
+            saved = fallback or {}
+        return {key: saved[key] for key in ('attempts', 'attempted_at', 'attempt_window_started_at', 'window_attempts')
+                if key in saved}
+
+    def _save_photo_retry_record(self, record):
+        version = record.get('source_version')
+        if (record.get('seller_id') != self.seller_id or not isinstance(version, str)
+                or not re.fullmatch(r'[0-9a-f]{64}', version)
+                or not all(isinstance(record.get(k), str) and record[k]
+                           for k in ('buyer_id', 'conversation_id', 'message_id'))):
+            return
+        keys = ('seller_id', 'buyer_id', 'conversation_id', 'message_id', 'source_version',
+                'attempts', 'attempted_at', 'attempt_window_started_at', 'window_attempts')
+        self.repo.put('message_image_retry', encoded([record['conversation_id'], record['message_id'], version]),
+                      {key: record[key] for key in keys if key in record})
+
     def _photo_state(self, message):
         version = photo_version(message)
         if message.get('role') not in ('buyer', 'seller') or not is_photo_placeholder(message.get('text')):
@@ -49,11 +121,18 @@ class MessagePhotosMixin:
         record = self.repo.get('message_image', encoded([message['conversation_id'], message['message_id']]), {})
         if (record.get('source_version') != version or any(record.get(k) != message.get(k) for k in
                 ('seller_id', 'buyer_id', 'conversation_id', 'message_id'))):
-            return {'source_version': version, 'status': 'not_loaded', 'message': '照片待加载'}
+            previous = self._photo_retry_record(message)
+            attempted = previous.get('attempts', 0)
+            had_attempt = type(attempted) is int and attempted > 0
+            return {'source_version': version, 'status': 'failed' if had_attempt else 'not_loaded',
+                    'message': '上次图片读取未完成，可重试' if had_attempt else '照片待加载', **previous}
+        record = {**record, **self._photo_retry_record(message, record)}
         if record.get('status') == 'loading':
             job = self.repo.get('job', record.get('job_id'))
             if not job or job.get('status') not in _ACTIVE:
                 return {**record, 'status': 'failed', 'message': '上次图片读取未完成，可重试'}
+            if job.get('status') == 'queued':
+                return {**record, 'message': '图片排队中'}
         return record
 
     def _photo_projection(self, message):
@@ -66,6 +145,13 @@ class MessagePhotosMixin:
             result = {key: state[key] for key in ('status', 'source_version', 'message') if key in state}
             result['input_mode'] = 'direct'
             result['vision_status'] = 'unavailable' if state.get('status') in ('failed', 'unavailable') else 'not_started'
+            if state.get('status') == 'failed' or state.get('status') == 'not_loaded' and state.get('attempts', 0):
+                policy = self._photo_retry_policy(state)
+                result.update(retry_at=policy['retry_at'] if not policy['allowed'] else None,
+                              retry_allowed=policy['allowed'])
+                if not policy['allowed']:
+                    seconds = max(1, (policy['retry_at'] - now_ms() + 999) // 1000)
+                    result['message'] = f'请在 {seconds} 秒后重试图片'
             if state.get('status') == 'ready':
                 asset = self.repo.get('image_asset', state.get('sha256'))
                 if not asset or asset.get('sha256') != state.get('sha256'):
@@ -99,6 +185,10 @@ class MessagePhotosMixin:
             if self._closing:
                 raise ServiceError('cancelled', '服务正在退出')
             message = self._photo_target(**{key: params[key] for key in required})
+            # Preserve a prior version before replacing the display row, so an
+            # A->B->A synchronization cannot reset A's native-read allowance.
+            self._save_photo_retry_record(self.repo.get('message_image', encoded([
+                message['conversation_id'], message['message_id']]), {}))
             state = self._photo_state(message)
             if state['status'] == 'unavailable':
                 raise ServiceError('image_unavailable', state['message'])
@@ -114,12 +204,12 @@ class MessagePhotosMixin:
             asset_exists = state.get('status') == 'ready' and self.repo.get('image_asset', state.get('sha256')) is not None
             if cached_job and (asset_exists or state['status'] == 'failed' and not params.get('retry')):
                 return {'job_id': cached_job['job_id']}
-            attempts = state.get('attempts', 0)
-            if attempts >= _MAX_ATTEMPTS:
-                raise ServiceError('image_retry_limit', '本条图片已达到读取次数上限，请在国际站查看')
-            if attempts and now_ms() - state.get('attempted_at', 0) < _RETRY_MS:
-                raise ServiceError('image_retry_wait', '图片读取刚结束，请稍后再试')
-            if len(active) >= _MAX_ACTIVE:
+            policy = self._photo_retry_policy(state)
+            if not policy['allowed']:
+                seconds = max(1, (policy['retry_at'] - now_ms() + 999) // 1000)
+                raise ServiceError('image_retry_wait', f'请在 {seconds} 秒后重试图片')
+            limit = _MAX_ACTIVE if params.get('retry') else _MAX_AUTOMATIC_ACTIVE
+            if len(active) >= limit:
                 raise ServiceError('image_queue_full', '图片读取队列已满，请稍后加载')
             job = {'job_id': new_id('job'), 'kind': 'load_message_image',
                    'conversation_id': params['conversation_id'], 'case_id': None,
@@ -131,13 +221,40 @@ class MessagePhotosMixin:
             record = {'conversation_id': params['conversation_id'], 'message_id': params['message_id'],
                       'seller_id': self.seller_id, 'buyer_id': message['buyer_id'],
                       'source_version': params['source_version'], 'status': 'loading',
-                      'message': '正在读取照片', 'job_id': job['job_id'],
-                      'attempts': attempts + 1, 'attempted_at': now_ms()}
+                      'message': '图片排队中', 'job_id': job['job_id'],
+                      'attempts': state.get('attempts', 0), 'attempted_at': state.get('attempted_at', 0),
+                      'attempt_window_started_at': policy['window'], 'window_attempts': policy['attempts']}
             self.repo.put('message_image', encoded([params['conversation_id'], params['message_id']]), record, history=True)
-            self._queue.put((job['job_id'], 'load_message_image', copy.deepcopy(params), self._epoch, False))
-        self._emit('job.updated', job)
-        self._changed(params['conversation_id'])
+            self._requirement_media_pool.submit(self._run_optional_photo, copy.deepcopy(params),
+                                                job['job_id'], self._epoch, self.integrations)
+            self._emit('job.updated', job)
+            self._changed(params['conversation_id'])
         return {'job_id': job['job_id']}
+
+    def _run_optional_photo(self, params, job_id, epoch, facade):
+        # Slow CDN reads do not occupy the business consumer that owns sends.
+        # Generation may claim a still-queued item first; only one side runs it.
+        with self._lock:
+            job = self.repo.get('job', job_id)
+            if not job or job.get('status') != 'queued':
+                return
+            if self._closing or self._requirement_media_stopped:
+                self._job_update(job_id, status='cancelled', stage='cancelled', completed_at=now_ms(),
+                                 message='图片读取已取消')
+                return
+            self._job_update(job_id, status='running', stage='load_message_image', started_at=now_ms())
+        try:
+            result = self._task_load_message_image(params, job_id, epoch, facade)
+            status = result.pop('_job_status', 'succeeded')
+            self._job_update(job_id, status=status, stage='complete', completed_at=now_ms(),
+                             message=result.get('message', '图片读取已结束'))
+        except BaseException as error:
+            cancelled = isinstance(error, ServiceError) and error.code == 'cancelled'
+            self._job_update(job_id, status='cancelled' if cancelled else 'failed',
+                             stage='cancelled' if cancelled else 'complete', completed_at=now_ms(),
+                             message='图片读取已取消' if cancelled else '图片读取未完成，可稍后重试',
+                             diagnostics=read_diagnostics(error))
+        self._changed(params['conversation_id'])
 
     def _queue_recent_photos(self, conversation_id):
         # Preview queue capacity is backpressure, not a business image limit.
@@ -223,7 +340,7 @@ class MessagePhotosMixin:
                 return get_reception_source_images(self.repo, original_conversation, case, rows)
             candidates = copy.deepcopy(selected_images(original_messages))
             seconds = self.settings.get('image_prepare_seconds', 60)
-            seconds = min(seconds, 60) if type(seconds) is int and seconds >= 1 else 60
+            seconds = min(seconds, 300) if type(seconds) is int and seconds >= 1 else 60
             batch_mib = self.settings.get('image_batch_mib', 64)
             batch_mib = batch_mib if type(batch_mib) is int and 1 <= batch_mib <= 1024 else 64
             parallelism = self.settings.get('image_parallelism', 2)
@@ -362,6 +479,8 @@ class MessagePhotosMixin:
                     queued = self.repo.get('job', preview_id, {}).get('status') == 'queued'
                     if queued:
                         self._job_update(preview_id, status='running', stage='load_message_image', started_at=now_ms())
+                        self._begin_photo_attempt({'conversation_id': cid, 'message_id': message['message_id'],
+                                                   'source_version': photo_version(message)}, preview_id)
                 if not queued:
                     coverage[message['message_id']].update(reason='loading_elsewhere')
                     publish_coverage()
@@ -613,6 +732,7 @@ class MessagePhotosMixin:
             message = copy.deepcopy(self._photo_target(params['conversation_id'], params['message_id'], params['source_version']))
             token = self._read_token(facade)
             self._require_current_read(token)
+            self._begin_photo_attempt(params, job_id)
         error = None
         asset = None
         try:

@@ -1,6 +1,8 @@
 """Request-local deduplication checks with isolated synthetic data."""
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 import test_whatsapp_account_media_041 as wa_helpers
 from reception_service.model_inputs import resolve_whatsapp_images
@@ -81,6 +83,46 @@ class ContextDeduplicationTests(unittest.TestCase):
         self.assertEqual([x['message_id'] for x in history], ['0'])
         self.assertIn('10', [x['message_id'] for x in recent])
 
+    def test_settings_persist_and_validate(self):
+        from reception_service.service import ReceptionService
+        with tempfile.TemporaryDirectory() as directory:
+            service = ReceptionService(Path(directory))
+            try:
+                service.save_settings(reception_images_enabled=False, context_message_count=17)
+                self.assertFalse(service.settings['reception_images_enabled'])
+                self.assertEqual(service._control.get('meta', 'settings')['context_message_count'], 17)
+                for changes in ({'context_message_count': 0}, {'context_message_count': 201},
+                                {'reception_images_enabled': 1}):
+                    with self.assertRaises(ServiceError):
+                        service.save_settings(**changes)
+            finally:
+                service.close()
+            reopened = ReceptionService(Path(directory))
+            try:
+                self.assertFalse(reopened.settings['reception_images_enabled'])
+                self.assertEqual(reopened.settings['context_message_count'], 17)
+            finally:
+                reopened.close()
+
+    def test_configured_window_preserves_evidence_and_disabled_images_stay_cached(self):
+        image = self.message('image', '[image]', 1)
+        self.ready(image)
+        self.message('old', 'required evidence', 2)
+        for i in range(5):
+            self.message(f'text-{i}', f'text {i}', i + 3)
+        case = {**self.owner, 'revision': 1, 'state': 'collecting', 'requirements': {
+            'product_images': {'value': [], 'evidence_ids': ['image']},
+            'quantity': {'value': 'one', 'evidence_ids': ['old']}}}
+        self.repo.put('case', 'active', case)
+        context = shared_context(self.repo, self.owner, case, task_mode='manual', settings={
+            'reception_images_enabled': False, 'context_message_count': 2})
+        self.assertEqual([r['message_id'] for r in context['recent_messages']], ['text-3', 'text-4'])
+        self.assertEqual({r['message_id'] for r in context['historical_evidence']}, {'image', 'old'})
+        self.assertEqual(context['photo_context']['direct_images'], [])
+        self.assertEqual(context['image_manifest'], [])
+        self.assertEqual(self.repo.get('message_image', encoded(['c', 'image']))['status'], 'ready')
+        self.assertIsNotNone(self.repo.get('image_asset', self.native.asset['sha256']))
+
     def test_same_pixels_different_buyer_and_seller_sources_remain_distinct(self):
         buyer = self.message('buyer-photo', '[image]', 1)
         seller = self.message('seller-photo', '[image]', 2, role='seller')
@@ -126,9 +168,12 @@ class ContextDeduplicationTests(unittest.TestCase):
         self.assertEqual(len(refs), 1)
         self.assertEqual(len(rows), 1)
         messages = [dict(rows[0], role='buyer')]
+        from reception_service.model_media import OwnedInput
+        owner = OwnedInput(1024)
+        self.addCleanup(owner.close)
         images, manifest = resolve_whatsapp_images(
             {'model_image_refs': refs, 'whatsapp_messages': messages},
-            lambda ref: fixture.host._account_resolve_image(ref, *identity[:3]))
+            lambda ref: fixture.host._account_resolve_image(ref, *identity[:3]), owner=owner)
         self.assertEqual(len(images), 1)
         self.assertEqual(len(manifest), 1)
         self.assertEqual(images[0]['source_id'], rows[0]['source_id'])

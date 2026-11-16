@@ -1,17 +1,23 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { API_METHODS, type ReceptionBridge, type ServiceEvent } from '../shared/api';
 import { validateChatParameters } from '../shared/chat-protocol';
+import { SUPPLEMENT_MAX_FILES, SUPPLEMENT_MAX_ENCODED_BYTES, SUPPLEMENT_MAX_TOTAL_BYTES } from '../shared/media-limits';
 const allowed = new Set<string>(API_METHODS);
 function checkConversation(value: unknown): asserts value is string {
   if (typeof value !== 'string' || !value || value.length > 500) throw new Error('客户会话无效。');
 }
 const bridge: ReceptionBridge = {
-  getTranslationSettings: () => ipcRenderer.invoke('reception:translation:get'),
-  setTranslationEnabled: enabled => ipcRenderer.invoke('reception:translation:enable', enabled),
-  importLegacyTranslation: () => ipcRenderer.invoke('reception:translation:import-legacy'),
-  clearTranslationCache: () => ipcRenderer.invoke('reception:translation:clear'),
+  saveFeishuConfiguration: input => ipcRenderer.invoke('reception:feishu:save', input),
+  grantFeishuWrite: input => ipcRenderer.invoke('reception:feishu:grant', input),
   getModelSummary: () => ipcRenderer.invoke('reception:models:summary'),
   openModelLauncher: () => ipcRenderer.invoke('reception:models:launcher'),
+  openLauncher: () => ipcRenderer.invoke('reception:launcher:open'),
+  onExitDialog: listener => {
+    const handler = (_event: unknown, value: import('../shared/exit-dialog').ExitDialogEvent) => listener(value);
+    ipcRenderer.on('reception:exit-dialog', handler);
+    return () => ipcRenderer.removeListener('reception:exit-dialog', handler);
+  },
+  respondExitDialog: response => ipcRenderer.invoke('reception:exit-dialog:respond', response),
   getImageOriginal: (reference, requestId) => ipcRenderer.invoke('reception:image:original', reference, requestId),
   cancelImageOriginal: requestId => ipcRenderer.invoke('reception:image:cancel', requestId),
   showImageMenu: reference => ipcRenderer.invoke('reception:image:menu', reference),
@@ -37,7 +43,8 @@ const bridge: ReceptionBridge = {
   },
   uploadSupplementAttachments: (conversationId, files) => {
     checkConversation(conversationId);
-    if (!Array.isArray(files) || files.length > 5 || files.some(file => !file || typeof file.name !== 'string' || file.name.length > 255 || typeof file.content_b64 !== 'string' || file.content_b64.length > 8 * 1024 * 1024)) return Promise.reject(new Error('附件参数或大小无效。'));
+    if (!Array.isArray(files) || files.length > SUPPLEMENT_MAX_FILES || files.some(file => !file || typeof file.name !== 'string' || file.name.length > 255 || typeof file.content_b64 !== 'string' || file.content_b64.length > SUPPLEMENT_MAX_ENCODED_BYTES)) return Promise.reject(new Error('附件参数或大小无效。'));
+    if (files.reduce((sum, file) => sum + file.content_b64.length, 0) > Math.ceil(SUPPLEMENT_MAX_TOTAL_BYTES / 3) * 4 + SUPPLEMENT_MAX_FILES * 4) return Promise.reject(new Error('附件参数或大小无效。'));
     return ipcRenderer.invoke('reception:upload-supplement-attachments', conversationId, files);
   },
   pasteSupplementAttachments: conversationId => {

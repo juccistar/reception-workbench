@@ -34,6 +34,18 @@ describe('native customer panel document', () => {
       expect(f.window.document.getElementById('save').disabled).toBe(false);
     } finally { f.dom.window.close(); }
   });
+  it('closes the association sheet when the current customer changes', () => {
+    const f = fixture();
+    try {
+      f.window.__customerPanelBootstrap('a'.repeat(64)); f.receive(f.view());
+      const doc = f.window.document;
+      doc.getElementById('change-customer').click();
+      expect(doc.getElementById('association-sheet').hidden).toBe(false);
+      f.receive({ kind: 'clear', status: '请选择一个单聊' });
+      expect(doc.getElementById('association-sheet').hidden).toBe(true);
+      expect(f.packets).toEqual([]);
+    } finally { f.dom.window.close(); }
+  });
   it('rotates the capability after a host reconnect and drops the previous customer view', () => {
     const f = fixture();
     try {

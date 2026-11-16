@@ -107,17 +107,12 @@ class AccountGenerationMixin:
             if max(row.get('retry_at_ms', 0), row.get('pending_ready_at_ms', 0)) > now:
                 self._arm_account_schedule()
                 continue
-            refs, statuses = self._account_image_context(chat, binding['segment_id'])
-            if any(item['media']['status'] == 'pending' for item in statuses):
-                continue
-            if any(item['media']['status'] != 'ready' for item in statuses):
-                continue
             request = {'request_id': uuid.uuid4().hex, 'account_id': self.account, 'chat_id': chat,
                        'merchant_id': binding['merchant_id'], 'conversation_id': binding.get('conversation_id'),
                        'binding_revision': binding['revision']}
             job = dict(request, connection_epoch=self.epoch, segment_id=binding['segment_id'],
                        pending_message_id=row['pending_message_id'], source_key=source_key,
-                       refs=refs, statuses=statuses, cancel=threading.Event(), context_deadline_ms=now + 10000,
+                       cancel=threading.Event(), context_deadline_ms=now + 10000,
                        source_fingerprint=self._account_source_fingerprint(self.account, chat, binding['segment_id']))
             row['last_attempt_at_ms'] = now
             self.repo.put('conversation', self._account_key(self.account, chat), row)
@@ -146,12 +141,42 @@ class AccountGenerationMixin:
         self._validate_account_context(request, context)
         if self._generation_active or not self._generation_current(job):
             raise ServiceError('source_changed', '商家绑定已变化', stage='whatsapp_account')
+        settings = context['context']
+        count = settings.get('context_message_count', 50)
+        images_enabled = settings.get('reception_images_enabled', True)
+        if type(count) is not int or not 1 <= count <= 200 or type(images_enabled) is not bool:
+            raise ServiceError('invalid_context', '商家上下文设置无效', stage='whatsapp_account')
+        refs, statuses = self._account_generation_images(job, count) if images_enabled else ([], [])
+        if any(item['media']['status'] != 'ready' for item in statuses):
+            self._account_generation_error(job, 'media_unavailable')
+            self._schedule_account_replies()
+            self._changed()
+            return {'accepted': False}
+        job.update(refs=refs, statuses=statuses, message_count=count)
         job['merchant_context'] = deepcopy(context)
         self._generation_active = job
         thread = threading.Thread(target=self._run_account_generation, args=(job,), daemon=True)
         job['thread'] = thread
         thread.start()
         return {'accepted': True}
+
+    def _account_generation_images(self, job, count):
+        rows = self.repo.list_owned('message', job['account_id'], job['chat_id'], job['segment_id'])
+        rows.sort(key=lambda row: (row['timestamp_ms'], row['id']))
+        refs, statuses = [], []
+        for row in rows[-count:]:
+            if row.get('has_image') is not True or row.get('from_me') is not False:
+                continue
+            version = self._account_key(job['account_id'], job['connection_epoch'], job['chat_id'], row['id'], str(row['timestamp_ms']))
+            media_id = self._account_key(job['account_id'], job['connection_epoch'], job['chat_id'], row['id'], version)
+            asset = self.repo.db.execute('SELECT status,sha256 FROM account_media WHERE id=? AND segment_id=?', (media_id, job['segment_id'])).fetchone()
+            source_id = 'wa_' + self._account_key(job['account_id'], row['id'])[:20]
+            media = {'status': asset[0] if asset else 'pending', 'source_version': version}
+            if asset and asset[0] == 'ready':
+                media.update(media_id=media_id, sha256=asset[1])
+                refs.append({'source_id': source_id, 'source_version': version, 'image_id': media_id, 'sha256': asset[1], 'role': 'buyer'})
+            statuses.append({'source_id': source_id, 'media': media})
+        return refs, statuses
 
     def _account_runtime_finished(self, job):
         # Called by the runtime only after the task, input cleanup and budget
@@ -173,12 +198,15 @@ class AccountGenerationMixin:
             self._changed()
 
     def _run_account_generation(self, job):
+        from .model_media import OwnedInput, estimate_input_reservation, start_photo_deadline
+        from .model_router import ModelRouter
         entered = False
+        owner = None
         try:
             with self.repo.lock:
                 if not self._generation_current(job):
                     return
-                context = self.get_whatsapp_context(job['chat_id'])
+                context = self.get_whatsapp_context(job['chat_id'], message_count=job['message_count'])
                 context.update(deepcopy(job['merchant_context']['context']))
                 context['seller_id'] = job['merchant_context']['seller_id']
                 context['model_image_refs'] = job['refs']
@@ -189,7 +217,14 @@ class AccountGenerationMixin:
                 router = self.router
             if router is None:
                 raise ValueError('model unavailable')
-            images, manifest = resolve_whatsapp_images(context, lambda ref: self._account_resolve_image(ref, job['account_id'], job['connection_epoch'], job['chat_id']), cancel=job['cancel'])
+            settings = getattr(self, 'settings', {})
+            settings = settings if isinstance(settings, dict) else {}
+            batch_mib = settings.get('image_batch_mib', 64)
+            if type(batch_mib) is not int or not 8 <= batch_mib <= 256:
+                batch_mib = 64
+            photo_deadline = start_photo_deadline(settings)
+            owner = OwnedInput(estimate_input_reservation(context, None))
+            images, manifest = resolve_whatsapp_images(context, lambda ref: self._account_resolve_image(ref, job['account_id'], job['connection_epoch'], job['chat_id']), cancel=job['cancel'], deadline=photo_deadline, owner=owner, batch_mib=batch_mib)
             context.pop('model_image_refs', None)
             context['image_manifest'] = manifest
             context['image_transport'] = 'inline' if images else 'none'
@@ -211,7 +246,8 @@ class AccountGenerationMixin:
                     entered = True
             result = router.generate('reception', WHATSAPP + ('\n' + IMAGE_NATIVE if images else ''), model_json(context),
                                      images=images, required_capabilities=required, cancel=job['cancel'], on_call_start=begin_attempt,
-                                     _allow_unchecked=True, _on_runtime_finished=lambda: self._account_runtime_finished(job))
+                                     _allow_unchecked=True, _on_runtime_finished=lambda: self._account_runtime_finished(job),
+                                     **({'_owned_input': owner, 'deadline': float(photo_deadline) + 120} if isinstance(router, ModelRouter) else {}))
             router.assert_current(snapshot)
             if result.get('model_snapshot') != asdict(snapshot):
                 raise ServiceError('source_changed', '模型配置已变化')
@@ -220,8 +256,13 @@ class AccountGenerationMixin:
                 evidence = result.get('image_input_evidence')
                 if not isinstance(evidence, dict) or evidence.get('status') != 'completed' or evidence.get('images') != expected:
                     raise ValueError('missing image evidence')
+                from .image_assets import MAX_BYTES
                 for ref in job['refs']:
-                    self._account_resolve_image(ref, job['account_id'], job['connection_epoch'], job['chat_id'])
+                    transient = OwnedInput(MAX_BYTES * 3)
+                    try:
+                        self._account_resolve_image(ref, job['account_id'], job['connection_epoch'], job['chat_id'])
+                    finally:
+                        transient.close()
             answer = normalize_reply_output(result['output'])
             from .integrations.analysis import invalid_reply_body
             if any(invalid_reply_body(part['body']) for part in answer['reply_messages']):
@@ -279,6 +320,8 @@ class AccountGenerationMixin:
                     self.repo.put('generation_attempt', job['source_key'], attempt)
                     self._account_generation_error(job, exc.code if isinstance(exc, ServiceError) else 'model_invalid_response')
         finally:
+            if owner is not None:
+                owner.close_if_owned()
             with self.repo.lock:
                 if not self._generation_closed:
                     if self._generation_active is job and not job.get('cleanup_timed_out'):

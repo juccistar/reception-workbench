@@ -22,12 +22,14 @@ describe('supplement attachment host', () => {
     expect(result.errors).toEqual(['附件编码无效。']);
   });
   it('enforces individual, total and count limits', async () => {
-    const six = { name: 'a.txt', content_b64: Buffer.alloc(6 * 1024 * 1024, 1).toString('base64') };
+    const twenty = { name: 'a.png', content_b64: Buffer.alloc(20 * 1024 * 1024, 1).toString('base64') };
     const upload = vi.fn(async () => saved(1));
-    const result = await receiveUploads([six, six, six, six, uploadFile('ok.txt'), uploadFile('extra.txt')], upload, () => {});
+    expect(() => validateUploads([twenty])).not.toThrow();
+    const result = await receiveUploads([twenty, twenty, twenty, twenty, uploadFile('ok.txt')], upload, () => {});
     expect(upload).toHaveBeenCalledTimes(4);
-    expect(result.errors).toEqual(['本批附件总大小不能超过 20 MiB。', '一次最多上传 5 个附件。']);
-    expect(() => validateUploads([{ name: 'large', content_b64: Buffer.alloc(6 * 1024 * 1024 + 1).toString('base64') }])).toThrow();
+    expect(result.errors).toEqual(['本批附件总大小不能超过 64 MiB。']);
+    expect(() => validateUploads([{ name: 'large', content_b64: Buffer.alloc(20 * 1024 * 1024 + 1).toString('base64') }])).toThrow();
+    expect(() => validateUploads(Array(11).fill(uploadFile('small.txt')))).toThrow('10 个');
   });
   it('reads only selected synthetic files, retaining successful files around unreadable paths', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'supplement-test-'));

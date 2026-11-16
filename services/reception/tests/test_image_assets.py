@@ -1,8 +1,11 @@
 import base64
 import io
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import unittest
+import zlib
 from unittest.mock import Mock, patch
 
 from PIL import Image
@@ -16,6 +19,110 @@ def image_bytes(fmt="PNG", size=(32, 24), **kwargs):
 
 
 class ImageAssetsTests(unittest.TestCase):
+    def test_png_metadata_bomb_rejected_before_pillow_open(self):
+        original = image_bytes()
+        def chunk(kind, payload):
+            return len(payload).to_bytes(4, 'big') + kind + payload + (zlib.crc32(kind + payload) & 0xffffffff).to_bytes(4, 'big')
+        bomb = chunk(b'zTXt', b'note\0\0' + zlib.compress(b'x' * 60_000_000))
+        data = original[:33] + bomb + original[33:]
+        with patch.object(assets.Image, 'open', side_effect=AssertionError('Pillow was called')):
+            with self.assertRaises(assets.ImageAssetError):
+                assets.inspect_image(data, 'image/png')
+        many = original[:33] + chunk(b'tEXt', b'k\0') * 129 + original[33:]
+        with patch.object(assets.Image, 'open', side_effect=AssertionError('Pillow was called')):
+            with self.assertRaises(assets.ImageAssetError):
+                assets.inspect_image(many, 'image/png')
+
+    def test_network_buffer_reservation_is_released_after_abort(self):
+        from reception_service.media_resources import PROCESS_MEDIA_BUDGET
+        baseline = PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes']
+        def abort(_host, _path, _addresses, _deadline):
+            self.assertGreaterEqual(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], baseline + 2 * assets.MAX_BYTES)
+            raise assets.ImageAssetError('image network timeout')
+        with self.assertRaises(assets.ImageAssetError):
+            assets.fetch_image('https://alicdn.com/image', resolver=lambda *_: ['8.8.8.8'], transport=abort)
+        self.assertEqual(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], baseline)
+
+    def test_network_result_keeps_lease_until_discarded(self):
+        from reception_service.media_resources import PROCESS_MEDIA_BUDGET
+        baseline = PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes']
+        result = assets.fetch_image('https://alicdn.com/image', resolver=lambda *_: ['8.8.8.8'],
+                                    transport=lambda *_: ('image/png', image_bytes()))
+        self.assertGreater(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], baseline)
+        copied = {**result}
+        del result
+        self.assertGreater(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], baseline)
+        del copied
+        self.assertEqual(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], baseline)
+
+    def test_parallel_receives_do_not_reserve_each_others_decode_space(self):
+        from reception_service.media_resources import PROCESS_MEDIA_BUDGET
+        baseline = PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes']
+        original = image_bytes(size=(2, 2))
+        data = original + bytes(assets.MAX_BYTES - len(original))
+        barrier = threading.Barrier(6)
+        def transport(*_args):
+            barrier.wait(2)
+            return 'image/png', data
+        def fetch(_index):
+            return assets.fetch_image('https://alicdn.com/image', resolver=lambda *_: ['8.8.8.8'], transport=transport)
+        with patch.object(assets, 'DEADLINE_SECONDS', 5), ThreadPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(fetch, range(6)))
+        self.assertEqual([result['size'] for result in results], [len(data)] * 6)
+        self.assertEqual({result['sha256'] for result in results}, {assets.hashlib.sha256(data).hexdigest()})
+        self.assertGreater(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], baseline)
+        del results
+        self.assertEqual(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], baseline)
+        self.assertEqual(PROCESS_MEDIA_BUDGET.snapshot()['pixel_workers'], 0)
+
+    def test_network_decode_waits_for_pixel_worker_within_deadline(self):
+        from reception_service.media_resources import PROCESS_MEDIA_BUDGET
+        baseline = PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes']
+        blocking = PROCESS_MEDIA_BUDGET.acquire(1024, pixels=True)
+        pool = ThreadPoolExecutor(max_workers=1)
+        waiting = threading.Event()
+        original = assets._lease
+        data = image_bytes()
+        def lease(*args, **kwargs):
+            if kwargs.get('pixels'):
+                waiting.set()
+            return original(*args, **kwargs)
+        try:
+            with patch.object(assets, '_lease', side_effect=lease):
+                future = pool.submit(assets.fetch_image, 'https://alicdn.com/image',
+                                     resolver=lambda *_: ['8.8.8.8'], transport=lambda *_: ('image/png', data))
+                self.assertTrue(waiting.wait(2))
+                self.assertFalse(future.done())
+                blocking.close()
+                result = future.result(3)
+                self.assertEqual(base64.b64decode(result['original_b64']), data)
+                del future, result
+        finally:
+            blocking.close()
+            pool.shutdown(wait=True)
+        self.assertEqual(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], baseline)
+
+    def test_network_pixel_wait_has_deadline_and_releases_receive_buffer(self):
+        from reception_service.errors import ServiceError
+        from reception_service.media_resources import PROCESS_MEDIA_BUDGET
+        baseline = PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes']
+        started = time.monotonic()
+        with PROCESS_MEDIA_BUDGET.acquire(1024, pixels=True):
+            with patch.object(assets, 'DEADLINE_SECONDS', 0.1):
+                with self.assertRaises(ServiceError):
+                    assets.fetch_image('https://alicdn.com/image', resolver=lambda *_: ['8.8.8.8'],
+                                       transport=lambda *_: ('image/png', image_bytes()))
+            self.assertEqual(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], baseline + 1024)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], baseline)
+
+    def test_forty_megapixel_compressible_download_uses_actual_receive_size(self):
+        data = image_bytes(size=(8000, 5000))
+        result = assets.fetch_image('https://alicdn.com/image', resolver=lambda *_: ['8.8.8.8'],
+                                    transport=lambda *_: ('image/png', data))
+        self.assertEqual((result['width'], result['height']), (8000, 5000))
+        self.assertEqual(base64.b64decode(result['original_b64']), data)
+
     def test_decode_formats_and_sanitized_preview(self):
         for fmt, mime in (("PNG", "image/png"), ("JPEG", "image/jpeg"), ("WEBP", "image/webp")):
             with self.subTest(fmt=fmt):
@@ -83,7 +190,7 @@ class ImageAssetsTests(unittest.TestCase):
             context.wrap_socket.assert_called_once_with(second, server_hostname='sc04.alicdn.com', do_handshake_on_connect=False)
             self.assertIs(connection.sock, tls)
             self.assertEqual(connection.deadline, deadline)
-            self.assertLessEqual(first.settimeout.call_args.args[0], 3)
+            self.assertLessEqual(first.settimeout.call_args.args[0], assets.DOWNLOAD_CONNECT_SECONDS)
             connection.close()
 
     def test_certificate_failure_never_falls_back_to_another_cdn_address(self):
@@ -108,7 +215,7 @@ class ImageAssetsTests(unittest.TestCase):
                 with self.assertRaises(assets.ImageAssetError) as caught:
                     assets.decode_image(data[:20], "application/octet-stream")
                 self.assertEqual((caught.exception.stage, caught.exception.category), ("decode", "invalid_image"))
-        for data in (b"<html>secret</html>", b"RIFFxxxxNOTW", b"\xff\xd8", b"GIF89a"):
+        for data in (b"<html>secret</html>", b"RIFFxxxxNOTW", b"\xff\xd8"):
             with self.subTest(data=data), self.assertRaises(assets.ImageAssetError) as caught:
                 assets.decode_image(data, "application/octet-stream")
             self.assertEqual((caught.exception.stage, caught.exception.category), ("validation", "unsupported_type"))
@@ -122,7 +229,7 @@ class ImageAssetsTests(unittest.TestCase):
             assets.decode_image(b"x" * (assets.MAX_BYTES + 1), "application/octet-stream")
         self.assertEqual((caught.exception.stage, caught.exception.category), ("validation", "size_limit"))
         with self.assertRaises(assets.ImageAssetError) as caught:
-            assets.decode_image(image_bytes(size=(8193, 1)), "application/octet-stream")
+            assets.decode_image(image_bytes(size=(32769, 1)), "application/octet-stream")
         self.assertEqual((caught.exception.stage, caught.exception.category), ("validation", "dimensions"))
 
     def test_binary_mime_fetch_and_transport(self):
@@ -159,13 +266,35 @@ class ImageAssetsTests(unittest.TestCase):
     def test_invalid_mismatch_size_and_dimensions(self):
         for data, mime in ((b"bad secret", "image/png"), (image_bytes(), "image/jpeg"),
                            (b"x" * (assets.MAX_BYTES + 1), "image/png"),
-                           (image_bytes(size=(8193, 1)), "image/png"),
-                           (image_bytes(size=(5000, 4001)), "image/png"),
+                           (image_bytes(size=(32769, 1)), "image/png"),
+                           (image_bytes(size=(8000, 5001)), "image/png"),
                            (image_bytes()[:-15], "image/png")):
             with self.subTest(length=len(data)):
                 with self.assertRaises(assets.ImageAssetError) as caught:
                     assets.decode_image(data, mime)
                 self.assertNotIn("secret", str(caught.exception))
+
+    def test_static_gif_and_validation_helpers(self):
+        data = image_bytes('GIF')
+        info = assets.inspect_image(data, 'application/octet-stream')
+        self.assertEqual(info['mime'], 'image/gif')
+        self.assertEqual(assets.validate_original(data, 'image/gif'), info)
+        self.assertEqual(base64.b64decode(assets.decode_image(data, 'image/gif')['original_b64']), data)
+        out = io.BytesIO()
+        first = Image.new('RGB', (3, 3), 'red')
+        second = Image.new('RGB', (3, 3), 'blue')
+        try:
+            first.save(out, 'GIF', save_all=True, append_images=[second], duration=100)
+        finally:
+            first.close()
+            second.close()
+        with self.assertRaises(assets.ImageAssetError):
+            assets.validate_original(out.getvalue(), 'image/gif')
+
+    def test_unicode_path_preserves_encoded_query(self):
+        host, path = assets._image_url('https://alicdn.com/图片%2F原图.png?sig=a%2Fb+z')
+        self.assertEqual(host, 'alicdn.com')
+        self.assertEqual(path, '/%E5%9B%BE%E7%89%87%2F%E5%8E%9F%E5%9B%BE.png?sig=a%2Fb+z')
 
     def test_animation_rejected(self):
         out = io.BytesIO()
@@ -183,10 +312,10 @@ class ImageAssetsTests(unittest.TestCase):
             seen.append((host, path, addresses))
             return "image/png", data
         resolve = lambda host, deadline: ["8.8.8.8"]
-        for url in ("https://clouddisk.alibaba.com/picture.htm?token=private", "https://img.alicdn.com/a"):
+        for url in ("https://clouddisk.alibaba.com/picture.htm?token=private", "https://img.alicdn.com/a", "https://alicdn.com/a"):
             self.assertEqual(assets.fetch_image(url, resolver=resolve, transport=transport)["mime"], "image/png")
         self.assertEqual(seen[0][1], "/picture.htm?token=private")
-        for url in ("https://alibaba.com/a", "https://alicdn.com/a", "https://badalicdn.com/a", "https://img.alicdn.com.evil/a", "https://user:secret@img.alicdn.com/a", "http://img.alicdn.com/a"):
+        for url in ("https://alibaba.com/a", "https://badalicdn.com/a", "https://img.alicdn.com.evil/a", "https://user:secret@img.alicdn.com/a", "http://img.alicdn.com/a"):
             with self.subTest(url=url), self.assertRaises(assets.ImageAssetError) as caught:
                 assets.fetch_image(url, resolver=resolve, transport=transport)
             self.assertNotIn("secret", str(caught.exception))
@@ -231,7 +360,7 @@ class ImageAssetsTests(unittest.TestCase):
             raise assets._ImageRedirect('/again')
         with self.assertRaises(assets.ImageAssetError):
             assets.fetch_image('https://clouddisk.alibaba.com/a', resolver=lambda h, d: ['8.8.8.8'], transport=loop)
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 5)
         with self.assertRaises(assets.ImageAssetError):
             assets.fetch_image('https://clouddisk.alibaba.com/a',
                 resolver=lambda h, d: ['8.8.8.8'] if h == 'clouddisk.alibaba.com' else ['10.0.0.1'], transport=transport)

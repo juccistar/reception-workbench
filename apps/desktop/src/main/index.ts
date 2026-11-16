@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, safeStorage, screen, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, screen, shell, type IpcMainInvokeEvent, type WebFrameMain } from 'electron';
 import { productUrl, readOriginal, validateReference } from './media-host';
+import { SUPPLEMENT_MAX_FILE_BYTES } from '../shared/media-limits';
 import { copyProductText } from './clipboard-host';
 import { createWindowsWhatsAppMerchantBroker } from './whatsapp-merchant-broker';
 import type { WhatsAppMerchantContext } from '../shared/whatsapp-account';
@@ -11,10 +12,10 @@ import { createWindowsLauncherActivation } from './launcher-activation';
 import { createModelSettingsStore } from './model-settings-store';
 import { ModelConfigHost } from './model-config-host';
 import { modelBudgetEnvironment } from './model-budget-environment';
-import { TranslationHost } from './translation-host';
-import { TranslationActivationHost } from './translation-activation-host';
-import { importLegacyTranslation } from './legacy-model-import';
-import { createSharedTranslationStore } from './shared-translation';
+import { retireLegacyTranslation } from './translation-retirement';
+import { createExitDialogHost } from './exit-dialog-host';
+import { FeishuCredentialStore } from './feishu-credentials';
+import { FeishuConfigHost } from './feishu-config-host';
 import { createWindowsUserEncryption } from './windows-user-encryption';
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -128,7 +129,7 @@ let refreshLauncherCompanyName: (() => void) | null = null;
 let closing = false;
 let canDestroy = false;
 let receptionIntent = 0;
-let preferences: Preferences = { nav_preference:'expanded', details_preference:'expanded', list_width:272, details_width:360, requirements_ratio:0.68 };
+let preferences: Preferences = { nav_preference:'expanded', details_preference:'expanded', list_width:280, details_width:334, requirements_ratio:0.68 };
 let preferenceWrites = Promise.resolve();
 let storageBusy = false;
 let storageTask: StorageRequest | null = null;
@@ -146,15 +147,26 @@ let closeMerchantContext: (() => Promise<void>) | null = null;
 function abortImages() { for (const controller of imageRequests.values()) controller.abort(); for (const controller of imageCopies) controller.abort(); }
 async function revokeActivation() { const close = closeActivation, context = closeMerchantContext; closeActivation = closeMerchantContext = null; await Promise.all([close?.(), context?.()]); }
 const methods = new Set<string>(API_METHODS);
-let translationCoordinator: TranslationHost | null = null;
 let modelSyncTimer: ReturnType<typeof setInterval> | null = null;
-function translations(): TranslationHost {
-  return translationCoordinator ??= new TranslationHost({
-    mode, dataRoot, legacyDirectory: path.join(bootstrapPaths.stateDir, 'translation-credentials', mode),
-    encryption: safeStorage, invoke: call, confirm,
-    canWrite: () => !!backend && !closing && !storageBusy && !updateTask,
-  });
+let feishuConfigHost: FeishuConfigHost | null = null;
+let feishuSyncPending = false;
+function feishuHost(): FeishuConfigHost {
+  const ready = () => { if (!backend || closing || storageBusy || updateTask || backendStartPromise) throw new Error('工作区暂不可修改飞书配置。'); };
+  return feishuConfigHost ??= new FeishuConfigHost(new FeishuCredentialStore(path.join(bootstrapPaths.stateDir, 'feishu-credentials', mode), createWindowsUserEncryption()), call, mode, dataRoot, ready);
 }
+function synchronizeFeishu(): void {
+  if (!backend || closing || storageBusy || updateTask || backendStartPromise || feishuSyncPending) return;
+  feishuSyncPending = true;
+  void feishuHost().synchronize().catch(() => {}).finally(() => { feishuSyncPending = false; });
+}
+const exitDialogHost = createExitDialogHost<BrowserWindow, WebFrameMain, IpcMainInvokeEvent>({
+  currentFrame: target => target.isDestroyed() || target.webContents.isDestroyed() ? null : target.webContents.mainFrame,
+  isSource: (event, target, frame) => {
+    try { validSender(event); return target === window && event.sender === target.webContents && event.senderFrame === frame && target.webContents.mainFrame === frame; }
+    catch { return false; }
+  },
+  send: (target, event) => { if (target.isDestroyed() || target.webContents.isDestroyed()) throw new Error('窗口已关闭。'); target.webContents.send('reception:exit-dialog', event); },
+});
 
 function validSender(event: IpcMainInvokeEvent) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('无效的操作来源。');
@@ -438,29 +450,22 @@ function installIPC() {
     validSender(event); mediaReady();
     await copyProductText(call, reference, mediaReady, text => clipboard.writeText(text));
   });
-  const translationActivation = new TranslationActivationHost({ dataRoot, invoke: call, readModels: async () => (await createModelSettingsStore()).read(), canWrite: () => !!backend && !backendStartPromise && !closing && !storageBusy && !updateTask, confirm });
-  ipcMain.handle('reception:translation:import-legacy', async event => {
-    validSender(event);
-    if (closing || storageBusy || updateTask) throw new Error('工作区正在关闭或管理数据。');
-    await importLegacyTranslation(await createModelSettingsStore(), await createSharedTranslationStore(createWindowsUserEncryption(), mode), confirm);
-  });
-  ipcMain.handle('reception:translation:get', async event => { validSender(event); return translationActivation.get(); });
-  ipcMain.handle('reception:translation:enable', async (event, enabled: unknown) => { validSender(event); return translationActivation.set(enabled); });
-  ipcMain.handle('reception:translation:clear', async event => {
-    validSender(event);
-    if (closing || storageBusy || updateTask) throw new Error('工作台正在退出或管理数据。');
-    if (!(await confirm('清理聊天译文', '清除本商家的聊天译文缓存？', '原始消息、采购事实、草稿和发送回执不会删除。之后重新翻译可能产生费用。', '清除译文'))) return { removed: 0 };
-    return call('clear_translation_cache');
-  });
+  ipcMain.handle('reception:exit-dialog:respond', (event, value: unknown) => exitDialogHost.respond(event, value));
+  window?.on('closed', () => exitDialogHost.cancel());
+  window?.webContents.on('did-start-navigation', () => exitDialogHost.cancel());
+  ipcMain.handle('reception:feishu:save', async (event, input) => { validSender(event); return feishuHost().save(input); });
+  ipcMain.handle('reception:feishu:grant', async (event, input) => { validSender(event); await feishuHost().synchronize(); return feishuHost().grant(input); });
   ipcMain.handle('reception:models:summary', async event => { validSender(event); return (await createModelSettingsStore()).read(); });
-  ipcMain.handle('reception:models:launcher', async event => {
-    validSender(event);
+  const openLauncher = async (page: 'home' | 'models') => {
     const args = app.isPackaged ? [] : [path.resolve(process.argv[1])];
+    args.push(`--launcher-page=${page}`);
     const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;
     for (const key of Object.keys(env)) if (/^(ACCIO_|RECEPTION_)/i.test(key)) delete env[key];
     const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', env });
     await new Promise<void>((resolve, reject) => { child.once('error', reject); child.once('spawn', () => { child.unref(); resolve(); }); });
-  });
+  };
+  ipcMain.handle('reception:models:launcher', async event => { validSender(event); await openLauncher('models'); });
+  ipcMain.handle('reception:launcher:open', async event => { validSender(event); await openLauncher('home'); });
   ipcMain.handle('reception:launch:get', async event => { validSender(event); return accioLaunchInfo(); });
   ipcMain.handle('reception:launch:copy', async event => { validSender(event); return copyAccioLaunchInstructions(); });
   ipcMain.handle('reception:update:get', async event => { validSender(event); return (await getUpdateHost()).getInfo(); });
@@ -493,6 +498,7 @@ function installIPC() {
     if (mode==='live'&&method==='check_ai'&&!(await confirm('合成 AI 检测','执行一次合成 AI 检测？','会消耗一次 AI 生成，不发送客户消息或写飞书；失败不会自动重试。请先暂停接待。','开始一次检测'))) return { cancelled:true };
     if (mode==='live'&&method==='run_outbox'&&!(await confirm('同步飞书待办','执行待办同步？','仅处理本账号已经保存的需求同步任务；未知提交不会换键重发。','同步待办'))) return { cancelled:true };
     if (method==='set_reception' && params.enabled===true && intent!==receptionIntent) return call('get_snapshot');
+    if (method === 'check_feishu') await feishuHost().synchronize();
     return call(method,params);
   });
   const supplementReady = () => {
@@ -502,7 +508,7 @@ function installIPC() {
   const chooseSupplements = async (conversationId: unknown, multiple: boolean) => {
     validateConversation(conversationId); supplementReady();
     const selected = await dialog.showOpenDialog(window!, { title: '选择业务补充附件', properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
-      filters: [{ name: '图片、PDF 和 UTF-8 文本', extensions: ['png', 'jpg', 'jpeg', 'webp', 'pdf', 'txt', 'md', 'csv'] }] });
+      filters: [{ name: '图片、PDF 和 UTF-8 文本', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'pdf', 'txt', 'md', 'csv'] }] });
     if (selected.canceled || !selected.filePaths.length) return null;
     supplementReady();
     return receivePaths(selected.filePaths, supplementUpload(conversationId), supplementReady);
@@ -529,7 +535,7 @@ function installIPC() {
     const image = items.find(item => item.types.includes('image/png'));
     if (!image) return { supplement: null, errors: [] };
     const blob = await image.getType('image/png');
-    if (blob.size > 6 * 1024 * 1024) return { supplement: null, errors: ['单个附件不能超过 6 MiB。'] };
+    if (blob.size > SUPPLEMENT_MAX_FILE_BYTES) return { supplement: null, errors: ['单个附件不能超过 20 MiB。'] };
     supplementReady();
     const bytes = Buffer.from(await blob.arrayBuffer());
     return receiveUploads([{ name: '剪贴板图片.png', content_b64: bytes.toString('base64') }], supplementUpload(conversationId), supplementReady);
@@ -574,6 +580,7 @@ async function startBackend() {
       const captured = readBootstrap(bootstrapPaths.configFile);
       writeBootstrap(bootstrapPaths.configFile, { ...captured, lastBackup: { path: prepared.backup, completedAt: Date.now() } }, captured);
     }
+    await retireLegacyTranslation(bootstrapPaths.stateDir, mode);
     const command = [...runner.prefix, '--mode', mode, '--data-dir', dataRoot];
     if (expectedSeller) command.push('--seller-id', expectedSeller);
     if (option('--workctl')) command.push('--workctl', option('--workctl'));
@@ -582,7 +589,7 @@ async function startBackend() {
       // Independent WhatsApp business events never cross the merchant bridge.
       if (typeof value?.event === 'string' && value.event.startsWith('whatsapp.')) return;
       if (window && !window.isDestroyed()) window.webContents.send('reception:event', value);
-      if (value?.event === 'state.changed') { updateVerifiedTitle(); refreshLauncherCompanyName?.(); }
+      if (value?.event === 'state.changed') { updateVerifiedTitle(); refreshLauncherCompanyName?.(); synchronizeFeishu(); }
     });
     await backend.invoke('get_snapshot');
     const modelHost = new ModelConfigHost(await createModelSettingsStore(), (method, params) => call(method, params));
@@ -590,6 +597,7 @@ async function startBackend() {
     await modelHost.synchronize();
     let syncingModels = false;
     modelSyncTimer = setInterval(() => {
+      synchronizeFeishu();
       if (syncingModels || closing || !backend) return;
       syncingModels = true;
       void modelHost.read().then(async settings => {
@@ -606,26 +614,25 @@ async function startBackend() {
   } finally { await release(); }
 }
 async function savePendingEdits(target: BrowserWindow): Promise<boolean> {
-  let noUnsaved=true;
-  try { noUnsaved=await target.webContents.executeJavaScript('window.dispatchEvent(new Event("beforeunload", {cancelable:true}))'); } catch { noUnsaved=false; }
-  if (!noUnsaved) {
-    const decision = await dialog.showMessageBox(target,{type:'question',title:'退出询盘接待助手',message:'还有未保存或尚未确认保存的编辑',detail:'可以保存草稿后退出。政策或设置表单请先留在窗口中保存；放弃只影响未保存编辑，不会撤回平台已提交的操作。',buttons:['继续编辑','保存草稿并退出','放弃编辑并退出'],defaultId:0,cancelId:0,noLink:true});
-    if(decision.response===0)return false;
-    if(decision.response===1){
-      let saved=false;
-      try { saved=await target.webContents.executeJavaScript('new Promise(resolve=>{const timer=setTimeout(()=>resolve(false),20000);window.dispatchEvent(new CustomEvent("reception:save-before-close",{detail:{finish:value=>{clearTimeout(timer);resolve(value===true);}}}));})'); } catch { /* keep editor open */ }
-      if(!saved){await dialog.showMessageBox(target,{type:'info',title:'编辑仍然保留',message:'尚未确认全部保存，请留在窗口中处理。',detail:'政策与设置表单需手动保存；草稿保存失败或保存期间继续输入也会阻止退出。',buttons:['继续编辑']});return false;}
-    }
+  let noUnsaved = false;
+  try { noUnsaved = await target.webContents.executeJavaScript('window.dispatchEvent(new Event("beforeunload", {cancelable:true}))'); } catch { /* Keep an unavailable editor open. */ }
+  if (noUnsaved) return true;
+  let failed = false;
+  while (!target.isDestroyed() && !target.webContents.isDestroyed()) {
+    if (await exitDialogHost.request(target, failed ? 'save_failed' : undefined) !== 'save') return false;
+    let saved = false;
+    try { saved = await target.webContents.executeJavaScript('new Promise(resolve=>{const timer=setTimeout(()=>resolve(false),20000);window.dispatchEvent(new CustomEvent("reception:save-before-close",{detail:{finish:value=>{clearTimeout(timer);resolve(value===true);}}}));})'); } catch { /* Keep the editor and its current input. */ }
+    if (saved) return true;
+    failed = true;
   }
-  return true;
+  return false;
 }
 async function stopBackendForClose(target: BrowserWindow, allowForce: boolean): Promise<void> {
   closing=true; ++receptionIntent;
   abortImages();
   await revokeActivation();
   if (modelSyncTimer) { clearInterval(modelSyncTimer); modelSyncTimer = null; }
-  translationCoordinator?.stop();
-  // Keep editing disabled through every wait/force-exit reminder after revocation.
+    // Keep editing disabled through every wait/force-exit reminder after revocation.
   target.setEnabled(false);
   target.setTitle('询盘接待助手 · 正在停止后台并保存结果…');
   target.webContents.send('reception:event',{event:'backend.closing',data:{message:'正在撤销新发送并等待在途结果保存。'}});
@@ -783,7 +790,7 @@ else {
     }
     } finally { await releaseStart(); }
   }).catch(()=>{dialog.showErrorBox('工作台未能启动','请检查程序组件和本地目录权限，保留已有数据后重试。');app.exit(2);});
-  app.on('window-all-closed',()=>{translationCoordinator?.stop();if(!closing)void (async()=>{await backend?.shutdown();})().finally(()=>app.quit());});
+  app.on('window-all-closed',()=>{if(!closing)void (async()=>{await backend?.shutdown();})().finally(()=>app.quit());});
 }
 }
 void start().catch(() => app.exit(2));

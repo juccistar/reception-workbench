@@ -2,7 +2,10 @@ import asyncio
 import base64
 import hashlib
 import io
+from pathlib import Path
+import tempfile
 import threading
+from unittest.mock import patch
 
 from PIL import Image
 import unittest
@@ -17,12 +20,37 @@ from reception_service.model_providers.runtime import ModelRuntime
 
 
 class InputOwnershipRuntimeTest(unittest.TestCase):
+    def setUp(self):
+        budget = tempfile.TemporaryDirectory()
+        self.addCleanup(budget.cleanup)
+        self.enterContext(patch('reception_service.model_request_budget._directory',
+                                return_value=Path(budget.name) / 'model-budget'))
+
     def make_live(self, router):
         live = LiveIntegration.__new__(LiveIntegration)
         live.settings = {}
         live._model_router = router
         live._query_state = threading.local()
         return live
+
+    def test_owner_waits_for_both_caller_and_runtime_in_either_order(self):
+        from reception_service.model_media import OwnedInput
+        before = PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes']
+        for runtime_first in (True, False):
+            owner = OwnedInput(1024)
+            finish = owner.transfer()
+            if runtime_first:
+                finish()
+            else:
+                owner.close_if_owned()
+            self.assertEqual(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], before + 1024)
+            if runtime_first:
+                owner.close_if_owned()
+            else:
+                finish()
+            finish()
+            owner.close_if_owned()
+            self.assertEqual(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], before)
 
     def test_resolve_failure_returns_input_reservation(self):
         router = ModelRouter()
@@ -68,6 +96,14 @@ class InputOwnershipRuntimeTest(unittest.TestCase):
             self.assertGreater(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], before)
             return {'original_b64': base64.b64encode(data).decode(), 'mime': 'image/png', 'sha256': sha}
         live._whatsapp_image_resolver = resolve
+        generate = fixture.router.generate
+        class CheckedResult(dict):
+            def get(self, key, default=None):
+                if key == 'image_input_evidence':
+                    self_test.assertGreater(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], before)
+                return super().get(key, default)
+        self_test = self
+        fixture.router.generate = lambda *args, **kwargs: CheckedResult(generate(*args, **kwargs))
         context = {'task_mode': 'whatsapp_reply',
                    'model_image_refs': [{'source_id': 's', 'source_version': 'v', 'role': 'buyer', 'image_id': 'i', 'sha256': sha}],
                    'whatsapp_messages': [{'source_id': 's', 'role': 'buyer', 'media': {'source_version': 'v'}}]}
@@ -139,7 +175,7 @@ class InputOwnershipRuntimeTest(unittest.TestCase):
 
     def test_timed_out_cleanup_keeps_owner_until_task_finishes(self):
         runtime = ModelRuntime(cleanup_timeout=.03)
-        entered, release, finished, cancelled = (threading.Event() for _ in range(4))
+        entered, release, finished, cancelled, settled = (threading.Event() for _ in range(5))
         async def operation():
             entered.set()
             try:
@@ -150,7 +186,7 @@ class InputOwnershipRuntimeTest(unittest.TestCase):
         errors = []
         def invoke():
             try:
-                runtime.run('reception', operation, cancel=cancelled, on_complete=finished.set)
+                runtime.run('reception', operation, cancel=cancelled, on_complete=finished.set, on_finished=settled.set)
             except ServiceError as exc:
                 errors.append(exc.code)
         thread = threading.Thread(target=invoke)
@@ -162,4 +198,7 @@ class InputOwnershipRuntimeTest(unittest.TestCase):
         self.assertFalse(finished.is_set())
         release.set()
         self.assertTrue(finished.wait(2))
+        # Input ownership ends before the shared-budget release and completion
+        # callback. Wait for the full lifecycle before applying the 30ms close.
+        self.assertTrue(settled.wait(2))
         runtime.close()

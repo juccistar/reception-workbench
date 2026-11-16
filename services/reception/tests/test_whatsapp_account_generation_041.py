@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import uuid
 
 from reception_service.errors import ServiceError
@@ -50,6 +51,8 @@ class Provider:
 class AccountGenerationTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
+        self.enterContext(patch('reception_service.model_request_budget._directory',
+                                return_value=Path(self.temp.name) / 'model-budget'))
         self.events = queue.Queue()
         self.service = WhatsAppAccountService(Path(self.temp.name) / 'account', str(uuid.uuid4()), self.events.put)
         self.service._wa_set_account(ACCOUNT, 'epoch', 'connected')
@@ -115,6 +118,17 @@ class AccountGenerationTest(unittest.TestCase):
         request = self.service.call('_wa_get_context_request', {'operation_id': operation})
         self.service.call('_wa_set_merchant_context', {'request': request, 'context': self.lease(request, revision)})
         return self.service.call('_wa_prepare_send', {'operation_id': operation})
+
+    def test_disabled_images_do_not_block_generation_and_message_count_applies(self):
+        self.ingest(mid='buyer', image=True)
+        request = self.event('whatsapp.context.requested')
+        lease = self.lease(request)
+        lease['context'].update(reception_images_enabled=False, context_message_count=1)
+        self.service.call('_wa_set_merchant_context', {'request': request, 'context': lease})
+        self.event('whatsapp.send.requested')
+        payload = json.loads(self.provider.calls[-1]['user_payload'])['context']
+        self.assertEqual(len(payload['whatsapp_messages']), 1)
+        self.assertEqual(payload['image_transport'], 'none')
 
     def test_unchecked_model_can_generate_with_current_configuration(self):
         self.service.set_whatsapp_reception(False)
@@ -214,7 +228,7 @@ class AccountGenerationTest(unittest.TestCase):
             await owned_sync(lambda: release.wait(15))
             return {'output': {}}
         self.provider.generate = blocked
-        self.service.router.generate = lambda *args, **kwargs: original_generate(*args, **kwargs, deadline=time.monotonic() + 4)
+        self.service.router.generate = lambda *args, **kwargs: original_generate(*args, **{**kwargs, 'deadline': time.monotonic() + 4})
         try:
             self.ingest()
             request = self.event('whatsapp.context.requested')
@@ -245,6 +259,63 @@ class AccountGenerationTest(unittest.TestCase):
             self.assertEqual(self.service.repo.get('generation_attempt', _key(ACCOUNT, CHAT, 'buyer'))['count'], 2)
         finally:
             release.set()
+
+    def _settings_change_cancels_blocked_generation(self, setting, value, image=False):
+        import hashlib
+        import sqlite3
+        from contextlib import closing
+        from reception_service.model_providers.owned_sync import owned_sync
+        from reception_service.model_providers.runtime import ModelRuntime
+        budget = Path(self.temp.name) / 'settings-budget'
+        self.service.router._runtime = ModelRuntime(cleanup_timeout=.15, budget_directory=budget)
+        release, started = threading.Event(), threading.Event()
+        async def blocked(**kwargs):
+            kwargs['before_send']()
+            started.set()
+            await owned_sync(lambda: release.wait(10))
+            return {'output': {'reply_messages': [{'body': 'late', 'reply_sources': []}], 'wa_summary': 'late'}}
+        self.provider.generate = blocked
+        try:
+            self.ingest(image=image)
+            if image:
+                fields = {'account_id': ACCOUNT, 'connection_epoch': 'epoch', 'chat_id': CHAT, 'message_id': 'buyer', 'source_version': _key(ACCOUNT, 'epoch', CHAT, 'buyer', '10')}
+                tid = self.service.call('_wa_media_begin', {**fields, 'mime_type': 'image/png'})['transfer_id']
+                self.service.call('_wa_media_chunk', {**fields, 'transfer_id': tid, 'offset': 0, 'data_base64': base64.b64encode(PNG).decode()})
+                self.service.call('_wa_media_finish', {**fields, 'transfer_id': tid, 'size': len(PNG), 'sha256': hashlib.sha256(PNG).hexdigest()})
+            request = self.event('whatsapp.context.requested')
+            initial = self.lease(request)
+            initial['context'].update(reception_images_enabled=True, context_message_count=50)
+            self.service.call('_wa_set_merchant_context', {'request': request, 'context': initial})
+            self.assertTrue(started.wait(5))
+            job = self.service._generation_active
+            unrelated = dict(request, merchant_id=str(uuid.uuid4()))
+            self.assertFalse(self.service.call('_wa_check_generation_context', {'request': unrelated, 'context': None, 'error': 'unavailable'})['active'])
+            self.assertFalse(job['cancel'].is_set())
+            changed = self.lease(request, 'b' * 64)
+            changed['context'].update(initial['context'])
+            changed['context'][setting] = value
+            self.assertFalse(self.service.call('_wa_check_generation_context', {'request': request, 'context': changed})['active'])
+            self.assertTrue(job['cancel'].is_set())
+            job['thread'].join(3)
+            self.assertFalse(job['thread'].is_alive())
+            self.assertIs(self.service._generation_active, job)
+            with closing(sqlite3.connect(budget / 'budget.sqlite3')) as db:
+                self.assertEqual(db.execute('SELECT heavy FROM requests WHERE granted=1').fetchall(), [(int(image),)])
+            self.assertEqual(self.service.repo.list('operation'), [])
+            release.set()
+            deadline = time.monotonic() + 5
+            while self.service._generation_active is job and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertIsNot(self.service._generation_active, job)
+            self.assertEqual(self.service.repo.list('operation'), [])
+        finally:
+            release.set()
+
+    def test_image_setting_change_cancels_and_holds_image_budget(self):
+        self._settings_change_cancels_blocked_generation('reception_images_enabled', False, image=True)
+
+    def test_message_count_change_cancels_and_holds_budget(self):
+        self._settings_change_cancels_blocked_generation('context_message_count', 10)
 
     def test_normal_close_settles_inflight_and_restart_keeps_attempt_count(self):
         from reception_service.model_providers.owned_sync import owned_sync

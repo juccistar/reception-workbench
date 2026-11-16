@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import type { ImageReference, OriginalImage } from '../shared/media';
+import { MAX_ORIGINAL_BYTES, MAX_COPY_PNG_BYTES, MAX_IMAGE_DIMENSION, MAX_IMAGE_PIXELS, IMAGE_TRANSFER_TIMEOUT_MS } from '../shared/media-limits';
 
 const CHUNK = 256 * 1024;
-const MAX = 6 * 1024 * 1024;
+
 type Invoke = <T>(method: string, params: Record<string, unknown>) => Promise<T>;
 let active = 0;
 let copying = false;
@@ -28,7 +29,7 @@ export async function readOriginal(invoke: Invoke, value: unknown, ready: () => 
   if (signal?.aborted) throw new Error('原图读取已取消。');
   active++;
   if (copy) copying = true;
-  const deadline = Date.now() + 30000;
+  const deadline = Date.now() + IMAGE_TRANSFER_TIMEOUT_MS;
   let token: string | undefined;
   let cancelled = false;
   const pending = new Set<Promise<unknown>>();
@@ -70,7 +71,7 @@ export async function readOriginal(invoke: Invoke, value: unknown, ready: () => 
       if (desc.status === 'pending') await new Promise(resolve => setTimeout(resolve, 50));
     } while (desc.status === 'pending');
     if (desc.status === 'failed') throw new Error(desc.error === 'image_too_large' ? '原图过大。' : '原图不可用。');
-    if (desc.status !== 'ready' || !Number.isSafeInteger(desc.size) || desc.size <= 0 || desc.size > (copy ? 80 * 1024 * 1024 : MAX) || !/^[0-9a-f]{64}$/.test(desc.sha256) || (!copy && desc.sha256 !== value.sha256) || (copy && desc.media_type !== 'image/png') || desc.chunk_size !== CHUNK || !['image/png', 'image/jpeg', 'image/webp'].includes(desc.media_type) || !Number.isSafeInteger(desc.width) || !Number.isSafeInteger(desc.height) || desc.width <= 0 || desc.height <= 0 || desc.width > 8192 || desc.height > 8192 || desc.width * desc.height > 20_000_000) throw new Error('原图描述无效。');
+    if (desc.status !== 'ready' || !Number.isSafeInteger(desc.size) || desc.size <= 0 || desc.size > (copy ? MAX_COPY_PNG_BYTES : MAX_ORIGINAL_BYTES) || !/^[0-9a-f]{64}$/.test(desc.sha256) || (!copy && desc.sha256 !== value.sha256) || (copy && desc.media_type !== 'image/png') || desc.chunk_size !== CHUNK || !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(desc.media_type) || !Number.isSafeInteger(desc.width) || !Number.isSafeInteger(desc.height) || desc.width <= 0 || desc.height <= 0 || desc.width > MAX_IMAGE_DIMENSION || desc.height > MAX_IMAGE_DIMENSION || desc.width * desc.height > MAX_IMAGE_PIXELS) throw new Error('原图描述无效。');
     const bytes = Buffer.alloc(desc.size);
     for (let offset = 0; offset < desc.size; offset += CHUNK) {
       const params: Record<string, unknown> = { token, offset, sha256: desc.sha256 };

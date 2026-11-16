@@ -26,6 +26,7 @@ class ResourceBudgetTest(unittest.IsolatedAsyncioTestCase):
                 return {}
 
         with patch('reception_service.image_assets.PROCESS_MEDIA_BUDGET', budget), \
+             patch('reception_service.image_assets.inspect_image', return_value={'width': 1, 'height': 1, 'mime': 'image/png'}), \
              patch('reception_service.image_assets._decode_image_leased', decode), \
              patch('reception_service.model_providers.transport.PROCESS_MEDIA_BUDGET', budget):
             thread = threading.Thread(target=decode_image, args=(b'x', 'image/png'))
@@ -86,3 +87,8 @@ class ResourceBudgetTest(unittest.IsolatedAsyncioTestCase):
         from reception_service.errors import ServiceError
         with self.assertRaises(ServiceError):
             validate_request_budget('', 'x' * (4 * 1024 * 1024 + 1), ())
+        # A 60 MiB batch has a worst-case encoded/serialized footprint above
+        # the 512 MiB request budget, even though it fits the raw batch cap.
+        data = b'x' * (20 * 1024 * 1024)
+        with self.assertRaises(ServiceError):
+            validate_request_budget('', '', [{'data': data}] * 3)

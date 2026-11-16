@@ -159,22 +159,48 @@ class SupplementAttachmentTests(unittest.TestCase):
             with self.subTest(name=name, size=len(data)):
                 with self.assertRaises(ServiceError):
                     self.upload(name, data)
-        for i in range(5):
+        for i in range(10):
             self.upload(f'{i}.txt', b'hello')
         with self.assertRaises(ServiceError):
-            self.upload('six.txt', b'hello')
+            self.upload('eleven.txt', b'hello')
+
+    def test_transparent_png_attachment_keeps_alpha_and_original_bytes(self):
+        with io.BytesIO() as out, Image.new('RGBA', (400, 300), (255, 255, 255, 0)) as image:
+            image.paste((255, 255, 255, 255), (100, 100, 200, 200))
+            image.save(out, 'PNG')
+            original = out.getvalue()
+        item = self.upload('transparent.png', original)['attachments'][0]
+        self.assertTrue(item['preview_data_url'].startswith('data:image/png;base64,'))
+        with Image.open(io.BytesIO(base64.b64decode(item['preview_data_url'].split(',', 1)[1]))) as preview:
+            self.assertEqual(preview.getchannel('A').getextrema(), (0, 255))
+            self.assertLessEqual(max(preview.size), 256)
+        stored = self.service.repo.get('supplement_attachment', item['id'])
+        self.assertEqual(base64.b64decode(stored['original_b64']), original)
+        self.assertLessEqual(len(base64.b64decode(item['preview_data_url'].split(',', 1)[1])), 48 * 1024)
+
+    def test_static_gif_is_accepted_and_animated_gif_is_rejected(self):
+        still = io.BytesIO()
+        Image.new('RGB', (4, 4), 'red').save(still, 'GIF')
+        self.assertEqual(self.upload('still.gif', still.getvalue())['attachments'][0]['media_type'], 'image/gif')
+        animated = io.BytesIO()
+        Image.new('RGB', (4, 4), 'red').save(animated, 'GIF', save_all=True,
+            append_images=[Image.new('RGB', (4, 4), 'blue')], duration=100, loop=0)
+        with self.assertRaises(ServiceError):
+            self.upload('animated.gif', animated.getvalue())
 
     def test_large_upload_reaches_bounded_parser_over_json_lines(self):
         with tempfile.TemporaryDirectory() as folder:
             request = {'id': 'large', 'method': 'upload_supplement_attachment', 'params': {
-                'conversation_id': 'synthetic', 'name': 'large.txt', 'content_b64': b64(b'a' * (6 * 1024 * 1024))}}
-            payload = json.dumps(request) + '\n' + json.dumps({'id': 'stop', 'method': 'shutdown', 'params': {}}) + '\n'
+                'conversation_id': 'synthetic', 'name': 'large.txt', 'content_b64': b64(b'a' * (20 * 1024 * 1024))}}
+            generic = {'id': 'generic', 'method': 'get_settings', 'params': {'padding': 'a' * 2_000_001}}
+            payload = json.dumps(request) + '\n' + json.dumps(generic) + '\n' + json.dumps({'id': 'stop', 'method': 'shutdown', 'params': {}}) + '\n'
             env = dict(os.environ, PYTHONIOENCODING='utf-8')
             result = subprocess.run([sys.executable, '-B', '-m', 'reception_service', '--data-dir', folder],
                                     input=payload, text=True, encoding='utf-8', capture_output=True, env=env, timeout=30)
             responses = [json.loads(line) for line in result.stdout.splitlines()]
             response = next(row for row in responses if row.get('id') == 'large')
             self.assertEqual(response['error']['code'], 'attachment_parse_failed')
+            self.assertTrue(any(row.get('error', {}).get('code') == 'request_too_large' for row in responses))
             self.assertEqual(result.returncode, 0)
 
     def test_five_image_previews_stay_bounded_and_preserve_originals(self):

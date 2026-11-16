@@ -63,7 +63,10 @@ def search_merchant_customers(repo, seller_id, query, limit=25):
         display = _display(name) or _display(buyer)
         if not display:
             continue
-        projection = [seller_id, cid, display, revision]
+        buyer_id = _display(buyer)
+        if not buyer_id:
+            continue
+        projection = [seller_id, cid, display, buyer_id, revision]
         digest = hashlib.sha256(json.dumps(projection, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()
-        result.append({'conversation_id': cid, 'name': display, 'revision': digest})
+        result.append({'conversation_id': cid, 'name': display, 'buyer_id': buyer_id, 'revision': digest})
     return result

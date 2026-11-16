@@ -4,16 +4,19 @@ from __future__ import annotations
 import base64
 import time
 from .errors import ServiceError
-from .image_assets import decode_image, MAX_BYTES, ImageAssetError
+from .image_assets import validate_original, MAX_BYTES, ImageAssetError
+from .media_resources import ResourceLimitError
 
 
-def resolve_whatsapp_images(context, resolver, *, cancel=None, deadline=None):
+def resolve_whatsapp_images(context, resolver, *, cancel=None, deadline=None, owner=None, batch_mib=64):
     """Resolve explicit source-bound refs; resolver(ref) returns an owned asset dict."""
     refs = context.get('model_image_refs', [])
     if not isinstance(refs, list):
         raise ServiceError('photo_input_unavailable', '图片来源无效', stage='context')
-    if refs and not callable(resolver):
+    if refs and (not callable(resolver) or owner is None):
         raise ServiceError('photo_input_unavailable', '图片来源不可用', stage='context')
+    if type(batch_mib) is not int or not 8 <= batch_mib <= 256:
+        raise ServiceError('photo_preparation_budget', '图片总大小超过预算', stage='analysis')
     messages = context.get('whatsapp_messages', [])
     images, manifest = [], []
     total = 0
@@ -29,15 +32,18 @@ def resolve_whatsapp_images(context, resolver, *, cancel=None, deadline=None):
                     or matches[0]['media'].get('source_version') != ref['source_version']
                     or not all(isinstance(ref.get(k), str) and ref[k] for k in ('source_id', 'source_version', 'image_id', 'sha256'))):
                 raise ValueError()
+            # Reserve one resolver's bounded encoded/decoded transient before it allocates.
+            base = owner.lease.amount
+            owner.reserve_more(MAX_BYTES * 4)
             asset = resolver(dict(ref))
             encoded = asset['original_b64']
             if not isinstance(encoded, str) or len(encoded) > ((MAX_BYTES + 2) // 3) * 4:
                 raise ValueError()
             data = base64.b64decode(encoded, validate=True)
             total += len(data)
-            if total > 64 * 1024 * 1024:
+            if total > batch_mib * 1024 * 1024:
                 raise ServiceError('photo_preparation_budget', '图片总大小超过预算', stage='analysis')
-            checked = decode_image(data, asset['mime'])
+            checked = validate_original(data, asset['mime'])
             if checked['sha256'] != ref['sha256'] or asset.get('sha256') != ref['sha256']:
                 raise ValueError()
             alias = 'p' + str(len(images) + 1)
@@ -45,11 +51,16 @@ def resolve_whatsapp_images(context, resolver, *, cancel=None, deadline=None):
                                source_version=ref['source_version'], role=ref['role'], mime=checked['mime'],
                                data=data, sha256=checked['sha256'], width=checked['width'], height=checked['height']))
             manifest.append({k: images[-1][k] for k in ('alias', 'image_id', 'source_id', 'role')})
+            del encoded, asset
+            owner.lease.resize(base + len(data))
         if deadline is not None and time.monotonic() >= deadline:
             raise ServiceError('photo_preparation_timeout', '图片准备超过时间预算', stage='analysis')
         if len({image['source_id'] for image in images}) != len(images) or len({image['image_id'] for image in images}) != len(images):
             raise ValueError()
         return images, manifest
+    except ResourceLimitError as error:
+        raise ServiceError('model_resource_over_limit' if error.code == 'resource_too_large' else 'model_resource_busy',
+                           '模型输入超出资源预算', stage='model') from None
     except ServiceError:
         raise
     except (ValueError, TypeError, KeyError, ImageAssetError):

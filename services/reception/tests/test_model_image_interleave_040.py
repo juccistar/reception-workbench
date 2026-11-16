@@ -15,7 +15,7 @@ from PIL import Image
 from reception_service import image_transfer as transfer
 from reception_service.cached_media import CachedMediaMixin
 from reception_service.media_resources import PROCESS_MEDIA_BUDGET
-from reception_service.model_providers.encoding import image_blocks
+from reception_service.model_providers.encoding import image_blocks, validate_request_budget
 from reception_service.model_providers.transport import ProviderTransport
 
 
@@ -108,15 +108,21 @@ class RealImageInterleaveTest(unittest.TestCase):
         sampler.start()
         worker = None
         token = None
+        filler = None
         try:
             with mock.patch.object(transfer, '_convert', convert):
                 token = host._image_prepare({'id': 'one'}, True)['token']
                 self.assertTrue(converted.wait(15))
-                self.assertEqual(PROCESS_MEDIA_BUDGET.snapshot()['pixel_workers'], 1)
+                snapshot = PROCESS_MEDIA_BUDGET.snapshot()
+                self.assertEqual(snapshot['pixel_workers'], 1)
+                cost = validate_request_budget('x', 'x' * 1_000_000, [item])
+                filler = PROCESS_MEDIA_BUDGET.acquire(snapshot['limit_bytes'] - snapshot['reserved_bytes'] - cost + 1)
                 worker = threading.Thread(target=model_work)
                 worker.start()
                 self.assertFalse(encoded.wait(.15))
                 release.set()
+                filler.close()
+                filler = None
                 worker.join(15)
                 self.assertFalse(worker.is_alive())
                 self.assertFalse(errors, errors)
@@ -137,6 +143,8 @@ class RealImageInterleaveTest(unittest.TestCase):
                 self.assertEqual(PROCESS_MEDIA_BUDGET.snapshot()['reserved_bytes'], 0)
         finally:
             release.set()
+            if filler is not None:
+                filler.close()
             if worker:
                 worker.join(15)
             host._image_transfer_close()

@@ -180,7 +180,7 @@ class ModelRouter:
             return affected
 
     def resolve(self, purpose, required_capabilities=(), *, allow_unchecked=False):
-        if purpose not in _PURPOSES or type(allow_unchecked) is not bool or (allow_unchecked and purpose != 'reception'):
+        if purpose not in _PURPOSES or type(allow_unchecked) is not bool or (allow_unchecked and purpose not in ('reception', 'translation')):
             raise _failure()
         try:
             required = tuple(sorted(set(required_capabilities)))
@@ -209,7 +209,7 @@ class ModelRouter:
         with self._lock:
             if self._closed or self._settings is None or self._authority != path:
                 raise _failure('model_configuration_stale')
-            required = () if snapshot.allow_unchecked and snapshot.purpose == 'reception' else snapshot.required_capabilities
+            required = () if snapshot.allow_unchecked and snapshot.purpose in _PURPOSES else snapshot.required_capabilities
             local, local_rev = _selected(self._settings, snapshot.purpose, required)
             remote, remote_rev = _selected(authority, snapshot.purpose, required)
             expected = (snapshot.route_revision, snapshot.config_revision, snapshot.credential_revision, snapshot.capability_revision)
@@ -227,7 +227,7 @@ class ModelRouter:
         started = time.monotonic()
         try:
             images = tuple(dict(item) for item in images)
-            if sum(len(item['data']) for item in images) > 64 * 1024 * 1024:
+            if sum(len(item['data']) for item in images) > 256 * 1024 * 1024:
                 raise failure('model_invalid_input')
         except (TypeError, KeyError, ValueError):
             raise failure('model_invalid_input') from None

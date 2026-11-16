@@ -117,15 +117,18 @@ class ModelInputTests(unittest.TestCase):
         context = {'model_image_refs': refs, 'whatsapp_messages': [
             {'source_id': 'wa1', 'role': 'buyer', 'media': {'source_version': 'v1'}},
             {'source_id': 'wa2', 'role': 'seller', 'media': {'source_version': 'v2'}}]}
-        images, manifest = resolve_whatsapp_images(context, lambda ref: asset)
+        from reception_service.model_media import OwnedInput
+        owner = OwnedInput(1024)
+        self.addCleanup(owner.close)
+        images, manifest = resolve_whatsapp_images(context, lambda ref: asset, owner=owner)
         self.assertEqual([i['alias'] for i in images], ['p1', 'p2'])
         self.assertEqual([i['role'] for i in images], ['buyer', 'seller'])
         self.assertEqual(len(manifest), 2)
         context['whatsapp_messages'][0]['media']['source_version'] = 'changed'
         with self.assertRaises(ServiceError):
-            resolve_whatsapp_images(context, lambda ref: asset)
+            resolve_whatsapp_images(context, lambda ref: asset, owner=owner)
         with self.assertRaises(ServiceError):
-            resolve_whatsapp_images({'model_image_refs': refs, 'whatsapp_messages': []}, lambda ref: asset)
+            resolve_whatsapp_images({'model_image_refs': refs, 'whatsapp_messages': []}, lambda ref: asset, owner=owner)
         self.assertEqual(resolve_whatsapp_images({}, None), ([], []))
 
     def test_whatsapp_facade_checks_and_propagates_model_snapshot(self):

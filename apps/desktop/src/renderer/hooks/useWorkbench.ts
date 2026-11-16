@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { ApiMethod, ChatSendParams, ConversationDetail, Draft, ExecutorHealth, Job, JobAck, Outbox, Preferences, ReceptionBridge, ServiceEvent, Snapshot, Supplement, SupplementAttachment, SupplementAttachmentBatch, SupplementUpload } from '../../shared/api';
+import { SUPPLEMENT_MAX_FILE_BYTES, SUPPLEMENT_MAX_TOTAL_BYTES, SUPPLEMENT_MAX_FILES } from '../../shared/media-limits';
 import { executorHealth } from '../executorHealth';
 import { createEventRefresh } from './eventRefresh';
 
@@ -28,7 +29,7 @@ export interface EditorState {
   manualError: string;
   send: ChatSend | null;
 }
-const defaults: Preferences = { nav_preference: 'expanded', details_preference: 'expanded', list_width: 272, details_width: 360, requirements_ratio: 0.68 };
+const defaults: Preferences = { nav_preference: 'expanded', details_preference: 'expanded', list_width: 272, details_width: 334, requirements_ratio: 0.68 };
 const isActive = (job: Job) => job.status === 'queued' || job.status === 'running';
 const sendUnsettled = (send: ChatSend | null) => !!send && ['requesting', 'retry', 'queued', 'running', 'unknown'].includes(send.status);
 const isSendJob = (job: Job) => ['send_chat', 'confirm_send', 'automatic_send'].includes(job.kind);
@@ -115,7 +116,28 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const caseOwners = useRef(new Map<string, string>());
   const dirtyForms = useRef(new Set<string>());
   const setFormDirty = useCallback((id: string, dirty: boolean) => { if (dirty) dirtyForms.current.add(id); else dirtyForms.current.delete(id); }, []);
-  const canLeaveForms = useCallback(() => { if (!dirtyForms.current.size) return true; setNotice('当前表单有未保存修改，请先保存或放弃修改后再切换。'); return false; }, []);
+  const formSavers = useRef(new Map<string, () => Promise<boolean>>());
+  const registerFormSaver = useCallback((id: string, save: () => Promise<boolean>) => {
+    formSavers.current.set(id, save);
+    return () => { if (formSavers.current.get(id) === save) formSavers.current.delete(id); };
+  }, []);
+  const formSaveRun = useRef<Promise<boolean> | null>(null);
+  const canLeaveForms = useCallback((): Promise<boolean> => {
+    if (formSaveRun.current) return formSaveRun.current;
+    const pending = (async () => {
+      try {
+        for (const id of [...dirtyForms.current]) {
+          const save = formSavers.current.get(id);
+          if (!save || !(await save())) { setNotice('修改尚未保存，请在当前页面重试。'); return false; }
+          dirtyForms.current.delete(id);
+        }
+        return !dirtyForms.current.size;
+      } catch { setNotice('修改尚未保存，请在当前页面重试。'); return false; }
+    })();
+    formSaveRun.current = pending;
+    void pending.finally(() => { if (formSaveRun.current === pending) formSaveRun.current = null; });
+    return pending;
+  }, []);
   const saves = useRef(new Map<string, Promise<boolean>>());
   const manualRequests = useRef(new Map<string, Promise<boolean>>());
   const selectionRef = useRef(selection);
@@ -469,15 +491,15 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const uploadSupplementFiles = useCallback(async (conversationId: string, files: File[]) => updateSupplementAttachments(conversationId, async () => {
     if (!bridge?.uploadSupplementAttachments) throw new Error('当前程序不支持粘贴或拖入附件，请更新程序。');
     const existing = supplements.current.get(conversationId)!.attachments;
-    if (existing.length >= 5) throw new Error('业务补充最多添加 5 个附件。');
+    if (existing.length >= SUPPLEMENT_MAX_FILES) throw new Error('业务补充最多添加 10 个附件。');
     const uploads: SupplementUpload[] = [], errors: string[] = [];
     let total = existing.reduce((sum, file) => sum + file.size, 0);
     for (const file of files) {
-      if (uploads.length + existing.length >= 5) { errors.push('业务补充最多添加 5 个附件。'); break; }
+      if (uploads.length + existing.length >= SUPPLEMENT_MAX_FILES) { errors.push('业务补充最多添加 10 个附件。'); break; }
       const name = file.name || `粘贴图片-${Date.now()}.png`;
-      if (!/\.(png|jpe?g|webp|pdf|txt|md|csv)$/i.test(name)) { errors.push('附件格式不支持，请使用图片、PDF 或 UTF-8 文本。'); continue; }
-      if (file.size < 1 || file.size > 6 * 1024 * 1024) { errors.push('单个附件须大于零且不超过 6 MiB。'); continue; }
-      if (total + file.size > 20 * 1024 * 1024) { errors.push('附件合计不能超过 20 MiB。'); continue; }
+      if (!/\.(png|jpe?g|webp|gif|pdf|txt|md|csv)$/i.test(name)) { errors.push('附件格式不支持，请使用图片、PDF 或 UTF-8 文本。'); continue; }
+      if (file.size < 1 || file.size > SUPPLEMENT_MAX_FILE_BYTES) { errors.push('单个附件须大于零且不超过 20 MiB。'); continue; }
+      if (total + file.size > SUPPLEMENT_MAX_TOTAL_BYTES) { errors.push('附件合计不能超过 64 MiB。'); continue; }
       try {
         const content_b64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -527,15 +549,15 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
       const finish = (event as CustomEvent<{ finish?: (saved: boolean) => void }>).detail?.finish;
       if (typeof finish !== 'function') return;
       void (async () => {
-        if (dirtyForms.current.size) { finish(false); return; }
+        if (!(await canLeaveForms())) { finish(false); return; }
         for (const [conversationId, entry] of supplements.current) if (entry.attachmentBusy || ((entry.dirty || entry.saving) && !(await saveSupplement(conversationId)))) { finish(false); return; }
         for (const [conversationId, entry] of editors.current) if ((entry.dirty || entry.saving) && !(await saveDraft(conversationId))) { finish(false); return; }
-        finish(!dirtyForms.current.size && ![...editors.current.values()].some(entry => entry.dirty || entry.saving));
+        finish(!dirtyForms.current.size && ![...supplements.current.values()].some(entry => entry.dirty || entry.saving || entry.attachmentBusy) && ![...editors.current.values()].some(entry => entry.dirty || entry.saving));
       })().catch(() => finish(false));
     };
     window.addEventListener('reception:save-before-close', saveForClose);
     return () => window.removeEventListener('reception:save-before-close', saveForClose);
-  }, [saveDraft, saveSupplement]);
+  }, [saveDraft, saveSupplement, canLeaveForms]);
 
   const editBody = useCallback((body: string) => {
     const key = selectionRef.current.conversationId;
@@ -574,13 +596,12 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     caseId ??= '';
     // A manual choice of an older case pins the view; choosing the current case resumes following.
     const sameConversation = selectionRef.current.conversationId === conversationId;
-    if (sameConversation && caseId) pinnedCase.current = caseId === detailRef.current?.conversation.case_id ? null : caseId;
-    if (!sameConversation) { pinnedCase.current = null; caseId = ''; }
     // Only an explicit customer selection may retry empty history; passive detail refreshes stay local.
+    if (!(await canLeaveForms()) || !(await flush())) return false;
     if (sameConversation && (!caseId || selectionRef.current.caseId === caseId)) {
       setPage('reception'); return loadDetail(conversationId, selectionRef.current.caseId, true, true);
     }
-    if (!canLeaveForms() || !(await flush())) return false;
+    pinnedCase.current = sameConversation && caseId === detailRef.current?.conversation.case_id ? null : caseId || null;
     void saveSupplement(selectionRef.current.conversationId);
     const next = { conversationId, caseId };
     selectionRef.current = next; setSelection(next); setDetail(null); detailRef.current = null; setPage('reception');
@@ -588,7 +609,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   }, [flush, loadDetail, canLeaveForms, saveSupplement]);
 
   const navigate = useCallback(async (target: Page) => {
-    if (!canLeaveForms() || !(await flush())) return false;
+    if (!(await canLeaveForms()) || !(await flush())) return false;
     setPage(target); return true;
   }, [flush, canLeaveForms]);
 
@@ -639,9 +660,11 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     return ack;
   }), [action, invoke, updateJobs, reportManualFailure]);
 
-  const changePreferences = useCallback((value: Partial<Preferences>) => {
+  const changePreferences = useCallback(async (value: Partial<Preferences>): Promise<boolean> => {
     setPreferences(previous => ({ ...previous, ...value }));
-    if (bridge) void bridge.savePreferences(value).catch(() => setNotice('布局已调整，但偏好未能保存。'));
+    if (!bridge) return false;
+    try { await bridge.savePreferences(value); return true; }
+    catch { setNotice('布局已调整，但偏好未能保存。'); return false; }
   }, [bridge]);
 
   const mutate = useCallback(async (method: ApiMethod, params: Record<string, unknown>, message?: string) => {
@@ -859,7 +882,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const legacyBatchId = editor?.server?.blocked_batch_id ?? editor?.server?.batch_id;
   const legacyPartialBatch = detail?.reply_batches?.find(batch => batch.batch_id === legacyBatchId && batch.status === 'stopped' && batch.accepted > 0) ?? null;
 
-  return { bridge, snapshot, connected, closing, loading, error, notice, setError, setNotice, aiUnavailable, aiFailureReason, dismissAiUnavailable: () => setAiUnavailable(false), page, selection, detail, detailLoading, detailError, editor, supplement, supplementFor, ensureSupplement, editSupplementFor, editSupplement, saveSupplement, reapplySupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, historyRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, cancelSuggestion, send, editBody, legacyPartialBatch, startNewDraft, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
+  return { bridge, snapshot, connected, closing, loading, error, notice, setError, setNotice, aiUnavailable, aiFailureReason, dismissAiUnavailable: () => setAiUnavailable(false), page, selection, detail, detailLoading, detailError, editor, supplement, supplementFor, ensureSupplement, editSupplementFor, editSupplement, saveSupplement, reapplySupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, historyRequests, preferences, setFormDirty, registerFormSaver, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, cancelSuggestion, send, editBody, legacyPartialBatch, startNewDraft, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
     aiReady, aiReceptionReady, executorReady: health.ready, executorMessage: health.message, sendIssue, generationIssue, reconcileOperation,
     unknownOperations: snapshot?.outbox.filter(item => isSendOperation(item) && item.status === 'unknown' && (item.conversation_id === selection.conversationId || caseOwners.current.get(item.case_id) === selection.conversationId)) ?? [],
     canSave: connected && !closing && !!editor?.dirty,

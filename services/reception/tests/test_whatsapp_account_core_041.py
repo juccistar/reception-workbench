@@ -74,6 +74,45 @@ class AccountCoreTest(unittest.TestCase):
         self.assertEqual(s.get_whatsapp_state()['bindings'][0]['merchant_id'], 'new')
         self.assertTrue(s.get_whatsapp_state()['conversations'][0]['human_owned'])
 
+    def test_selection_survives_restart_pauses_and_preserves_unknown(self):
+        s = self.service
+        self.ingest()
+        s.repo.put('operation', 'op', {'operation_id': 'op', 'account_id': 'account',
+            'connection_epoch': 'epoch', 'chat_id': 'chat', 'status': 'unknown'})
+        before = s.repo.get('operation', 'op').copy()
+        s.set_whatsapp_reception(False, ['merchant-a'], 'account', 'epoch')
+        state = s.get_whatsapp_state()
+        self.assertEqual(state['selected_merchant_ids'], ['merchant-a'])
+        self.assertEqual(state['allowed_merchant_ids'], [])
+        self.assertTrue(state['conversations'][0]['reception_paused'])
+        self.assertFalse(state['conversations'][0]['human_owned'])
+        self.assertEqual(s.repo.get('operation', 'op'), before)
+        s.close()
+        self.service = WhatsAppAccountService(Path(self.temp.name), self.workspace, self.events.append)
+        s = self.service
+        s._wa_set_account('account', 'new-epoch', 'connected')
+        state = s.get_whatsapp_state()
+        self.assertEqual(state['selected_merchant_ids'], ['merchant-a'])
+        self.assertFalse(state['enabled'])
+        self.assertTrue(state['conversations'][0]['reception_paused'])
+        self.assertEqual(s.repo.get('operation', 'op'), before)
+        s.takeover_whatsapp('chat', False, 'account', 'new-epoch')
+        self.assertFalse(s.get_whatsapp_state()['conversations'][0]['reception_paused'])
+        s.set_whatsapp_reception(False, ['merchant-b'], 'account', 'new-epoch')
+        self.assertTrue(s.get_whatsapp_state()['conversations'][0]['reception_paused'])
+        self.assertEqual(s.repo.get('operation', 'op'), before)
+
+    def test_merchant_selection_isolated_between_workspaces(self):
+        self.service.set_whatsapp_reception(False, ['merchant-a'], 'account', 'epoch')
+        other = WhatsAppAccountService(Path(self.temp.name) / 'other', str(uuid.uuid4()), self.events.append)
+        try:
+            other._wa_set_account('second-account', 'other-epoch', 'connected')
+            other.set_whatsapp_reception(False, ['merchant-b'], 'second-account', 'other-epoch')
+            self.assertEqual(other.get_whatsapp_state()['selected_merchant_ids'], ['merchant-b'])
+            self.assertEqual(self.service.get_whatsapp_state()['selected_merchant_ids'], ['merchant-a'])
+        finally:
+            other.close()
+
     def test_rebinding_pauses_contact_until_explicit_resume(self):
         s = self.service
         self.ingest()

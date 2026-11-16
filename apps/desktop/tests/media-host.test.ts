@@ -19,6 +19,21 @@ describe('private media host', () => {
     const image = await readOriginal(invoke, reference, () => {});
     expect(Buffer.from(image.bytes)).toEqual(bytes);
   });
+  it('accepts a 20 MiB GIF and rejects an oversized original descriptor', async () => {
+    const large = Buffer.alloc(20 * 1024 * 1024, 3);
+    const digest = createHash('sha256').update(large).digest('hex');
+    const largeRef = { ...reference, sha256: digest };
+    const largeInvoke: typeof invoke = async <T>(method: string, params: Record<string, unknown>) => {
+      if (method === '_image_status') return { status: 'ready', size: large.length, width: 32768, height: 1, media_type: 'image/gif', sha256: digest, chunk_size: 262144 } as T;
+      if (method === '_image_transfer_chunk') { const offset = params.offset as number; return { offset, sha256: digest, data_b64: large.subarray(offset, offset + 262144).toString('base64') } as T; }
+      return invoke<T>(method, params);
+    };
+    expect((await readOriginal(largeInvoke, largeRef, () => {})).bytes.length).toBe(large.length);
+    const oversized: typeof invoke = async <T>(method: string, params: Record<string, unknown>) => method === '_image_status'
+      ? { status: 'ready', size: large.length + 1, width: 1, height: 1, media_type: 'image/png', sha256: digest, chunk_size: 262144 } as T
+      : largeInvoke<T>(method, params);
+    await expect(readOriginal(oversized, largeRef, () => {})).rejects.toThrow('描述无效');
+  });
   it('rejects forged references and altered chunks', async () => {
     expect(() => validateReference({ ...reference, path: 'x' })).toThrow();
     const corrupt: typeof invoke = async <T>(method: string, params: Record<string, unknown>) => {

@@ -31,6 +31,7 @@ _OFFER_TEXT = ('supplier_product_id', 'specifications', 'moq', 'unit', 'unit_pri
 _OFFER_FIELDS = frozenset((*_OFFER_TEXT, 'product_url', 'tax_included', 'valid_until',
                            'source_type', 'enabled', 'reply_enabled'))
 _DEFAULTS = {'auto_find': True, 'auto_inquiry': True, 'supplier_limit': 3}
+_UNSET = object()
 
 
 def requirement_value(case, field):
@@ -138,15 +139,44 @@ class ProductLibraryMixin(ProductPresentationMixin):
                 (self.seller_id, self.seller_id, self.seller_id)).fetchall()
         return dict(rows)
 
-    def _product_projection(self, product, customer_counts):
+    def _product_customers(self, product_id):
+        with self.repo.lock:
+            rows = self.repo.db.execute("""SELECT json_extract(c.data, '$.buyer_id'),
+                    json_extract(c.data, '$.customer_name'), c.id, k.id
+                FROM entities b
+                JOIN entities k ON k.kind='case' AND k.id=b.id
+                JOIN entities c ON c.kind='conversation' AND c.id=json_extract(b.data, '$.conversation_id')
+                WHERE b.kind='requirement_product_binding'
+                  AND json_extract(b.data, '$.local_product_id')=?
+                  AND json_extract(b.data, '$.seller_id')=? AND json_extract(k.data, '$.seller_id')=?
+                  AND json_extract(c.data, '$.seller_id')=? AND json_extract(b.data, '$.case_id')=b.id
+                  AND json_extract(k.data, '$.case_id')=k.id AND json_extract(c.data, '$.conversation_id')=c.id
+                  AND json_extract(k.data, '$.conversation_id')=c.id
+                  AND json_extract(k.data, '$.buyer_id')=json_extract(c.data, '$.buyer_id')
+                  AND typeof(json_extract(c.data, '$.buyer_id'))='text' AND json_extract(c.data, '$.buyer_id')<>''
+                ORDER BY json_extract(c.data, '$.buyer_id'), c.id, k.id""",
+                (product_id, self.seller_id, self.seller_id, self.seller_id)).fetchall()
+        customers = {}
+        for buyer, name, conversation, case in rows:
+            if buyer not in customers:
+                customers[buyer] = {'buyer_id': buyer, 'customer_name': name, 'conversation_id': conversation,
+                                    'case_id': case, 'case_ids': []}
+            customers[buyer]['case_ids'].append(case)
+        return list(customers.values())
+
+    def _product_projection(self, product, customer_counts, offers=None):
         value = copy.deepcopy(product)
         value.pop('creation_case_id', None)
         value['product_url'] = product_link(product['product_id'])
         value['product_main_image'] = project_main_image(self.repo, product)
         value['customer_count'] = customer_counts.get(product['local_product_id'], 0)
-        value['supplier_count'] = len({o['supplier_id'] for o in self._library_rows('supplier_offer')
-                                       if o['local_product_id'] == product['local_product_id']})
+        offers = offers if offers is not None else self._library_rows('supplier_offer')
+        product_offers = [o for o in offers if o['local_product_id'] == product['local_product_id']]
+        value['supplier_count'] = len({o['supplier_id'] for o in product_offers})
+        value['offer_count'] = len(product_offers)
         task = self.repo.get('procurement_task', product.get('sourcing_task_id')) if product.get('sourcing_task_id') else None
+        specifications = ((task or {}).get('source_context') or {}).get('requirement_fields', {}).get('specifications')
+        value['specifications_summary'] = specifications if isinstance(specifications, str) and specifications.strip() else None
         value['procurement_status'] = task.get('status') if task else None
         return value
 
@@ -154,7 +184,8 @@ class ProductLibraryMixin(ProductPresentationMixin):
         with self._lock:
             products = self._library_rows('library_product')
             counts = self._product_customer_counts()
-            return {'items': [self._product_projection(r, counts) for r in products]}
+            offers = self._library_rows('supplier_offer')
+            return {'items': [self._product_projection(r, counts, offers) for r in products]}
 
     def get_product(self, local_product_id):
         with self._lock:
@@ -164,13 +195,20 @@ class ProductLibraryMixin(ProductPresentationMixin):
             names = {r['supplier_id']: r['name'] for r in suppliers}
             return {'product': self._product_projection(product, self._product_customer_counts()),
                     'offers': [dict(r, supplier_name=names.get(r['supplier_id'], '')) for r in offers],
-                    'suppliers': suppliers,
+                    'suppliers': suppliers, 'customers': self._product_customers(local_product_id),
                     'tasks': [self._task_projection(t) for t in self._library_rows('procurement_task')
                               if t['local_product_id'] == local_product_id]}
 
     def list_suppliers(self):
         with self._lock:
-            return {'items': self._library_rows('supplier')}
+            suppliers = self._library_rows('supplier')
+            products = {p['local_product_id'] for p in self._library_rows('library_product')}
+            counts = {}
+            for offer in self._library_rows('supplier_offer'):
+                if offer['local_product_id'] in products:
+                    counts.setdefault(offer['supplier_id'], set()).add(offer['local_product_id'])
+            return {'items': [dict(s, region=s.get('region') or None,
+                                   product_count=len(counts.get(s['supplier_id'], set()))) for s in suppliers]}
 
     def get_supplier(self, supplier_id):
         with self._lock:
@@ -197,10 +235,12 @@ class ProductLibraryMixin(ProductPresentationMixin):
         return copy.deepcopy(result)
 
     def save_supplier(self, name, platform, platform_supplier_id, product_url, contact, notes,
-                      client_mutation_id, supplier_id=None, expected_revision=None):
+                      client_mutation_id, supplier_id=None, expected_revision=None, region=_UNSET):
         data = {'name': _text(name, 160, empty=False), 'platform': _text(platform, 40, empty=False),
                 'platform_supplier_id': _text(platform_supplier_id, 200) if platform_supplier_id else None,
                 'product_url': _url(product_url), 'contact': _text(contact), 'notes': _text(notes, 5000)}
+        if region is not _UNSET:
+            data['region'] = _text(region, 200) or None if region is not None else None
         if data['platform'] not in ('alibaba', '1688', 'aliexpress', 'other'):
             raise ServiceError('invalid_params', '供应商平台无效')
         with self._lock, self.repo.transaction():
@@ -214,6 +254,8 @@ class ProductLibraryMixin(ProductPresentationMixin):
                     or expected_revision is not None and type(expected_revision) is not int):
                 raise ServiceError('revision_conflict', '供应商资料已变化，请保留输入并刷新')
             stamp = now_ms()
+            if region is _UNSET and old and 'region' in old:
+                data['region'] = old['region']
             value = {**data, 'seller_id': self.seller_id, 'supplier_id': supplier_id or new_id('supplier'),
                      'revision': old['revision'] + 1 if old else 1,
                      'created_at': old['created_at'] if old else stamp, 'updated_at': stamp}

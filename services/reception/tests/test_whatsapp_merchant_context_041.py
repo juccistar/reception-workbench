@@ -56,6 +56,16 @@ class MerchantContextTests(unittest.TestCase):
         self.assertNotEqual(first['revision'], self.export(conversation_id='c1')['revision'])
         self.service.settings['max_questions_per_reply'] = 1
         self.assertNotEqual(first['revision'], self.export(conversation_id='c1')['revision'])
+    def test_reception_settings_are_exported_and_change_revision(self):
+        first = self.export(conversation_id='c1')
+        self.assertTrue(first['context']['reception_images_enabled'])
+        self.assertEqual(first['context']['context_message_count'], 50)
+        self.service.settings.update(reception_images_enabled=False, context_message_count=1)
+        second = self.export(conversation_id='c1')
+        self.assertFalse(second['context']['reception_images_enabled'])
+        self.assertEqual(second['context']['context_message_count'], 1)
+        self.assertNotEqual(first['revision'], second['revision'])
+
     def test_owner_identity_and_shutdown(self):
         with self.assertRaises(ServiceError): self.export(conversation_id='c2')
         self.service.repo.rows['case']['case1']['conversation_id'] = 'c2'

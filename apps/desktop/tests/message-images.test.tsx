@@ -114,6 +114,42 @@ describe('消息图片', () => {
     await waitFor(() => expect(fixture.imageCalls.find(call => call.method === 'load_message_image')?.params.retry).toBe(true));
   });
 
+  it('在受控等待结束后恢复重试按钮，但不自动再次读取', async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = setup({ ...image('failed'), retry_at: Date.now() + 5000, retry_allowed: false });
+      render(<MessageImages attachments={[photo]} conversationId="emma" messageId="image" role="buyer" autoLoadIndices={[]} revision={0} bridge={fixture.bridge} />);
+      await act(async () => {});
+      expect(screen.getByRole('button', { name: '稍后重试' })).toBeDisabled();
+      expect(screen.getByText(/秒后重试图片/)).toBeInTheDocument();
+      fixture.setImage(image('failed'));
+      await act(async () => { await vi.advanceTimersByTimeAsync(5500); });
+      expect(screen.getByRole('button', { name: '重试加载图片' })).toBeEnabled();
+      expect(fixture.imageCalls.filter(call => call.method === 'load_message_image')).toHaveLength(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('显示安全的排队和重试说明，不展示原始异常内容', async () => {
+    const fixture = setup(image('failed'));
+    const original = fixture.bridge.invoke.bind(fixture.bridge);
+    fixture.bridge.invoke = <T,>(method: Parameters<ReceptionBridge['invoke']>[0], params = {}) => method === 'load_message_image'
+      ? Promise.reject(new Error('private token https://example.invalid/secret 请在 5 秒后重试图片'))
+      : original<T>(method, params);
+    render(<MessageImages attachments={[photo]} conversationId="emma" messageId="image" role="buyer" autoLoadIndices={[]} revision={0} bridge={fixture.bridge} />);
+    fireEvent.click(await screen.findByRole('button', { name: '重试加载图片' }));
+    expect(await screen.findByRole('button', { name: '稍后重试' })).toBeDisabled();
+    expect(screen.getByText(/秒后重试图片/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('private token');
+    expect(document.body.textContent).not.toContain('example.invalid/secret');
+  });
+
+  it('显示已经排队的状态', async () => {
+    const fixture = setup({ ...image('loading'), message: '图片排队中' });
+    render(<MessageImages attachments={[photo]} conversationId="emma" messageId="image" role="buyer" autoLoadIndices={[]} revision={0} bridge={fixture.bridge} />);
+    expect(await screen.findByText('图片排队中')).toBeInTheDocument();
+    expect(fixture.imageCalls.filter(call => call.method === 'load_message_image')).toHaveLength(0);
+  });
+
   it('同一消息有多张图片时按图片数量限制自动加载', async () => {
     const fixture = setup();
     const original = fixture.details.emma.messages[0];

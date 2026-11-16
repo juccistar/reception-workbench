@@ -1,0 +1,40 @@
+{
+  "version": "0.4.2",
+  "date": "2026-11-16",
+  "status": "corrections_required",
+  "implementation_snapshot": "5c97dcc",
+  "design": "docs/design/reception-redesign/",
+  "evidence": {
+    "actual_demo": "artifacts/verification/preview-042-20261116-live/preview.png",
+    "design_reception": "docs/design/reception-redesign/previews/02-manual-1440.png",
+    "business_screenshot_pairs_reviewed": 9,
+    "business_screenshots_actually_viewed": 18
+  },
+  "prior_review_limit": "Previous window checks established rendering, interaction and scrolling; they did not establish fidelity to the approved design.",
+  "confirmed_differences": [
+    "Header merchant identity and navigation brand placement differ; header height is 58px rather than 68px",
+    "Navigation grouping and visible labels differ from the common approved navigation",
+    "Customer-list title is 15px rather than 21px; row geometry and text truncation differ",
+    "Details rail uses a 360px default rather than 334px and omits the customer-information heading hierarchy",
+    "Composer ownership, resume, save and action positions retain the previous layout",
+    "Details switch to a drawer below 1360px rather than the approved 1180px breakpoint",
+    "Customer directory uses a master-detail layout instead of the approved table",
+    "Policy editor and activity page structures differ from the approved unified editor and timeline"
+  ],
+  "demo_data_limit": "Only three customers and one message were initially visible; missing conversation summary and current requirements exaggerate blank space but do not explain structural deviations.",
+  "latest_user_change": {
+    "remove_chat_translation_settings_subpage": true,
+    "keep_reception_translation_button": true,
+    "remove_extra_merchant_translation_activation": true,
+    "clear_legacy_translation_settings": true,
+    "preserve_chat_and_cached_translations": true
+  },
+  "unchanged_constraints": [
+    "Full message timestamps including seconds",
+    "No customer avatars",
+    "No new chat attachment interface",
+    "No send-history or manual send-verification UI",
+    "Original accepted/unknown ledgers and source protections remain intact"
+  ],
+  "candidate_gate": "Complete design comparison and translation retirement before freezing the final candidate."
+}
