@@ -2,10 +2,10 @@
   "version": "0.4.1",
   "date": "2026-11-15",
   "updated": "2026-11-16",
-  "status": "candidate_C_panel_fix_built_final_validation_pending",
+  "status": "candidate_C_side_panel_and_manual_ai_packaged_isolated_validation_complete",
   "customer_panel_followup": {
     "date": "2026-11-16",
-    "status": "source_fixed_candidate_window_pending",
+    "status": "candidate_C_source_and_package_isolated_checks_passed_live_page_pending",
     "diagnosis_report": "artifacts/verification/041-sidepanel-fix-001/diagnosis.json",
     "baseline_resolver_reproduction": "artifacts/verification/041-sidepanel-fix-001/resolver-shape-baseline.json",
     "frozen_backend_missing_contact_reproduction": "artifacts/verification/041-sidepanel-fix-001/context-registration-before-fix.json",
@@ -28,7 +28,7 @@
     "failed_source_window": "artifacts/verification/launcher-revision-041-panel-fix-source-001/report.json",
     "extension_startup_correction": "wait_for_extension_APIs_and_keep_attached_bridge_when_first_action_is_delayed",
     "candidate": {
-      "status": "built_pending_final_verification",
+      "status": "package_and_isolated_window_checks_passed",
       "name": "C",
       "date": "2026-11-16",
       "source_commit": "e9aeb685ad7c5531834a6d7690c8b19fb89eccd2",
@@ -38,13 +38,43 @@
       "signed_update_metadata": "ed25519",
       "installed": false,
       "real_data_migration": false,
-      "default_entry_unchanged": true
+      "default_entry_unchanged": true,
+      "build_commit": "e9bd5a4cc87508dfcab4ba6a696eeff1d6d2df73",
+      "immediate_local_commit": true,
+      "published": false,
+      "private_source_pushed": false
     },
     "source_window": {
       "status": "passed",
       "report": "artifacts/verification/launcher-revision-041-panel-fix-source-002/report.json",
       "screenshots_viewed": 11,
       "actual_exe_entry": false,
+      "real_account": false,
+      "checks": {
+        "three_filters": true,
+        "local_alias_keeps_verified_company": true,
+        "copy_handler_preserves_all_three_paragraphs": true,
+        "full_host_authorization_present": true,
+        "two_independent_browsers_and_native_panels": true,
+        "website_has_no_business_binding": true,
+        "customer_association_and_late_search_fence": true,
+        "verified_customer_visible_before_backend_registration": true,
+        "unready_customer_operations_disabled": true,
+        "contact_registration_recovers_without_reopening_panel": true,
+        "metadata_does_not_trigger_reception_or_merchant_selection": true,
+        "disconnect_one_keeps_other_running": true,
+        "narrow_cards_and_fixed_settings_footer": true,
+        "running_account_hides_to_tray": true,
+        "normal_shutdown": true
+      }
+    },
+    "candidate_window": {
+      "status": "passed",
+      "report": "artifacts/verification/launcher-revision-041-panel-fix-candidate-c-001/report.json",
+      "screenshots_viewed": 11,
+      "frozen_backend": true,
+      "synthetic_sdk_and_customers": true,
+      "actual_release_exe_entry": false,
       "real_account": false,
       "checks": {
         "three_filters": true,
@@ -1001,19 +1031,80 @@
     "draft_created": false,
     "assets_uploaded": false,
     "blockers": [
-      "candidate_C_package_validation_pending",
       "github_cli_not_authenticated"
     ],
     "known_limitations": [
+      "reported_live_page_exact_failure_path_and_real_account_acceptance_unverified",
+      "candidate_C_actual_release_exe_gui_entry_not_run",
       "prior_intermittent_sdk_initialization_timeout_root_cause_unconfirmed",
+      "additional_executor_30_case_run_had_two_assertion_failures_named_current_and_baseline_rechecks_passed",
       "windows_installer_unsigned",
-      "candidate_B_actual_release_exe_gui_entry_not_run",
-      "real_logged_in_current_customer_identification_and_account_messaging_unverified",
       "paid_model_quality_and_actual_cache_rate_unverified",
       "reported_live_message_image_specific_failure_cause_not_obtained"
     ],
     "explicit_publish_requested": "2026-11-16",
     "publication_attempt": {
+      "date": "2026-11-16",
+      "candidate": "C",
+      "status": "blocked_authentication",
+      "preflight_status": "passed",
+      "preflight_report": "artifacts/verification/041-sidepanel-fix-001/publication-preflight.json",
+      "verified_assets": [
+        {
+          "name": "ReceptionWorkbench-Setup-0.4.1.exe",
+          "path": "relase\\reception-0.4.1-release-C-20261116\\release-feed\\ReceptionWorkbench-Setup-0.4.1.exe",
+          "bytes": 145028791,
+          "sha256": "ad81449642e9de38f21c8ccaf7c6d4dd51d5f45bc8457fee48293ec61eb8bd96",
+          "sha512": "HWxeSdCGHPB9qwdOlvN9FoyfioV2rAk+T7FnYD5QRbSqEh0xJj0fVGilUUbbDa0PgEPtchyqRQ+9+8oGyy0hcA=="
+        },
+        {
+          "name": "ReceptionWorkbench-Setup-0.4.1.exe.blockmap",
+          "path": "relase\\reception-0.4.1-release-C-20261116\\release-feed\\ReceptionWorkbench-Setup-0.4.1.exe.blockmap",
+          "bytes": 150987,
+          "sha256": "9273cecd9a25eecbda4483d5997f5d13a54a9cd04cf2bff17a0f6c946fdd74be",
+          "sha512": "VDn9zJYVxTQeUfTvsCa2WRpr0mW9/CoFkkOGWwQ1I5DolOjDGFKSRSUTnyHOdm+3iNU6F+y0e4/yDVuri9ifgg=="
+        },
+        {
+          "name": "latest.yml",
+          "path": "relase\\reception-0.4.1-release-C-20261116\\release-feed\\latest.yml",
+          "bytes": 722,
+          "sha256": "f2e6590f2ebe0a08d103bfa9562fb1773377d3b56db0ac5d86387312c6170660",
+          "sha512": "DK5tYZadGG6CXgKeijwd//qsBVJ13FJgFN2fE6pNY8/Q6zk+dxr/PwQxLuswoMb5LEW1jDuEymj1jxR4NU9fBg=="
+        },
+        {
+          "name": "ReceptionWorkbench-0.4.1.zip",
+          "path": "relase\\reception-0.4.1-release-C-20261116\\ReceptionWorkbench-0.4.1.zip",
+          "bytes": 188872596,
+          "sha256": "42acd37b2975dc435c5fd85a720ecf64b5d73626b0782f808803ce3a70ffffa9",
+          "sha512": "89yq0OqJDk/fU5h7VM+1OB+n9pEAC8EwtB313Hf8nYrVD4K53uy/dv6OEkTCtDb9ivGCHbzRLvwaC8D9H+bRbg=="
+        }
+      ],
+      "public_release_notes": "artifacts/verification/041-sidepanel-fix-001/public-release-notes.md",
+      "current_cli_authenticated": false,
+      "draft_created": false,
+      "assets_uploaded": false,
+      "published": false
+    },
+    "installed": false,
+    "real_data_migrated": false,
+    "candidate": "C",
+    "previous_publication_attempt_A": {
+      "status": "blocked_authentication",
+      "report": "artifacts/verification/publication-041-20261116-attempt-001.json",
+      "preflight_report": "artifacts/verification/publication-041-20261116-preflight-001/report.json",
+      "four_assets_hashes_and_fixed_signature": "passed",
+      "public_release_notes": "artifacts/verification/publication-041-20261116-notes-001.md",
+      "official_browser_login_attempted": true,
+      "device_code_received": false,
+      "authorization_endpoint": "https://github.com/login/device/code",
+      "authorization_result": "connection_timeout",
+      "public_latest_observed": "v0.3.21",
+      "anonymous_public_api_read": true,
+      "candidate": "A",
+      "historical": true
+    },
+    "private_source_pushed": false,
+    "previous_publication_attempt_B": {
       "date": "2026-11-16",
       "candidate": "B",
       "status": "blocked_authentication",
@@ -1054,31 +1145,13 @@
       "official_device_authorization_retried_this_stage": false,
       "draft_created": false,
       "assets_uploaded": false,
-      "published": false
-    },
-    "installed": false,
-    "real_data_migrated": false,
-    "candidate": "B",
-    "previous_publication_attempt_A": {
-      "status": "blocked_authentication",
-      "report": "artifacts/verification/publication-041-20261116-attempt-001.json",
-      "preflight_report": "artifacts/verification/publication-041-20261116-preflight-001/report.json",
-      "four_assets_hashes_and_fixed_signature": "passed",
-      "public_release_notes": "artifacts/verification/publication-041-20261116-notes-001.md",
-      "official_browser_login_attempted": true,
-      "device_code_received": false,
-      "authorization_endpoint": "https://github.com/login/device/code",
-      "authorization_result": "connection_timeout",
-      "public_latest_observed": "v0.3.21",
-      "anonymous_public_api_read": true,
-      "candidate": "A",
+      "published": false,
       "historical": true
-    },
-    "private_source_pushed": false
+    }
   },
   "manual_ai_on_demand": {
     "date": "2026-11-16",
-    "status": "candidate_C_built_final_validation_pending",
+    "status": "candidate_C_source_and_package_window_checks_passed",
     "explicit_manual_suggestion_and_polish_only": true,
     "startup_check_required": false,
     "saved_passed_capability_records_required": false,
@@ -1137,7 +1210,26 @@
       "report": "artifacts/verification/041-sidepanel-fix-001/manual-ai-ui.log"
     },
     "real_model_calls": 0,
-    "candidate": "C"
+    "candidate": "C",
+    "candidate_window": {
+      "status": "passed",
+      "report": "artifacts/verification/manual-ai-041-candidate-c-001/report.json",
+      "screenshots_viewed": 3,
+      "candidate_renderer_and_preload": true,
+      "source_synthetic_backend": true,
+      "synthetic_live_ui_projection": true,
+      "actual_release_exe_entry": false,
+      "checks": {
+        "not_checked_generates_without_precheck": true,
+        "failure_popup_preserves_input_and_is_deduplicated": true,
+        "dismiss_and_retry_after_actual_failure": true,
+        "normal_shutdown": true
+      },
+      "model_checks": 0,
+      "generation_attempts": 3,
+      "real_model_calls": 0,
+      "customer_sends": 0
+    }
   },
   "followup_validation": {
     "typecheck": "passed",
@@ -1160,8 +1252,78 @@
       "status": "passed",
       "command": "node scripts/build.mjs",
       "date": "2026-11-16",
-      "window_validation": "pending"
-    }
+      "window_validation": "passed_source_and_candidate_side_panels_11_each_manual_ai_3_each"
+    },
+    "candidate_package": {
+      "status": "passed",
+      "report": "artifacts/verification/041-sidepanel-fix-001/candidate-integrity.json",
+      "integrity": {
+        "files": 179,
+        "customer_databases": 0,
+        "development_directories": 0
+      },
+      "application": {
+        "asar_entries": 16,
+        "compiled_inputs_match": true
+      },
+      "python_source": {
+        "files": 112,
+        "manifest": "artifacts\\build\\package-input-1794813803886\\source-manifest.json"
+      },
+      "sdk": {
+        "files": 3377,
+        "manifest_sha256": "6871ac31a25b9381e5032244a9aed7e7d636940865070c7d8e36c2657ca3702b"
+      },
+      "extension": {
+        "files": 5,
+        "manifest_sha256": "635e1091cb37457f9e86928aeeded7fac2b55ba737e05a2bbc7c09508551f165"
+      },
+      "update": {
+        "fixed_ed25519_signature": true,
+        "windows_authenticode": "NotSigned",
+        "installer_sha256": "ad81449642e9de38f21c8ccaf7c6d4dd51d5f45bc8457fee48293ec61eb8bd96",
+        "installer_bytes": 145028791
+      },
+      "zip": {
+        "entries": 180,
+        "verified_files": 179,
+        "sha256": "42acd37b2975dc435c5fd85a720ecf64b5d73626b0782f808803ce3a70ffffa9",
+        "bytes": 188872596
+      },
+      "installer_resources": {
+        "status": "passed",
+        "report": "artifacts/verification/041-sidepanel-fix-001/installer-resources.json",
+        "identical_resource_files": 99,
+        "installer_only_resources": [
+          "app-update.yml",
+          "elevate.exe",
+          "update-policy.json"
+        ],
+        "nsis_elevate_matches_builder_cache": true,
+        "nsis_elevate_sha256": "9b1fbf0c11c520ae714af8aa9af12cfd48503eedecd7398d8992ee94d1b4dc37",
+        "application_backend_sdk_and_extension_identical": true,
+        "no_links": true
+      }
+    },
+    "frozen_account": {
+      "status": "passed",
+      "report": "artifacts/verification/whatsapp-account-exe-041-candidate-c-001/report.json",
+      "offline_cli_roundtrip": true,
+      "original_unknown_survives_restore": true,
+      "restored_reception_disabled": true,
+      "writeback_unavailable": true,
+      "normal_process_exit": true,
+      "real_account": false
+    },
+    "frozen_models": {
+      "status": "passed",
+      "report": "artifacts/verification/packaged-models-041-candidate-c-001/report.json",
+      "protocols": 2,
+      "local_http_requests": 18,
+      "image_attachments": 14,
+      "real_model_calls": 0
+    },
+    "actual_release_exe_home": "not_run_preserve_existing_user_session"
   },
   "manual_ai_window_source": {
     "status": "passed",
