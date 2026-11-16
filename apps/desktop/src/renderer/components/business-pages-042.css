@@ -80,8 +80,9 @@
 .settings-042-media-toggle input:checked::after { left:16px; }
 .settings-042-media-footer { display:flex; align-items:center; gap:10px; margin:26px -28px -26px; padding:18px 28px; background:#f7f9fc; border-top:1px solid #e7ecf3; border-radius:0 0 10px 10px; }
 .settings-042-media-footer > span { flex:1; color:#8b9bb3; font-size:12px; }
-.settings-042-media-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; margin:24px 0; }
-.settings-042-media-grid label { display:flex; flex-direction:column; gap:8px; color:#617899; font-size:12px; }
+.settings-042-media-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 18px; margin:0; }
+.settings-042-media-grid label { display:flex; flex-direction:column; gap:9px; margin:0 0 20px; color:#697a94; font-size:12px; }
+.settings-042-layout .settings-042-content .settings-042-media input:not([type=checkbox]), .settings-042-layout .settings-042-content .settings-042-media select { border-color:#dfe5ef; color:#52627c; font-size:13px; }
 .settings-042-media-grid input, .settings-042-media-grid select { width:100%; }
 .settings-042-connection h2, .settings-042-display h2 { margin:0 0 12px; font-size:15px; }
 .settings-042-connection > p, .settings-042-display > p { color:#8b9bb3; font-size:12px; }

@@ -1,7 +1,20 @@
 {
   "version": "0.4.2",
   "date": "2026-11-17",
-  "status": "rebuilt_design_and_generation_fixes_under_final_window_verification",
+  "status": "source_design_and_generation_fixes_verified_candidate_building",
+  "final_source_window": {
+    "build_commit": "727c336",
+    "report": "artifacts/verification/workbench-042-replica-source-009/report.json",
+    "status": "passed",
+    "checks": 24,
+    "screenshots": 49,
+    "source_008_screenshots_viewed": 49,
+    "source_009_correction_screenshots_viewed": 7,
+    "synthetic_business": true,
+    "actual_release_exe_entry": false
+  },
+  "latest_targeted_ui": { "log": "artifacts/verification/042-page-review-final-002.log", "files": 2, "tests": 23, "status": "passed", "overlaps_earlier_runs": true },
+  "latest_typecheck": { "log": "artifacts/verification/042-replica-integration-typecheck-011.log", "status": "passed" },
   "current_integration_record": "docs/verification/0.4.2-replica-integration.json",
   "generation_failure_record": "docs/verification/0.4.2-generation-failure.json",
   "earlier_window_checks_are_final_ui_acceptance": false,

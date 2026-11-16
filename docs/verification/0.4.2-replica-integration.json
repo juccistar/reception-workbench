@@ -1,7 +1,17 @@
 {
   "version": "0.4.2",
   "date": "2026-11-17",
-  "status": "final_layout_corrections_before_rebuilt_window_review",
+  "status": "source_window_passed_candidate_verification_pending",
+  "final_source_window": {
+    "build_commit": "727c336",
+    "build_log": "artifacts/verification/042-replica-desktop-build-007.log",
+    "report": "artifacts/verification/workbench-042-replica-source-009/report.json",
+    "status": "passed",
+    "checks": 24,
+    "screenshots": 49,
+    "renderer_errors": 0,
+    "visual_review": "All 49 source-008 images were viewed by the parent and independent reviewer. Seven rebuilt source-009 correction images were then directly viewed; media grid spacing receives a final scoped CSS adjustment for candidate verification."
+  },
   "last_source_window": {
     "report": "artifacts/verification/workbench-042-replica-source-008/report.json",
     "status": "passed",
@@ -82,7 +92,7 @@
     "legacy_host_fixture": { "log": "artifacts/verification/042-image-copy-host-001.log", "status": "bootstrap_failed_no_test_executed", "production_defect_established": false },
     "real_system_clipboard_end_to_end": false
   },
-  "pending": ["rebuilt source window and reference comparison", "final candidate packaging and resource verification"],
+  "pending": ["final candidate packaging, resource verification and candidate windows", "GitHub release authentication"],
   "release": { "candidate_built": false, "uploaded": false, "published": false },
   "boundaries": { "installed": false, "real_data_migration": false, "real_customer_sends": false, "paid_models": false, "real_feishu_requests": false, "private_source_pushed": false }
 }

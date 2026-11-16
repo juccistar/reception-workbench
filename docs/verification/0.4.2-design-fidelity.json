@@ -1,14 +1,23 @@
 {
   "version": "0.4.2",
   "date": "2026-11-17",
-  "status": "final_corrections_await_rebuilt_window_comparison",
-  "last_built_snapshot": "ad6b6c0",
+  "status": "source_comparison_complete_candidate_comparison_pending",
+  "last_built_snapshot": "727c336",
+  "rebuilt_correction_review": {
+    "report": "artifacts/verification/workbench-042-replica-source-009/report.json",
+    "status": "passed",
+    "checks": 24,
+    "source_008_images_actually_viewed": 49,
+    "source_009_correction_images_actually_viewed": ["11-populated-product-detail.png", "page-3.png", "page-4.png", "page-5.png", "page-9.png", "reception-selected-customers.png", "settings-2.png"],
+    "confirmed": ["product image geometry", "supplier footer and notes", "product cost note and action icons", "procurement note and filters", "page-specific header", "activity date", "scope label, search and vertical list"],
+    "candidate_followup": "Inspect final scoped media grid margins and packaged assets."
+  },
   "last_visual_correction_round": {
     "source_window": "artifacts/verification/workbench-042-replica-source-008/report.json",
     "workflow_status": "passed_24_checks_49_screenshots",
     "independent_business_dialog_images_viewed": 12,
     "reference_images_viewed": 11,
-    "implemented_pending_rebuild": ["product-detail image region", "supplier, product-cost and procurement notes", "business-page header context and icon", "activity date label", "scope field label and search icon", "settings heading and row geometry"]
+    "implemented_after_that_review": ["product-detail image region", "supplier, product-cost and procurement notes", "business-page header context and icon", "activity date label", "scope field label and search icon", "settings heading and row geometry"]
   },
   "design": "docs/design/reception-redesign/",
   "historical_review": {
@@ -38,14 +47,14 @@
     "model_window": "artifacts/verification/launcher-models-042-isolation-008/report.json",
     "model_screenshots_viewed": 9
   },
-  "latest_corrections_requiring_rebuilt_screenshots": [
+  "implemented_source_layout_corrections": [
     "Selected-customer scope: vertical search and checkbox rows, separate bounded scrolling",
     "Updates: common white settings card",
     "Media resources: field units and spacing",
     "Customer detail: current-product summary, collapsed purchase history and fixed action footer",
     "Supplier primary button, procurement status badges, drawer inner borders and source-link colors"
   ],
-  "verification_limit": "Interaction checks and overflow checks do not establish full design fidelity. Latest corrections require screenshots from a new build and direct comparison before candidate acceptance.",
+  "verification_limit": "Design acceptance uses direct screenshot/reference comparison in addition to interaction checks. Source windows use synthetic records; their content differs from the design samples. Final candidate windows and media grid correction remain to be verified. No pixel-perfect or real-account semantic validation is claimed.",
   "latest_user_change": {
     "remove_chat_translation_settings_subpage": true,
     "keep_reception_translation_button": true,
