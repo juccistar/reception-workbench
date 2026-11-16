@@ -41,7 +41,9 @@
 }
 
 .drawer-panel.pp042-drawer { overflow: hidden; }
-.pp042-drawer > .profile-card { flex: 1; min-height: 0; overflow-y: auto; }
+.pp042-drawer > .profile-card { flex: 1; min-height: 0; overflow-y: auto; border: 0; border-radius: 0; box-shadow: none; }
+.pp042-badge.green { background: #ebf4ef; color: #54816d; }
+.pp042-badge.amber { background: #fbf2e1; color: #a17939; }
 .pp042-drawer > .drawer-title { flex: none; }
 .pp042-footer { flex: none; display: flex; justify-content: flex-end; gap: 10px; padding: 16px 28px; border-top: 1px solid #e8edf4; background: #fff; }
 .pp042-summary { display: flex; align-items: center; gap: 18px; padding-bottom: 20px; border-bottom: 1px solid #edf0f5; }

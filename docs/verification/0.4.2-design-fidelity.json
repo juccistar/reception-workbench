@@ -1,27 +1,44 @@
 {
   "version": "0.4.2",
-  "date": "2026-11-16",
-  "status": "corrections_required",
-  "implementation_snapshot": "5c97dcc",
+  "date": "2026-11-17",
+  "status": "final_corrections_await_rebuilt_window_comparison",
+  "last_built_snapshot": "53b9638",
   "design": "docs/design/reception-redesign/",
-  "evidence": {
+  "historical_review": {
+    "date": "2026-11-16",
+    "implementation_snapshot": "5c97dcc",
+    "status": "corrections_required_not_final",
     "actual_demo": "artifacts/verification/preview-042-20261116-live/preview.png",
     "design_reception": "docs/design/reception-redesign/previews/02-manual-1440.png",
     "business_screenshot_pairs_reviewed": 9,
-    "business_screenshots_actually_viewed": 18
+    "business_screenshots_actually_viewed": 18,
+    "differences_at_that_snapshot": [
+      "Merchant identity, header height and navigation grouping differed from the common approved layout",
+      "Customer-list title, rows, truncation and default details-rail width differed",
+      "Composer ownership, resume, save and action positions retained the previous layout",
+      "Details drawer breakpoint differed from the approved 1180px breakpoint",
+      "Customer directory, policy editor and activity timeline used the previous structures"
+    ]
   },
-  "prior_review_limit": "Previous window checks established rendering, interaction and scrolling; they did not establish fidelity to the approved design.",
-  "confirmed_differences": [
-    "Header merchant identity and navigation brand placement differ; header height is 58px rather than 68px",
-    "Navigation grouping and visible labels differ from the common approved navigation",
-    "Customer-list title is 15px rather than 21px; row geometry and text truncation differ",
-    "Details rail uses a 360px default rather than 334px and omits the customer-information heading hierarchy",
-    "Composer ownership, resume, save and action positions retain the previous layout",
-    "Details switch to a drawer below 1360px rather than the approved 1180px breakpoint",
-    "Customer directory uses a master-detail layout instead of the approved table",
-    "Policy editor and activity page structures differ from the approved unified editor and timeline"
+  "current_evidence": {
+    "source_window_report": "artifacts/verification/workbench-042-replica-source-007/report.json",
+    "source_window_status": "passed",
+    "source_screenshots": 48,
+    "business_settings_screenshots_compared": 15,
+    "reference_screenshots_viewed_for_that_review": 14,
+    "launcher_window": "artifacts/verification/launcher-supplement-042-driver-fix-003/report.json",
+    "launcher_screenshots_viewed": 14,
+    "model_window": "artifacts/verification/launcher-models-042-isolation-008/report.json",
+    "model_screenshots_viewed": 9
+  },
+  "latest_corrections_requiring_rebuilt_screenshots": [
+    "Selected-customer scope: vertical search and checkbox rows, separate bounded scrolling",
+    "Updates: common white settings card",
+    "Media resources: field units and spacing",
+    "Customer detail: current-product summary, collapsed purchase history and fixed action footer",
+    "Supplier primary button, procurement status badges, drawer inner borders and source-link colors"
   ],
-  "demo_data_limit": "Only three customers and one message were initially visible; missing conversation summary and current requirements exaggerate blank space but do not explain structural deviations.",
+  "verification_limit": "Interaction checks and overflow checks do not establish full design fidelity. Latest corrections require screenshots from a new build and direct comparison before candidate acceptance.",
   "latest_user_change": {
     "remove_chat_translation_settings_subpage": true,
     "keep_reception_translation_button": true,

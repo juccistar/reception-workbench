@@ -252,7 +252,15 @@ try {
     if (name === '客户资料') {
       await page.getByRole('button', { name: /查看资料/ }).first().click();
       const customerDialog = page.getByRole('dialog', { name: '客户资料', exact: true });
-      await customerDialog.waitFor(); await shot('customer-detail.png');
+      await customerDialog.locator('.customer-042-product').waitFor(); await shot('customer-detail.png');
+      const footerBefore = await customerDialog.locator('.customer-042-actions').boundingBox();
+      await customerDialog.locator('.customer-042-history > summary').click();
+      const customerBody = customerDialog.locator('.customer-042-detail');
+      assert(await customerBody.evaluate(node => node.scrollHeight > node.clientHeight));
+      await customerBody.evaluate(node => { node.scrollTop = 220; });
+      const footerAfter = await customerDialog.locator('.customer-042-actions').boundingBox();
+      assert(footerBefore && footerAfter && footerBefore.y === footerAfter.y, 'Customer history must not move the action footer');
+      await shot('customer-history.png');
       await customerDialog.getByRole('button', { name: '关闭客户资料', exact: true }).click();
     }
     if (name === '资料与政策') {
@@ -271,6 +279,8 @@ try {
           const originalScope = await scope.inputValue();
           await scope.selectOption('selected');
           await page.getByRole('textbox', { name: '搜索接待客户', exact: true }).waitFor();
+          const customerChoices = page.locator('.scope-customer-list');
+          assert(await customerChoices.evaluate(node => node.scrollHeight > node.clientHeight && node.clientHeight <= 264));
           await shot('reception-selected-customers.png');
           await scope.selectOption(originalScope);
         }

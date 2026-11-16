@@ -72,7 +72,7 @@ export function UpdatesPanel({ bridge, currentVersion }: { bridge?: ReceptionBri
   const source = getSource(feed);
   const validFeed = source !== null;
   const percent = Math.max(0, Math.min(100, info?.progress?.percent ?? 0));
-  return <section className="updates-panel" aria-label="版本与更新">
+  return <section className="updates-panel form-card" aria-label="版本与更新">
     <h2>版本与更新</h2>
     <p className="updates-intro">查看当前版本和更新状态。</p>
     <div className="updates-line">
