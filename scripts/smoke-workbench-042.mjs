@@ -236,6 +236,7 @@ try {
       await supplierDialog.getByRole('button', { name: '编辑资料', exact: true }).click();
       const supplierEditor = page.getByRole('dialog', { name: '编辑供应商', exact: true });
       await supplierEditor.getByLabel('联系人', { exact: true }).fill('更新后的隔离窗口联系信息');
+      assert.equal((await app.evaluate(() => globalThis.__windowRpcDiagnostics())).some(row => row.method === 'save_supplier'), false, 'Opening the editor must not submit the supplier form');
       await supplierEditor.getByRole('button', { name: '保存供应商', exact: true }).click();
       await supplierDialog.getByText('更新后的隔离窗口联系信息', { exact: true }).waitFor();
       await shot('13-supplier-edit-saved.png');

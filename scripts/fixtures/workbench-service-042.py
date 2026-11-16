@@ -153,6 +153,7 @@ def create_window_service(*args, **kwargs):
                 service.repo.put('product_main_image', product_id, {'seller_id': service.seller_id,
                     'local_product_id': product_id, 'product_id': values['product_id'], 'status': 'ready',
                     'updated_at': stamp, 'asset_sha256': gallery[0]['asset_sha256'], 'images': gallery,
+                    'image_group_version': 1, 'display_only': True,
                     'primary_verified': False, 'available_count': len(gallery), 'message': '合成演示参考图'})
                 service.repo.put('conversation_summary', cid, {'conversation_id': cid, 'seller_id': service.seller_id,
                     'buyer_id': conversation['buyer_id'], 'body': '采购500只鼠尾草绿随行杯，定制Logo；发往德国汉堡，先确认样品与交期。',

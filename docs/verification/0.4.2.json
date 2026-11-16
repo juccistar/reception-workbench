@@ -1,7 +1,10 @@
 {
   "version": "0.4.2",
-  "date": "2026-11-16",
-  "status": "design_fidelity_corrections_and_translation_settings_retirement_in_progress",
+  "date": "2026-11-17",
+  "status": "rebuilt_design_and_generation_fixes_under_final_window_verification",
+  "current_integration_record": "docs/verification/0.4.2-replica-integration.json",
+  "generation_failure_record": "docs/verification/0.4.2-generation-failure.json",
+  "earlier_window_checks_are_final_ui_acceptance": false,
   "baseline_commit": "f8339ad",
   "plan": "docs/0.4.2开发方案.md",
   "design": "docs/design/reception-redesign/README.md",
@@ -25,7 +28,7 @@
     "The parallel reply self-echo repair is included; original operation, batch evidence and unknown protections remain intact"
   ],
   "implementation": [
-    "Unified navigation and redesigned reception, business pages and eight settings sections; no customer avatars",
+    "Unified navigation and redesigned reception, business pages and seven settings sections; chat translation settings retired; no customer avatars",
     "Persistent all/selected reception scope, direct start without AI precheck, direct ownership actions",
     "Suggestion and polish translations independent of chat translation display; targeted cancellation",
     "Authoritative automatic source ID and text hash projection; current task/customer/lifecycle failure filtering",

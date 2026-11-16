@@ -56,6 +56,8 @@
   },
   "requirement_media_legacy_fixture": { "previous_failure_log": "artifacts/verification/042-requirement-media-0311-001.log", "updated_to_current_chat_image_queue": true, "tests": 16, "status": "passed" },
   "supplier_window_contract_fix": "region now passes the shared preload/main allowlist with backend-matching type and size validation",
+  "supplier_editor_submit_guard": "prevent the edit-opening click default action from submitting the newly rendered form; assert no save before explicit submit",
+  "current_image_fixture": "synthetic showcase now declares image_group_version=1 and display_only, so legacy refresh does not invalidate its original-image references",
   "image_dialog": {
     "title_and_footer_follow_design": true,
     "direct_copy_uses_existing_controlled_full_png_preparation": true,

@@ -243,6 +243,8 @@ it('saves the supplier region with the existing revision', async () => {
   const invoke = setup(); render(<SuppliersPage />);
   fireEvent.click(await screen.findByRole('button', { name: /供应商甲/ }));
   fireEvent.click(await screen.findByRole('button', { name: '编辑资料' }));
+  await screen.findByRole('dialog', { name: '编辑供应商' });
+  expect(invoke.mock.calls.filter(([method]) => method === 'save_supplier')).toHaveLength(0);
   fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'alibaba' } });
   fireEvent.change(screen.getByLabelText('地区'), { target: { value: '浙江' } });
   fireEvent.click(screen.getByRole('button', { name: '保存供应商' }));
