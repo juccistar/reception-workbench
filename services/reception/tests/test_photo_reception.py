@@ -156,13 +156,17 @@ class PhotoReceptionTests(unittest.TestCase):
         self.assertEqual(context['image_manifest'][0]['alias'], 'p1')
         self.assertEqual(context['image_manifest'][0]['message_id'], 'seller-only-image')
         self.assertEqual(context['image_transport'], 'read_compat')
-        self.assertTrue(any(row['text'] == '[图片 p1]' and row['role'] == 'seller' for row in context['message_view']))
+        self.assertTrue(any(row['text'] == '[image]' and row['role'] == 'seller'
+                            and row.get('image_refs', [{}])[0].get('alias') == 'p1'
+                            for row in context['message_view']))
 
     def test_manual_suggestion_receives_both_sides_when_seller_spoke_last(self):
         self.ingest('seller-reference', stamp=1900000000001, role='seller')
         self.bind_sources(['photo-1', 'seller-reference'])
         self.ingest('seller-last', text='Please review these.', stamp=1900000000101, role='seller')
-        self.completed(self.service.call('check_ai'))
+        # Manual suggestions do not require an AI precheck. A demo check while
+        # automatic reception is running is correctly cancelled by its guard.
+        self.assertTrue(self.service._running)
         inputs = []
         generate = self.service.integrations.generate_manual
         def capture(context, request, *, photo_inputs=None, **options):

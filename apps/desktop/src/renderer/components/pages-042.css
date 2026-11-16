@@ -48,7 +48,7 @@
 .product-042-name small { margin-top: 4px; color: #71819b; }
 .product-042-thumbnail { display: inline-flex; flex: 0 0 44px; width: 44px; height: 44px; overflow: hidden; border-radius: 7px; background: #eef2f7; }
 .product-042-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
-.settings-042-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 24px; align-items: start; }
+.settings-042-layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 28px; align-items: start; }
 .settings-042-layout nav { display: grid; gap: 4px; }
 .settings-042-layout nav button { border: 0; border-radius: 7px; background: transparent; color: #617798; text-align: left; padding: 12px; cursor: pointer; }
 .settings-042-layout nav button.active { color: #3156cf; background: #e7edff; }

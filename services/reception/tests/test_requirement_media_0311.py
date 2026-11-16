@@ -108,6 +108,31 @@ class RequirementMediaTests(unittest.TestCase):
         finally:
             service._stop_requirement_media()
 
+    def test_supplement_and_foreign_images_cannot_enter_requirement_mapping(self):
+        from reception_service.context import validated_requirements
+        from reception_service.requirement_changes import validate_changes
+        from reception_service.errors import ServiceError
+        buyer = self.message('buyer', text='I want the seller image')
+        seller = self.message('seller', role='seller')
+        manifest = [
+            {'alias': 'p1', 'image_id': 'seller-img', 'message_id': 'seller', 'role': 'seller'},
+            {'alias': 'p2', 'image_id': 'supp', 'origin': 'business_supplement', 'attachment_id': 'supp', 'role': 'seller'},
+            {'alias': 'p3', 'image_id': 'foreign', 'message_id': 'foreign-message', 'role': 'buyer'}]
+        context = {'case': self.case, 'recent_messages': [buyer, seller], 'historical_evidence': [],
+                   'case_catalog': [{'case_ref': 'c1', 'requirements': {}}], 'image_manifest': manifest,
+                   'photo_context': {'read_images': [{'image_id': x['image_id']} for x in manifest]}}
+        def output(value):
+            return {'requirement_changes': [{'action': 'update', 'case_ref': 'c1', 'trigger_evidence_ids': ['buyer'],
+                     'set_fields': {'product_images': {'value': [value], 'evidence_ids': ['buyer', 'seller']}}}]}
+        result, _ = validate_changes(output('p1'), context)
+        self.assertEqual(len(result[0]['set_fields']['product_images']['value']), 1)
+        for invalid in ('p2', 'p3'):
+            with self.subTest(invalid=invalid), self.assertRaises(ServiceError):
+                validate_changes(output(invalid), context)
+        payload = project_model_payload(context)
+        self.assertIn('media_id', payload['image_manifest'][0])
+        self.assertNotIn('media_id', payload['image_manifest'][1])
+
     def test_one_candidate_ambiguity_and_seller_selection(self):
         one = self.message('i')
         self.assertEqual(get_product_source_images(self.repo, self.case, [one]), [one])

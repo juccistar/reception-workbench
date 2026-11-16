@@ -1179,13 +1179,23 @@ describe('conversation chat and automatic reception', () => {
 });
 
 describe('message sync summaries and explicit empty-history refresh', () => {
-  it.each(['连接与设置', '运行记录'])('shows sync totals in a single paragraph on %s and updates zero counts and missing sync time', async page => {
+  it.each(['连接与设置', '运行记录'])('keeps sync totals in connection details and the approved task-only activity layout on %s', async page => {
     const bridge = failedAiBridge();
     const lastSync = 1793950060000;
     bridge.snapshot.message_sync = { status: 'running', checked_at: 1793950000000, poll_seconds: 5, error_code: null, pending_count: 11, summary_requests: 123, waiting_activity_count: 7, background_pending_count: 3, active_read_count: 1, last_body_sync_at: lastSync };
     await openApp(bridge);
     fireEvent.click(screen.getByRole('button', { name: page, exact: true }));
+    await screen.findByRole('heading', { name: page, exact: true });
+    if (page === '运行记录') {
+      expect(screen.queryByText(/^消息同步：/)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '刷新记录' })).toHaveTextContent('刷新');
+      expect(calls(bridge, 'get_conversation').some(call => call.params.refresh_empty === true)).toBe(false);
+      return;
+    }
+    fireEvent.click(screen.getByRole('button', { name: '平台连接', exact: true }));
+    fireEvent.click(screen.getByText('连接详情'));
     const summary = await screen.findByText(/^消息同步：/);
+    expect(summary).toBeVisible();
     expect(summary.tagName).toBe('P'); expect(summary).toHaveAttribute('role', 'status');
     expect(summary).toHaveTextContent('每 5 秒检测新活动');
     expect(summary).toHaveTextContent('待同步 11 个会话');
@@ -1212,7 +1222,7 @@ describe('message sync summaries and explicit empty-history refresh', () => {
     for (const page of ['连接与设置', '运行记录']) {
       fireEvent.click(screen.getByRole('button', { name: page, exact: true }));
       await screen.findByRole('heading', { name: page, exact: true });
-      if (shape === 'absent') expect(screen.queryByText(/^消息同步：/)).not.toBeInTheDocument();
+      if (shape === 'absent' || page === '运行记录') expect(screen.queryByText(/^消息同步：/)).not.toBeInTheDocument();
       else {
         const summary = screen.getByText(/^消息同步：/);
         expect(summary).toHaveTextContent('待同步 2 个会话');

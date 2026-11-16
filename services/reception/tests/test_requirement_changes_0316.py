@@ -267,9 +267,11 @@ class RequirementChangesTests(unittest.TestCase):
         prepared = []
         self.service.integrations.generate_manual = lambda context, request_id, **options: {'reply_messages': [{'body': 'Noted.', 'reply_sources': ['m2']}]}
         self.service._prepare_direct_photos = lambda cid, job, epoch, facade: (prepared.append(cid) or (lambda: None))
-        def sources(repo, case, messages):
-            return [{'message_id': 'm1'}] if case and case['case_id'] == self.initial_case else []
-        with patch('reception_service.conversation_assistance.get_product_source_images', sources):
+        def sources(repo, owner, case, messages):
+            self.assertEqual(owner['conversation_id'], self.owner['conversation_id'])
+            self.assertEqual(case['case_id'], second)
+            return [{'message_id': 'm1'}] if repo.get('case', self.initial_case) else []
+        with patch('reception_service.conversation_assistance.get_reception_source_images', sources):
             self.wait(self.service.call('generate_manual_suggestion', {'conversation_id': self.owner['conversation_id'],
                 'case_id': second, 'client_request_id': 'older-case-image'}))
         self.assertEqual(prepared, [self.owner['conversation_id']])
@@ -282,9 +284,11 @@ class RequirementChangesTests(unittest.TestCase):
         prepared = []
         self.service.integrations.generate = lambda context, request_id, **options: {'action': 'ask', 'reply': 'Noted.', 'reply_sources': ['m2']}
         self.service._prepare_direct_photos = lambda cid, job, epoch, facade: (prepared.append(cid) or (lambda: None))
-        def sources(repo, case, messages):
-            return [{'message_id': 'm1'}] if case and case['case_id'] == self.initial_case else []
-        with patch('reception_service.service.get_product_source_images', sources):
+        def sources(repo, owner, case, messages):
+            self.assertEqual(owner['conversation_id'], self.owner['conversation_id'])
+            self.assertEqual(case['case_id'], second)
+            return [{'message_id': 'm1'}] if repo.get('case', self.initial_case) else []
+        with patch('reception_service.service.get_reception_source_images', sources):
             self.wait(self.service.call('generate_draft', {'case_id': second, 'expected_case_revision': self.case(second)['revision']}))
         self.assertEqual(prepared, [self.owner['conversation_id']])
 

@@ -1,7 +1,12 @@
 {
   "version": "0.4.2",
   "observed_date": "2026-11-17",
-  "status": "fixes_under_targeted_verification",
+  "status": "synthetic_regressions_passed_candidate_pending",
+  "targeted_regressions": {
+    "image_and_requirements": { "files": 5, "tests": 62, "status": "passed" },
+    "safe_field_diagnostics": { "tests": 2, "status": "passed" },
+    "real_model_replay": false
+  },
   "user_report": "automatic replies and manual suggestions fail",
   "live_observation": {
     "installed_version": "0.4.1",

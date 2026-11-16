@@ -100,7 +100,9 @@ class ReceptionQualityTests(unittest.TestCase):
                 dict(image_id='img-2', message_id='seller-image', source_version='c', image_sha256='d')]
         frozen = copy.deepcopy(rows)
         context = add_image_references({'recent_messages': rows, 'photo_context': {'direct_images': refs}})
-        self.assertEqual([row['text'] for row in context['message_view']], ['[图片 p1]', 'Which one?', '[图片 p2]'])
+        self.assertEqual([row['text'] for row in context['message_view']], ['[image]', 'Which one?', '[image]'])
+        self.assertEqual(context['message_view'][0]['image_refs'], [{'alias': 'p1', 'image_id': 'img-1'}])
+        self.assertEqual(context['message_view'][2]['image_refs'], [{'alias': 'p2', 'image_id': 'img-2'}])
         self.assertEqual([row['role'] for row in context['image_manifest']], ['buyer', 'seller'])
         self.assertEqual([row['sender_id'] for row in context['image_manifest']], ['2', '1'])
         self.assertEqual(context['image_transport'], 'read_compat')
@@ -111,19 +113,14 @@ class ReceptionQualityTests(unittest.TestCase):
         source = s._latest_buyer(self.cid)
         task = s._create_assistance(self.case, source, None, 'verify_followup', [], detail='Confirm sample availability.')
         pending = s.get_context(self.case['case_id'])
-        state = next(row for row in pending['assistance_state'] if row['task_id'] == task['task_id'])
-        self.assertEqual(state['state'], 'pending')
-        started = s.start_assistance_task(task['task_id'], task['revision'], 'start-once')
-        self.assertTrue(started['processing_started_at'])
-        self.assertEqual(s.start_assistance_task(task['task_id'], task['revision'], 'start-once'), started)
-        with self.assertRaises(ServiceError):
-            s.start_assistance_task(task['task_id'], task['revision'], 'different-request')
-        current = s.get_context(self.case['case_id'])
-        self.assertNotEqual(pending['fingerprint'], current['fingerprint'])
-        self.assertEqual(current['assistance_state'][0]['state'], 'in_progress')
-        s.save_assistance_result(started['task_id'], started['revision'], 'PRIVATE-RESULT-SENTINEL', False, False, 'resolve-private')
+        self.assertNotIn('assistance_state', pending)
+        self.assertNotIn('assistance_suggestions', pending)
+        self.assertNotIn('quality_notes', pending)
+        self.assertNotIn('Confirm sample availability.', str(pending))
+        self.assertEqual(s.repo.get('assistance_task', task['task_id']), task)
         context = s.get_context(self.case['case_id'])
-        self.assertNotIn('PRIVATE-RESULT-SENTINEL', str(context))
+        self.assertEqual(pending['fingerprint'], context['fingerprint'])
+        self.assertEqual(s.repo.get('assistance_task', task['task_id']), task)
         self.assertFalse(s.repo.get('conversation', self.cid)['human_owned'])
         self.assertFalse(s._auto_send)
 
@@ -131,16 +128,25 @@ class ReceptionQualityTests(unittest.TestCase):
         s = self.service
         context, _ = s._manual_context(self.cid, self.case['case_id'])
         target = context['reply_target']['source_message_id']
-        raw = {'reply': 'Let me check that.', 'assistance_suggestions': [
+        raw = {'reply': 'Let me check that.', 'reply_sources': [target, 'not-this-customer'],
+               'conversation_summary': '客户询问样品。', 'assistance_suggestions': [
             {'kind': 'verify_followup', 'detail': 'Confirm the current sample cost.', 'fact_keys': [], 'source_message_ids': [target]},
             {'kind': 'verify_followup', 'detail': 'Foreign customer request', 'fact_keys': [], 'source_message_ids': ['not-this-customer']},
             {'kind': 'send_message', 'detail': 'Execute a send', 'fact_keys': [], 'source_message_ids': [target]}]}
         before = s.repo.list('assistance_task')
         checked = checked_metadata(raw, context, manual=True)
-        self.assertEqual(len(checked['assistance_suggestions']), 1)
-        self.assertEqual(checked['assistance_suggestions'][0]['source_message_ids'], [target])
+        self.assertEqual(checked['reply_sources'], [target])
+        self.assertNotIn('assistance_suggestions', checked)
+        self.assertNotIn('quality_notes', checked)
+        from reception_service.integrations.analysis import validate_analysis
+        automatic = s.get_context(self.case['case_id'])
+        result = validate_analysis({**raw, 'action': 'ask',
+                                    'reply_messages': [{'body': raw['reply'], 'reply_sources': [target]}]}, automatic)
+        self.assertEqual(result['reply'], 'Let me check that.')
+        self.assertEqual(result['conversation_summary'], '客户询问样品。')
+        self.assertNotIn('quality_notes', result)
+        self.assertNotIn('assistance_suggestions', result)
         self.assertEqual(s.repo.list('assistance_task'), before)
-        self.assertTrue(any(note['code'] == 'scope_unclear' for note in checked['quality_notes']))
 
     def test_polish_reminders_survive_legacy_shape_without_creating_sources_or_tasks(self):
         s = self.service
@@ -152,10 +158,9 @@ class ReceptionQualityTests(unittest.TestCase):
                               {'code': 'commitment_unverified', 'detail': '保留原文条件，发送前核实。'}],
         }, context, manual=True)
         self.assertEqual(checked['reply_sources'], [])
-        self.assertEqual(len(checked['quality_notes']), 2)
-        self.assertIn('原文价格与运费条件需核实。', checked['quality_notes'][0]['message'])
-        self.assertEqual(checked['quality_notes'][1]['code'], 'commitment_unverified')
-        self.assertEqual(checked['assistance_suggestions'], [])
+        self.assertNotIn('quality_notes', checked)
+        self.assertNotIn('assistance_suggestions', checked)
+        self.assertEqual(context['unsent_reply']['body'], 'The sample is $15. Shipping is not included.')
         self.assertEqual(s.repo.list('assistance_task'), before)
 
     def test_read_diagnostics_accept_only_fixed_strings_and_hide_raw_data(self):

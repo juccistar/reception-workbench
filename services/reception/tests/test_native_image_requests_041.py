@@ -21,6 +21,7 @@ from reception_service.integrations.reception_prompts import AUTOMATIC, MANUAL, 
 from reception_service.model_providers.transport import ProviderTransport
 from reception_service.model_router import ModelRouter
 from reception_service.photos import direct_image_id, photo_version
+from reception_service.requirement_media import _media_id
 from reception_service.whatsapp_account_generation import AccountGenerationMixin
 
 
@@ -33,6 +34,7 @@ class NativeImageRequests(unittest.TestCase):
         self.original = stream.getvalue()
         self.asset = decode_image(self.original, 'image/png')
         self.requests = []
+        self.answer = {'reply_messages': [{'body': 'Hello', 'reply_sources': []}], 'wa_summary': '问候'}
         self.router = ModelRouter()
         self.addCleanup(self.router.close)
         self.facade = LiveIntegration.__new__(LiveIntegration)
@@ -55,7 +57,7 @@ class NativeImageRequests(unittest.TestCase):
                                'settings': settings, 'credentials': {'p': 'test-key'}})
         def respond(request):
             self.requests.append(json.loads(request.content))
-            answer = json.dumps({'reply_messages': [{'body': 'Hello', 'reply_sources': []}], 'wa_summary': '问候'})
+            answer = json.dumps(self.answer)
             if protocol == 'anthropic':
                 return httpx.Response(200, json={'id': 'msg_test', 'type': 'message', 'role': 'assistant',
                     'model': 'test', 'content': [{'type': 'text', 'text': answer}], 'stop_reason': 'end_turn',
@@ -114,7 +116,7 @@ class NativeImageRequests(unittest.TestCase):
                     context, inputs, ref = self.fixture()
                     context['task_mode'] = mode
                     self.facade._business_query(prompt, context, inputs)
-                    payload = self.inspect(protocol, [{'alias': 'p1', 'image_id': ref['image_id'], 'role': 'buyer', 'message_id': 'm'}], prompt=prompt)
+                    payload = self.inspect(protocol, [{'alias': 'p1', 'image_id': ref['image_id'], 'role': 'buyer', 'message_id': 'm', 'media_id': _media_id('customer_image', 'm')}], prompt=prompt)
                     self.assertEqual(payload['message_view'][0]['text'], '[image]')
                 context, _, _ = self.fixture()
                 context.update(photo_context={}, image_manifest=[])
@@ -166,9 +168,72 @@ class NativeImageRequests(unittest.TestCase):
                     inputs = photo_owner._direct_photo_inputs(context)
                     self.facade._business_query(prompt, context, inputs)
                     ref = context['photo_context']['direct_images'][0]
-                    payload = self.inspect(protocol, [{'alias': 'p1', 'image_id': ref['image_id'], 'role': 'buyer', 'message_id': 'm'}], prompt=prompt)
-                    self.assertEqual(payload['message_view'][0]['text'], '[图片 p1]')
+                    payload = self.inspect(protocol, [{'alias': 'p1', 'image_id': ref['image_id'], 'role': 'buyer', 'message_id': 'm', 'media_id': _media_id('customer_image', 'm')}], prompt=prompt)
+                    self.assertEqual(payload['message_view'][0]['text'], '[image]')
+                    self.assertEqual(payload['message_view'][0]['image_refs'], [{'alias': 'p1', 'image_id': ref['image_id']}])
                     self.assertNotIn('media_notice', payload['message_view'][0])
+
+    def test_auto_and_manual_validate_real_image_input_and_source_guards(self):
+        from unittest.mock import patch
+        from reception_service.errors import ServiceError
+        from reception_service.reception_context import add_image_references
+        from reception_service.requirement_changes import validate_changes
+        from reception_service.photos import with_direct_photo_reads
+
+        self.configure('chat-completions')
+        self.facade.resolve_identity = lambda seller: seller
+        context, inputs, ref = self.fixture()
+        message = inputs[0]['message']
+        buyer_text = {**message, 'message_id': 'm2', 'text': 'I need blue glasses', 'timestamp_ms': 2}
+        context.update(seller_id='s', buyer_id='b', conversation_id='c', recent_messages=[message, buyer_text],
+                       historical_evidence=[], case_catalog=[], knowledge=[], task_mode='automatic')
+        context['case'].update(state='collecting', procurement_key='main')
+        context['photo_context']['mode'] = 'direct'
+        add_image_references(context)
+        self.answer = {'action': 'ask', 'reply_messages': [{'body': 'Noted.', 'reply_sources': ['m2']}],
+            'requirement_changes': [{'action': 'create', 'case_ref': 'new:1', 'trigger_evidence_ids': ['m2'],
+                'set_fields': {'product': {'value': '蓝色眼镜', 'evidence_ids': ['m2'],
+                                           'source_excerpts': {'m2': 'blue glasses'}},
+                               'product_images': {'value': [_media_id('customer_image', 'm')],
+                                                  'evidence_ids': ['m'], 'source_excerpts': {}}}}]}
+        with patch('reception_service.integrations.live.target'):
+            for mode in ('automatic', 'manual'):
+                context['task_mode'] = mode
+                if mode == 'automatic':
+                    result = self.facade.generate(context, 'synthetic-auto', photo_inputs=inputs)
+                else:
+                    result = self.facade.generate_manual(context, 'synthetic-manual', photo_inputs=inputs)
+                self.assertTrue(result['requirement_changes'])
+                blocks = self.requests[-1]['messages'][1]['content']
+                payload = json.loads(blocks[0]['text'])['context']
+                self.assertEqual(payload['message_view'][0]['text'], '[image]')
+                self.assertEqual(payload['message_view'][0]['image_refs'][0]['alias'], 'p1')
+                self.assertEqual(payload['image_manifest'][0]['media_id'], _media_id('customer_image', 'm'))
+        checked = with_direct_photo_reads(context, [ref])
+        import copy
+        # A text-bearing image also keeps the exact source body in the view.
+        text_context = copy.deepcopy(context)
+        text_context['recent_messages'][0]['text'] = 'blue glasses'
+        add_image_references(text_context)
+        from reception_service.model_payload import project_model_payload
+        text_view = project_model_payload(text_context)['message_view'][0]
+        self.assertEqual(text_view['text'], 'blue glasses')
+        self.assertEqual(text_view['image_refs'][0]['alias'], 'p1')
+        forged = copy.deepcopy(self.answer)
+        forged['requirement_changes'][0]['set_fields']['product']['source_excerpts']['m2'] = 'blue glasses\n[图片 p1]'
+        with self.assertRaises(ServiceError):
+            validate_changes(forged, checked)
+        with self.assertRaises(ServiceError):
+            validate_changes(self.answer, with_direct_photo_reads(context, []))
+        foreign = copy.deepcopy(self.answer)
+        foreign['requirement_changes'][0]['set_fields']['product_images']['value'] = [_media_id('customer_image', 'foreign')]
+        with self.assertRaises(ServiceError):
+            validate_changes(foreign, checked)
+        foreign_source = copy.deepcopy(self.answer)
+        foreign_source['requirement_changes'][0]['set_fields']['product']['evidence_ids'] = ['foreign-message']
+        foreign_source['requirement_changes'][0]['set_fields']['product']['source_excerpts'] = {'foreign-message': 'blue glasses'}
+        with self.assertRaises(ServiceError):
+            validate_changes(foreign_source, checked)
 
     def test_polish_only_sends_supplement(self):
         for protocol in ('chat-completions', 'anthropic'):
@@ -198,7 +263,9 @@ class NativeImageRequests(unittest.TestCase):
                     def execute(self, sql): pass
                 class Host(AccountGenerationMixin):
                     def _generation_current(self, job): return True
-                    def get_whatsapp_context(self, chat): return {'task_mode': 'whatsapp_reply', 'whatsapp_messages': [{'source_id': 'wa1', 'role': 'buyer'}]}
+                    def get_whatsapp_context(self, chat, message_count=50):
+                        assert message_count == 50
+                        return {'task_mode': 'whatsapp_reply', 'whatsapp_messages': [{'source_id': 'wa1', 'role': 'buyer'}]}
                     def _account_resolve_image(self, *args): return asset
                     def _account_key(self, *args): return ':'.join(args)
                     def _account_create_part(self, batch): return 'op'
@@ -214,7 +281,7 @@ class NativeImageRequests(unittest.TestCase):
                            refs=[ref], statuses=[{'source_id': 'wa1', 'media': {'source_version': 'v1'}}],
                            merchant_context={'context': {}, 'seller_id': 's', 'revision': 1, 'instance_id': 'inst'},
                            cancel=threading.Event(), merchant_id='merchant', segment_id='seg', binding_revision=1,
-                           pending_message_id='wa1', source_fingerprint='fp')
+                           pending_message_id='wa1', source_fingerprint='fp', message_count=50)
                 host._run_account_generation(job)
                 self.assertEqual(host.repo.rows['generation_attempt', 'key']['status'], 'completed')
                 self.inspect(protocol, [{'alias': 'p1', 'image_id': 'wa-image', 'source_id': 'wa1', 'role': 'buyer'}], prompt=WHATSAPP)

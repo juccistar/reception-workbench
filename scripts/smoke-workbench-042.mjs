@@ -45,6 +45,7 @@ try {
   app = await electron.launch({ executablePath: path.join(root, 'node_modules/electron/dist/electron.exe'), args: [host], cwd: root, env, timeout: 60000 });
   const child = app.process(), page = await app.firstWindow();
   report.actual_window = true;
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   page.on('pageerror', error => report.renderer_errors.push(error.message));
   const invoke = (method, params = {}) => page.evaluate(({ method, params }) => window.reception.invoke(method, params), { method, params });
   const detail = () => invoke('get_conversation', { conversation_id: 'demo-emma' });
@@ -199,13 +200,13 @@ try {
     if (name === '产品库') {
       const directory = page.getByRole('region', { name: '产品目录' });
       await directory.getByRole('button', { name: /合成报价产品 1/ }).click();
-      const productDialog = page.getByRole('dialog', { name: '产品与供货方案', exact: true });
+      const productDialog = page.getByRole('dialog', { name: '商品与供货方案', exact: true });
       await productDialog.getByText('合成供货商', { exact: true }).waitFor();
       assert(await directory.locator('.product-042-thumbnail').evaluateAll(nodes => nodes.length >= 3 && nodes.every(node => node.getBoundingClientRect().width <= 64)));
       await shot('11-populated-product-detail.png');
       await productDialog.getByRole('button', { name: '设为默认', exact: true }).click();
       await until(async () => (await invoke('list_products')).items.some(product => product.name === '合成报价产品 1' && product.default_offer_id), 'Product default offer did not save');
-      await productDialog.getByRole('button', { name: '关闭产品与供货方案', exact: true }).click();
+      await productDialog.getByRole('button', { name: '关闭商品与供货方案', exact: true }).click();
       report.checks.populated_compact_products_and_default_offer = true;
     }
     if (name === '供应商') {
@@ -213,10 +214,11 @@ try {
       const supplierDialog = page.getByRole('dialog', { name: '供应商详情', exact: true });
       await supplierDialog.getByRole('heading', { name: '合成供货商', exact: true }).waitFor();
       await shot('12-populated-supplier-detail.png');
-      await supplierDialog.getByRole('button', { name: '编辑供应商', exact: true }).click();
-      await supplierDialog.getByLabel('联系方式', { exact: true }).fill('更新后的隔离窗口联系信息');
-      await supplierDialog.getByRole('button', { name: '保存供应商', exact: true }).click();
-      await supplierDialog.getByText('联系方式：更新后的隔离窗口联系信息', { exact: true }).waitFor();
+      await supplierDialog.getByRole('button', { name: '编辑资料', exact: true }).click();
+      const supplierEditor = page.getByRole('dialog', { name: '编辑供应商', exact: true });
+      await supplierEditor.getByLabel('联系人', { exact: true }).fill('更新后的隔离窗口联系信息');
+      await supplierEditor.getByRole('button', { name: '保存供应商', exact: true }).click();
+      await supplierDialog.getByText('更新后的隔离窗口联系信息', { exact: true }).waitFor();
       await shot('13-supplier-edit-saved.png');
       await supplierDialog.getByRole('button', { name: '关闭供应商详情', exact: true }).click();
       report.checks.populated_supplier_and_real_save = true;

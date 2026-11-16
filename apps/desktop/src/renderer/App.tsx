@@ -1,3 +1,4 @@
+import './styles.css';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BookOpen, ClipboardCheck, ClipboardList, Home, LayoutGrid, MessageCircle, Pause, Play, RefreshCw, ScrollText, Settings2, Store, UsersRound, X } from 'lucide-react';
 import type { ReceptionBridge } from '../shared/api';
@@ -12,7 +13,6 @@ import { ExitConfirmation } from './components/ExitConfirmation';
 import { NavigationGlyph } from './components/NavigationGlyph';
 import type { ExitDialogChoice, ExitDialogEvent, ExitDialogResponse } from '../shared/exit-dialog';
 import type { ConfirmationDialogEvent } from '../shared/confirmation-dialog';
-import './styles.css';
 import './reception-layout.css';
 
 const navigation: { id: Page; title: string; icon: typeof Home }[] = [

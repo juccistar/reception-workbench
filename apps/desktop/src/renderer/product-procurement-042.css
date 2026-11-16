@@ -1,4 +1,4 @@
-.pp042-page { max-width: 1400px; margin: 0 auto; padding: 36px 5%; color: #263955; }
+.pp042-page { color: #263955; }
 .pp042-page .page-title { margin-bottom: 30px; }
 .pp042-page .page-title h1 { font-size: 24px; }
 .pp042-page .page-title p { color: #8190a8; font-size: 12px; }
@@ -29,7 +29,6 @@
 .pp042-drawer .profile-card { padding: 26px 28px; }
 .pp042-drawer .handoff-card { border: 1px solid #dce5f1; border-radius: 8px; padding: 16px; margin: 10px 0; }
 @media (max-width: 700px) {
- .pp042-page { padding: 24px 16px; }
  .pp042-toolbar { align-items: stretch; flex-direction: column; }
  .pp042-toolbar .directory-search input { width: 100%; }
  .pp042-page .product-042-header { display: none; }
@@ -62,3 +61,36 @@
 .pp042-drawer .form-card { box-shadow: none; }
 .pp042-page button:focus-visible, .pp042-drawer button:focus-visible { outline: 2px solid #5277c4; outline-offset: 2px; }
 @media (max-width: 700px) { .pp042-summary .product-042-thumbnail { width: 72px; height: 72px; } .pp042-drawer .profile-card { padding: 20px 16px; } .pp042-footer { padding: 14px 16px; } }
+
+/* Directory rows stay compact even when imported business text is very long. */
+.pp042-page .product-042-list > button > *, .pp042-page .supplier-042-list > button > *, .pp042-page .procurement-042-list > button > * { min-width: 0; }
+.pp042-page .pp042-spec, .pp042-page .product-042-name strong, .pp042-page .product-042-name small, .pp042-page .supplier-042-list strong, .pp042-page .supplier-042-list small, .pp042-page .procurement-042-list small, .pp042-page .procurement-042-item strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp042-page .product-042-name > span:last-child, .pp042-page .procurement-042-item > span:last-child { min-width: 0; }
+.pp042-page .procurement-042-item .product-042-thumbnail { width: 45px; height: 45px; flex: none; border: 1px solid #e2e8e5; border-radius: 7px; overflow: hidden; background: #eef2ef; }
+.pp042-page .procurement-042-item .product-042-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+.pp042-summary > div { min-width: 0; }
+.pp042-summary h2, .pp042-summary-spec { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp042-product-details { margin: 16px 0; color: #65758d; }
+.pp042-product-details summary { cursor: pointer; color: #5579ca; }
+.pp042-full-spec { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pp042-list-footer { display: flex; justify-content: space-between; padding: 15px 20px; border-top: 1px solid #edf0f5; color: #94a0b2; font-size: 11px; }
+.pp042-muted { color: #94a0b2; font-size: 11px; }
+.pp042-supplier-name { margin: 0; font-size: 20px; line-height: 1.7; overflow-wrap: anywhere; }
+.pp042-supplier-meta { display: flex; gap: 12px; align-items: center; margin: 13px 0 23px; color: #8190a8; font-size: 12px; }
+.pp042-offer-top { display: flex; justify-content: space-between; gap: 16px; }
+.pp042-offer-cost { flex: none; color: #263955; font-weight: 600; text-align: right; }
+.pp042-offer-cost small { display: block; margin-top: 5px; color: #94a0b2; font-size: 11px; font-weight: normal; }
+.pp042-form label { display: block; margin: 0 0 18px; color: #536580; font-size: 12px; }
+.pp042-form input, .pp042-form select, .pp042-form textarea { display: block; box-sizing: border-box; width: 100%; margin-top: 8px; padding: 10px 12px; border: 1px solid #dce5f1; border-radius: 6px; background: white; color: #263955; font: inherit; }
+.pp042-form textarea { min-height: 90px; resize: vertical; }
+.pp042-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.pp042-settings-intro { margin: 0 0 25px; color: #8190a8; font-size: 12px; }
+.pp042-setting-line { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 17px 0; border-bottom: 1px solid #edf0f5; }
+.pp042-setting-line p { margin: 6px 0 0; color: #8190a8; font-size: 12px; }
+.pp042-setting-line + label { margin: 22px 0; }
+.pp042-switch { position: relative; width: 38px; height: 22px; flex: none; padding: 0; border: 0; border-radius: 20px; background: #cbd4e2; cursor: pointer; }
+.pp042-switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: white; transition: transform .15s; }
+.pp042-switch[aria-checked='true'] { background: #3155d9; }
+.pp042-switch[aria-checked='true']::after { transform: translateX(16px); }
+.pp042-note-amber { margin-top: 24px; background: #fff8e9; color: #9c722c; }
+.pp042-drawer .handoff-card, .pp042-drawer .pp042-customer, .pp042-drawer .pp042-note { overflow-wrap: anywhere; }

@@ -1,7 +1,22 @@
 {
   "version": "0.4.2",
-  "date": "2026-11-16",
-  "status": "source_integration_before_visual_review",
+  "date": "2026-11-17",
+  "status": "layout_corrections_before_rebuilt_window_review",
+  "corrections": [
+    "Base stylesheet loads before page styles; shared page width, spacing and background follow the approved reference",
+    "Home uses three pending customers and three recent conversations, preserving the lower panels",
+    "Product rows and drawer summaries bound long text, with full values available on demand",
+    "Supplier and procurement drawers use the approved form and fixed footer structure"
+  ],
+  "launcher_window": {
+    "report": "artifacts/verification/launcher-supplement-042-driver-fix-003/report.json",
+    "status": "passed", "screenshots_viewed": 14,
+    "coverage": "isolated_real_chrome_synthetic_accounts_and_network"
+  },
+  "backend_prior_failures": [
+    "replica-final-001: async model cleanup 2-second join assertion; unchanged single-file rerun passed",
+    "replica-final-002: connection preparation timed out before message-monitor assertion; single-file rerun passed 65 tests after adding timeout diagnostics, cause not established"
+  ],
   "design_gate": "all_pages_and_dialogs_require_actual_comparison",
   "previous_demo": "5c97dcc",
   "previous_demo_is_final": false,
@@ -13,14 +28,15 @@
     "real_user_cleanup_executed": false
   },
   "integration_checks": {
-    "desktop_types": "artifacts/verification/042-replica-integration-typecheck-003.log",
+    "desktop_types": "artifacts/verification/042-replica-integration-typecheck-007.log",
     "feishu_configuration": { "log": "artifacts/verification/042-feishu-configuration-002.log", "tests": 3, "status": "passed" },
     "feishu_host": { "log": "artifacts/verification/042-feishu-host-001.log", "tests": 4, "status": "passed" },
     "workbench_regression_before_selector_updates": { "log": "artifacts/verification/042-replica-ui-integration-001.log", "tests": 126, "failed": 42, "status": "failed" },
     "latest_workbench_and_host": { "log": "artifacts/verification/042-replica-ui-integration-004.log", "files": 4, "tests": 137, "status": "passed" },
+    "latest_page_layout_and_behavior": { "log": "artifacts/verification/042-replica-ui-integration-007.log", "files": 3, "tests": 151, "status": "passed", "overlaps_previous_runs": true },
     "full_suite": false
   },
-  "pending": ["updated interaction regressions", "actual source window and reference comparison", "final candidate packaging and resource verification"],
+  "pending": ["rebuilt source window and reference comparison", "diagnose recurring monitor preparation and model cleanup timing failures in replica-final-003", "final candidate packaging and resource verification"],
   "release": { "candidate_built": false, "uploaded": false, "published": false },
   "boundaries": { "installed": false, "real_data_migration": false, "real_customer_sends": false, "paid_models": false, "real_feishu_requests": false, "private_source_pushed": false }
 }

@@ -35,6 +35,7 @@ it('selects and clears a current case offer with the projected revision and sets
   const view = render(<ProductsPage initialProductId="p1" caseSelection={{ case_id: 'case1', revision: 7, customer_name: 'Emma', product_name: '棉帽', local_product_id: 'p1', offer_id: null }} onCaseChanged={changed} />);
   fireEvent.click(await screen.findByRole('button', { name: '选用于当前事项' }));
   expect(screen.getByText('当前客户：Emma · 棉帽')).toBeInTheDocument();
+  fireEvent.click(screen.getByText('查看商品资料和完整规格'));
   expect(await screen.findByRole('button', { name: '放大查看商品图片 1' })).toBeInTheDocument();
   expect(invoke).toHaveBeenCalledWith('get_product_main_image', { local_product_id: 'p1' });
   expect(screen.queryByText(/当前事项：case1/)).not.toBeInTheDocument();
@@ -53,6 +54,7 @@ it('copies the product library ID and link through the host', async () => {
   const copyProductText = vi.fn(async () => {});
   Object.assign(window.reception!, { copyProductText });
   render(<ProductsPage initialProductId="p1" />);
+  fireEvent.click(await screen.findByText('查看商品资料和完整规格'));
   fireEvent.click(await screen.findByRole('button', { name: '复制产品ID' }));
   await screen.findByText('产品ID已复制');
   fireEvent.click(screen.getByRole('button', { name: 'https://example.com/product' }));
@@ -178,10 +180,29 @@ it('uses projected product specifications and offer counts without inventing sup
   expect(within(list).getByText('2')).toBeInTheDocument();
 });
 
+it('retains the complete long specification in expandable product details', async () => {
+  const invoke = setup(); const original = invoke.getMockImplementation()!;
+  const specification = '完整规格内容'.repeat(500);
+  invoke.mockImplementation(async (method: string, params: unknown = {}) => method === 'list_products'
+    ? { items: [{ ...product, specifications_summary: specification }] }
+    : method === 'get_product' ? { product: { ...product, specifications_summary: specification }, offers: [offer], suppliers: [supplier], tasks: [], customers: [] }
+    : original(method, params));
+  render(<ProductsPage initialProductId="p1" />);
+  const summary = await screen.findByText('查看商品资料和完整规格');
+  const details = summary.closest('details')!;
+  expect(details).not.toHaveAttribute('open');
+  fireEvent.click(summary);
+  expect(within(details).getByText(specification)).toBeVisible();
+  expect(screen.getByRole('heading', { name: '供货方案' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: '关联客户' })).toBeVisible();
+  expect(screen.getByText('暂无关联客户')).toBeVisible();
+});
+
 it('keeps inquiry unavailable and reconciles a selected unknown procurement task', async () => {
   const invoke = setup(); render(<ProcurementPage />);
   fireEvent.click(screen.getByText('找货设置'));
-  expect(await screen.findByLabelText('供应商上限')).toHaveAttribute('max', '3');
+  expect(await screen.findByLabelText('供应商上限')).toHaveValue('3');
+  expect(screen.getByRole('switch', { name: '自动找货' })).toHaveAttribute('aria-checked', 'false');
   expect(screen.queryByLabelText('自动询价')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '关闭自动找货' }));
   fireEvent.click(await screen.findByRole('button', { name: /123.*结果未知/ }));
@@ -190,13 +211,25 @@ it('keeps inquiry unavailable and reconciles a selected unknown procurement task
   expect(invoke).not.toHaveBeenCalledWith('request_procurement', expect.anything());
 });
 
+it('saves the sourcing switch and requires saved settings before authorization', async () => {
+  const invoke = setup(); render(<ProcurementPage />);
+  fireEvent.click(screen.getByRole('button', { name: '找货设置' }));
+  const toggle = await screen.findByRole('switch', { name: '自动找货' });
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-checked', 'true');
+  expect(screen.getByRole('button', { name: '本次授权' })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('供应商上限'), { target: { value: '2' } });
+  fireEvent.click(screen.getByRole('button', { name: '保存设置' }));
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('save_procurement_settings', expect.objectContaining({ auto_find: true, supplier_limit: 2 })));
+});
+
 it('opens the associated customer using the projected conversation id', async () => {
   const invoke = setup(); const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (method: string, params: unknown = {}) => method === 'get_product'
     ? { product, offers: [], suppliers: [], tasks: [], customers: [{ buyer_id: 'buyer1', customer_name: 'Emma', conversation_id: 'conversation1', case_id: 'case1', case_ids: ['case1'] }] }
     : original(method, params));
   const open = vi.fn(); render(<ProductsPage initialProductId="p1" onOpenConversation={open} />);
-  expect(await screen.findByText('Emma')).toBeInTheDocument();
+  expect(await screen.findByText('Emma')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: '查看会话' }));
   expect(open).toHaveBeenCalledWith('conversation1');
 });
