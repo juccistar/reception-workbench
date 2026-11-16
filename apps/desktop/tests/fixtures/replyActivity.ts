@@ -40,7 +40,6 @@ export function createReplyActivityFixture() {
     onEvent(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     async getPreferences() { return clone(preferences); },
     async savePreferences(value) { preferences = { ...preferences, ...value }; return clone(preferences); },
-    async confirmSend() { throw new Error('合成预览不执行发送'); },
     async chooseWorkctl() { return null; },
   };
   return { bridge, snapshot, details, calls, emit, publish, job };

@@ -24,7 +24,7 @@ def encoded(value) -> str:
 
 class Repository:
     def __init__(self, path: Path | None, seller_id: str = ''):
-        from .storage_guard import REPOSITORY_SCHEMA, REPOSITORY_VERSION, validate_database, check_sqlite_path
+        from .storage_guard import REPOSITORY_SCHEMA, REPOSITORY_VERSION, MESSAGE_CURSOR_INDEX, validate_database, check_sqlite_path
         check_sqlite_path(path)
         version = validate_database(path, 'repository') if path is not None else None
         if path is not None:
@@ -32,6 +32,7 @@ class Repository:
         self.path = path
         self.lock = threading.RLock()
         self._image_metadata_cache = {}
+        self._supplement_projection_cache = {}
         self.db = sqlite3.connect(str(path) if path else ':memory:', check_same_thread=False,
                                   isolation_level=None, timeout=5)
         try:
@@ -39,6 +40,8 @@ class Repository:
                 if version is None:
                     for statement in REPOSITORY_SCHEMA:
                         self.db.execute(statement)
+                    # Existing databases retain their schema for older versions.
+                    self.db.execute(MESSAGE_CURSOR_INDEX)
                 existing = self.get('meta', 'seller')
                 if existing is not None and existing['seller_id'] != seller_id:
                     from .errors import ServiceError
@@ -122,6 +125,44 @@ class Repository:
             return [json.loads(row[0]) for row in self.db.execute(
                 'SELECT data FROM entities WHERE kind=?' + where + ' ORDER BY rowid',
                 (kind, *filters.values()))]
+
+    def automatic_source_facts(self, conversation_id: str) -> tuple[dict | None, bool]:
+        """Latest buyer and presence of any undated buyer, without truncating history."""
+        with self.lock:
+            latest = self.db.execute("""SELECT data FROM entities
+                WHERE kind='message' AND json_extract(data,'$.conversation_id')=?
+                  AND json_extract(data,'$.role')='buyer'
+                ORDER BY coalesce(json_extract(data,'$.timestamp_ms'),-1) DESC,
+                         json_extract(data,'$.message_id') DESC LIMIT 1""", (conversation_id,)).fetchone()
+            undated = self.db.execute("""SELECT 1 FROM entities
+                WHERE kind='message' AND json_extract(data,'$.conversation_id')=?
+                  AND json_extract(data,'$.role')='buyer'
+                  AND json_extract(data,'$.timestamp_ms') IS NULL LIMIT 1""", (conversation_id,)).fetchone()
+        return (json.loads(latest[0]) if latest else None, bool(undated))
+
+    def reply_pending_facts(self, conversation_id: str):
+        """Read the exact message facts needed by the reception summary.
+
+        This deliberately does not decode message bodies or truncate history. The
+        ordering matches _messages, including its -1 sentinel for missing time.
+        """
+        with self.lock:
+            row = self.db.execute("""WITH messages AS (
+                SELECT json_extract(data,'$.role') AS role,
+                       json_extract(data,'$.timestamp_ms') AS stamp,
+                       json_extract(data,'$.message_id') AS message_id
+                FROM entities WHERE kind='message' AND json_extract(data,'$.conversation_id')=?
+            )
+            SELECT count(*) FILTER (WHERE role='buyer'),
+                   count(*) FILTER (WHERE role='buyer' AND stamp IS NULL),
+                   max(stamp) FILTER (WHERE role='buyer'),
+                   (SELECT message_id FROM messages WHERE role='buyer'
+                    ORDER BY coalesce(stamp,-1) DESC, message_id DESC LIMIT 1),
+                   count(*) FILTER (WHERE role='seller'),
+                   (SELECT stamp FROM messages WHERE role='seller'
+                    ORDER BY coalesce(stamp,-1) DESC, message_id DESC LIMIT 1)
+            FROM messages""", (conversation_id,)).fetchone()
+        return row
 
     def message_page(self, conversation_id: str, limit: int, before: tuple[int, str] | None = None) -> list[dict]:
         """Return the newest page in display order, before an exclusive composite cursor.

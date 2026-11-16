@@ -1,0 +1,139 @@
+{
+  "version": "0.4.2",
+  "date": "2026-11-16",
+  "status": "desktop_built_pending_window_verification",
+  "baseline_commit": "f8339ad",
+  "plan": "docs/0.4.2开发方案.md",
+  "design": "docs/design/reception-redesign/README.md",
+  "authorized": {
+    "implementation": true,
+    "package": true,
+    "publish_release": true,
+    "release_repository": "juccistar/reception-workbench-releases",
+    "push_private_source": false,
+    "install_or_migrate_real_data": false
+  },
+  "constraints": {
+    "customer_list_follows_design": true,
+    "message_time_format": "YYYY-MM-DD HH:mm:ss",
+    "new_attachment_interfaces": false,
+    "full_test_suite_requested": false,
+    "real_model_or_customer_send_requested": false
+  },
+  "inherited_changes_preserved": [
+    "reception_context.py excludes display-only history coverage wording from the semantic fingerprint",
+    "The parallel reply self-echo repair is included; original operation, batch evidence and unknown protections remain intact"
+  ],
+  "implementation": [
+    "Unified navigation and redesigned reception, business pages and eight settings sections; no customer avatars",
+    "Persistent all/selected reception scope, direct start without AI precheck, direct ownership actions",
+    "Suggestion and polish translations independent of chat translation display; targeted cancellation",
+    "Authoritative automatic source ID and text hash projection; current task/customer/lifecycle failure filtering",
+    "Shared conversation supplement CAS and original mutation recovery, with explicit conflict reapplication",
+    "Retired send-history and manual verification UI and public preview/prepare/confirm send chain; retained receipts and ledgers",
+    "Historical ingestion separated from live observations; partial summaries and matching native head confirmations handled without opening all backfilled messages",
+    "Private WhatsApp current-chat text supplement, queued view fence, bounded exact-operation receipt sweep",
+    "Model cleanup completion settles obsolete generation attempts; normal close and later supplement changes preserve attempt counts",
+    "SQL reply-pending facts and exact automatic source query; existing databases do not receive cursor indexes on open"
+  ],
+  "tests": [
+    {
+      "status": "passed",
+      "scope": "selected_backend_files",
+      "files": 9,
+      "tests": 170,
+      "command": "node scripts/verify-backend-042.mjs --label final-002",
+      "report": "artifacts/verification/backend-042-final-002/report.json",
+      "changed_inputs": [],
+      "individual_files": {
+        "test_message_monitor.py": 65,
+        "test_reply_sync_0320.py": 27,
+        "test_reply_batches_0319.py": 17,
+        "test_manual_receipts.py": 20,
+        "test_native_workflow_receipts.py": 11,
+        "test_whatsapp_account_generation_041.py": 19,
+        "test_model_runtime_040.py": 4,
+        "test_projection_performance_042.py": 2,
+        "test_performance_042.py": 5
+      }
+    },
+    {
+      "status": "passed",
+      "scope": "selected_desktop_host_files",
+      "files": 12,
+      "tests": 240,
+      "log": "artifacts/verification/042-desktop-final-001.log",
+      "workbench_file_tests": 124
+    },
+    {
+      "status": "passed",
+      "scope": "extension_resources_and_release_paths",
+      "files": 2,
+      "tests": 3
+    },
+    {
+      "status": "passed",
+      "command": "node node_modules/typescript/bin/tsc --noEmit -p apps/desktop/tsconfig.json"
+    },
+    {
+      "status": "matched",
+      "command": "node scripts/sync-reception-prompts.mjs --check",
+      "prompt_version": "reception-0.4.1",
+      "body_changed": false
+    },
+    {
+      "status": "passed",
+      "command": "git diff --check"
+    }
+  ],
+  "prior_failures": [
+    "Early workbench runs included retired UI assertions; a later isolated file run passed. Exit 137 was not reproduced after avoiding concurrent heavy test runs; the original cause remains unconfirmed.",
+    "Initial direct legacy Python runs lacked synthetic test support, and some concurrent runs shared a budget directory. Final runs use the project runner and a fresh budget directory per file.",
+    "042-backend-final-001.log invoked the single-file runner with multiple filenames and failed argument parsing; no regression result is claimed for that invocation.",
+    "The extension resource test originally pinned 0.4.1 and failed after the version bump. It now uses the package version and still checks restricted capabilities; all three selected tool tests passed.",
+    "Independent reviews identified history/native-head, late model settlement, automatic failure and supplement conflict defects; fixes and focused regressions were included before the recorded final runs."
+  ],
+  "reply_self_echo_repair": {
+    "report": "artifacts/verification/reply-self-echo-fix-041-002/final-repair-report.json",
+    "earlier_fixed_input_tests": 75,
+    "overlaps_final_backend_files": true,
+    "do_not_add_to_final_total": true,
+    "real_customer_database_read": false
+  },
+  "performance": {
+    "query_report": "docs/verification/0.4.2-performance.json",
+    "integration_report": "docs/verification/0.4.2-integration-performance.json",
+    "final_measurement": "passed",
+    "claims_limited_to_synthetic_workloads": true,
+    "final_measurement_artifact": "artifacts/verification/042-performance-final-002.json"
+  },
+  "windows": [],
+  "builds": [
+    {
+      "kind": "desktop_source_snapshot",
+      "version": "0.4.2",
+      "status": "passed",
+      "command": "node scripts/build.mjs",
+      "log": "artifacts/verification/042-desktop-build-001.log",
+      "completed_at": "2026-11-16T10:45:46.050Z",
+      "immediate_local_commit": true
+    }
+  ],
+  "release": {
+    "status": "not_started_authentication_failed",
+    "published": false,
+    "public_baseline_observed": "v0.3.21",
+    "authentication_failure": "GitHub device flow token exchange failed with a network timeout; authentication was not completed",
+    "fixed_update_key_preflight": "existing key matched the published Ed25519 trust anchor; no key created or rotated"
+  },
+  "limits": {
+    "full_suite_run": false,
+    "actual_release_executable_entry": false,
+    "real_accounts": false,
+    "real_customer_sends": 0,
+    "paid_model_calls": 0,
+    "installed_application_changed": false,
+    "real_business_data_migrated": false,
+    "private_source_pushed": false
+  }
+}

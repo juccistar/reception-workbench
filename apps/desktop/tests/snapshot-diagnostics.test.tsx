@@ -32,12 +32,11 @@ describe('safe snapshot mismatch details', () => {
     expect(screen.queryByRole('region', { name: '快照核验差异' })).not.toBeInTheDocument();
   });
 
-  it('opens the mismatch details from the activity task without creating a new task', () => {
+  it('does not expose send tasks or their diagnostic details in activity', () => {
     const model = { connected: true, busy: () => false, jobs: [{ job_id: 'synthetic-snapshot-failure', kind: 'automatic_send', status: 'failed', stage: 'snapshot', message: '快照消息与平台消息不一致', created_at: 1794190644082, started_at: 1794190649416, completed_at: 1794190658479, conversation_id: 'synthetic-conversation', case_id: 'synthetic-case', diagnostics, error: { code: 'snapshot_message_mismatch', message: '快照消息与平台消息不一致' } }], snapshot: { conversations: [{ conversation_id: 'synthetic-conversation', customer_name: 'Synthetic buyer' }], outbox: [] } } as unknown as Workbench;
     render(<ActivityPage model={model} />);
     expect(screen.queryByRole('region', { name: '快照核验差异' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /自动发送回复/ }));
-    expect(screen.getByRole('region', { name: '快照核验差异' })).toHaveTextContent('4397577601655.PNM');
-    expect(screen.getByText('Synthetic buyer')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /自动发送回复/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('Synthetic buyer')).not.toBeInTheDocument();
   });
 });

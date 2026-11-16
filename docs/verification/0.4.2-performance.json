@@ -1,0 +1,49 @@
+{
+  "conditions": {
+    "platform": "Windows-10-10.0.19045-SP0",
+    "python": "3.12.2",
+    "sqlite": "3.43.1",
+    "storage": "temporary file, WAL, synchronous FULL",
+    "dataset": "20,000 synthetic messages, 20 conversations, 1,000 per conversation",
+    "runs": 40,
+    "cache": "warm; OS and SQLite caches not flushed",
+    "write_test": "500 inserts in one rolled-back immediate transaction; excludes commit"
+  },
+  "before": {
+    "median_ms": 3.6375,
+    "p95_ms": 8.893,
+    "returned_rows": 50,
+    "decoded_rows": 50,
+    "response_bytes": 4250,
+    "query_count_per_page": 1,
+    "plan": [
+      "SEARCH entities USING INDEX entities_conversation (kind=? AND <expr>=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ]
+  },
+  "after": {
+    "median_ms": 0.055,
+    "p95_ms": 0.057,
+    "returned_rows": 50,
+    "decoded_rows": 50,
+    "response_bytes": 4250,
+    "query_count_per_page": 1,
+    "plan": [
+      "SEARCH entities USING INDEX entities_message_cursor (kind=? AND <expr>=?)"
+    ]
+  },
+  "equal_results": true,
+  "index_create_ms": 105.35,
+  "insert_500_before_ms": 3.892,
+  "insert_500_after_ms": 4.152,
+  "legacy_compatibility": {
+    "policy": "Existing databases are opened without adding the cursor index, regardless of backup status. Only newly created databases receive it. No existing-database index migration is implemented; new indexed databases are not accepted by the 0.4.1 strict schema validator.",
+    "test": "Synthetic version 2 legacy database, 120 messages, cleanly closed before and after opening. Pagination remained correct; schema signature before and after matched the 0.4.1 expected schema and each other.",
+    "previous_validator": "The storage_guard.py from git HEAD accepted a separate synthetic version 2 legacy database both before and after current Repository open/close, returning version 2 each time.",
+    "schema_signature_sha256_before_and_after": "40534ea164f991c5c585315a5c16ac0d078ae87cb4b8d89c94065110709622a8",
+    "database_sha256_before": "4febba6681bd7e28906226d182bed1deba56ab8d922e30822421ece190ec3f81",
+    "database_sha256_after": "fbbd4a38755068964e914aa8a306d7170f0821cb5e295c007f0728ba92bb96d1",
+    "hash_note": "Database bytes differ after ordinary startup writes; this verifies schema preservation, not a byte-for-byte read-only open. The full database and WAL remain subject to normal backup requirements."
+  },
+  "limits": "Microbenchmark only; its indexed results apply to newly created databases, not existing databases. No snapshot, end-to-end detail, memory, cold read, concurrent accounts or real data measured."
+}

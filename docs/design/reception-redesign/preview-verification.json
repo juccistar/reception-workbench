@@ -1,0 +1,36 @@
+{
+  "synthetic_only": true,
+  "real_data_accessed": false,
+  "business_or_model_calls": 0,
+  "status": "passed",
+  "checks": [
+    "Customer avatars and send-history entry points are removed",
+    "Details resize and history isolation work; reception starts directly without AI preflight and preserves manual ownership",
+    "Customer drafts and supplements stay isolated; no-requirement conversation can send",
+    "A late send receipt preserves newly typed text",
+    "Suggestions and polish show Chinese translations; ownership and resume change immediately without confirmation",
+    "Unknown shows status only, preserves pending state and drafts, and adds no verification or resend action",
+    "1600, 1440, 1024 and 390 px viewports, collapsed panel and drawers",
+    "Customer search and quote filtering"
+  ],
+  "screenshots": [
+    "01-manual-1600.png",
+    "02-manual-1440.png",
+    "14-resized-details.png",
+    "15-history-loading.png",
+    "03-reply-suggestion.png",
+    "16-polish-translation.png",
+    "04-auto-reception.png",
+    "05-send-unknown.png",
+    "06-verification.png",
+    "07-chat-focus.png",
+    "17-source-message.png",
+    "08-product-image.png",
+    "09-narrow-chat.png",
+    "10-narrow-details.png",
+    "11-mobile-chat.png",
+    "12-mobile-customers.png",
+    "13-mobile-details.png"
+  ],
+  "errors": []
+}

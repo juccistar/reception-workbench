@@ -2,7 +2,6 @@
 from collections import defaultdict
 
 from .repository import now_ms
-from .errors import ServiceError
 
 
 class ReceptionProjection:
@@ -51,13 +50,10 @@ class ReceptionProjection:
 
     def reply_pending(self, conversation):
         cid = conversation['conversation_id']
-        messages = self.service._messages(cid)
-        buyer = [m for m in messages if m.get('role') == 'buyer']
-        seller = [m for m in messages if m.get('role') == 'seller']
-        unanswered = bool(buyer) and (any(m.get('timestamp_ms') is None for m in buyer)
-                     or not seller or seller[-1].get('timestamp_ms') is None
-                     or any(m.get('timestamp_ms') is not None and m['timestamp_ms'] > seller[-1]['timestamp_ms'] for m in buyer))
-        if buyer and any(o.get('status') == 'accepted' and o.get('source_message_id') == buyer[-1]['message_id']
+        buyers, undated, latest_buyer_time, latest_buyer_id, sellers, last_seller_time = self.service.repo.reply_pending_facts(cid)
+        unanswered = bool(buyers) and (undated or not sellers or last_seller_time is None
+                     or latest_buyer_time is not None and latest_buyer_time > last_seller_time)
+        if buyers and any(o.get('status') == 'accepted' and o.get('source_message_id') == latest_buyer_id
                          for o in self.operations[cid]):
             unanswered = False
         return bool(unanswered)
@@ -93,19 +89,11 @@ class ReceptionProjection:
             block('paused', '自动接待已暂停' if not s._running else '当前为仅人工模式')
         scope = s._frozen_scope
         in_scope = bool(scope and scope.get('seller_id') == s.seller_id and
-                        (scope.get('mode') == 'incoming' or cid in scope.get('conversation_ids', [])))
+                        (scope.get('mode') in ('all', 'incoming') or cid in scope.get('conversation_ids', [])))
         if s._running and not s._manual_only and not in_scope:
             block('out_of_scope', '客户不在本次自动接待范围')
         if not s.account_verified or s.mode == 'live' and s.checks['messages']['status'] != 'passed':
             block('capability', '消息读取能力尚未就绪')
-        if s.mode == 'live':
-            try:
-                s._freeze_reception_model()
-                ready = s.checks['ai']['status'] == 'passed'
-            except ServiceError:
-                ready = False
-            if not ready:
-                block('ai_capability', 'AI 接待能力尚未就绪')
         # Send previews are diagnostic, not a gate: each send performs its own
         # native preflight, so even a failed earlier preview is not a blocker.
         if s._message_sync_pending(cid):

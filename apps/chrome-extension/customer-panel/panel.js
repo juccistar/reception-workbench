@@ -3,6 +3,8 @@
   const $ = id => document.getElementById(id);
   let token = '', view = null, customer = null, sequence = 0, searchTimer;
   const pending = new Map();
+  const drafts = new Map();
+  const draftKey = v => JSON.stringify([v.identity.workspace_id, v.identity.account_id, v.identity.chat_id, v.merchant_id, v.binding_revision]);
   const connectionTimer = setTimeout(() => { if (!token) $('empty').textContent = '侧栏连接较慢，请稍后'; }, 8000);
   function clear() {
     view = null; customer = null; clearTimeout(searchTimer);
@@ -34,6 +36,12 @@
     const none = document.createElement('option'); none.value = ''; none.textContent = '未选择商家'; $('merchant').append(none);
     for (const merchant of next.merchants) { const option = document.createElement('option'); option.value = merchant.merchant_id; option.textContent = merchant.name; option.disabled = !merchant.available; $('merchant').append(option); }
     $('merchant').value = next.merchant_id || '';
+    const note = next.supplement || { body: '', revision: 0 };
+    const draft = drafts.get(draftKey(next));
+    $('supplement').value = draft?.body ?? note.body;
+    $('supplement').disabled = $('save-supplement').disabled = !ready || !next.merchant_id;
+    $('supplement-status').textContent = draft && draft.revision !== note.revision ? '业务补充已变化，请重新打开后保存' : '';
+    $('send-status').textContent = next.send_status || '';
     customer = next.conversation_id ? { conversation_id: next.conversation_id } : null;
     $('selected').textContent = customer ? '已关联国际站客户' : '尚未关联客户';
     const paused = next.human_owned || next.reception_paused;
@@ -55,7 +63,28 @@
     try { const current = await chrome.windows.getCurrent(); await chrome.sidePanel.close({ windowId: current.id }); }
     catch { $('error').textContent = '无法收起侧栏，请使用浏览器侧栏的关闭按钮'; }
   });
-  $('merchant').addEventListener('change', () => { customer = null; $('selected').textContent = '尚未关联客户'; $('results').replaceChildren(); });
+  $('merchant').addEventListener('change', () => { customer = null; $('selected').textContent = '尚未关联客户'; $('results').replaceChildren(); $('supplement').disabled = $('save-supplement').disabled = $('merchant').value !== (view?.merchant_id || '') || !$('merchant').value; });
+  $('supplement').addEventListener('input', () => {
+    if (!view) return;
+    const key = draftKey(view), existing = drafts.get(key);
+    drafts.set(key, { body: $('supplement').value, revision: existing?.revision ?? view.supplement?.revision ?? 0 });
+    $('supplement-status').textContent = '';
+  });
+  $('save-supplement').addEventListener('click', async () => {
+    if (!view) return;
+    const current = view, key = draftKey(current), draft = drafts.get(key) || { body: $('supplement').value, revision: current.supplement?.revision ?? 0 };
+    $('save-supplement').disabled = true;
+    try {
+      const result = await request('supplement', { body: draft.body, expected_revision: draft.revision });
+      if (view !== current) return;
+      const latest = drafts.get(key);
+      if (latest?.body === draft.body) drafts.delete(key);
+      else if (latest) drafts.set(key, { ...latest, revision: result.revision });
+      current.supplement = result;
+      $('supplement-status').textContent = '已保存';
+    } catch (error) { if (view === current) $('supplement-status').textContent = '保存失败，请重试'; }
+    finally { if (view === current) $('save-supplement').disabled = false; }
+  });
   $('query').addEventListener('input', () => {
     clearTimeout(searchTimer); $('results').replaceChildren();
     const merchant = $('merchant').value, query = $('query').value, identity = view?.identity;

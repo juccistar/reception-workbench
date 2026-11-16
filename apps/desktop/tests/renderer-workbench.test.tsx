@@ -429,6 +429,121 @@ describe('mounted requirement workspace', () => {
 });
 
 describe('manual suggestion and supplement', () => {
+  it('reports an automatic generation model failure once for the current customer', async () => {
+    const bridge = new FakeBridge(); await openApp(bridge);
+    bridge.details.emma.automatic_source = { message_id: 'message-emma', text_sha256: 'valid-hash' };
+    const failed: Job = { job_id: 'auto-failure', kind: 'generate_draft', conversation_id: 'emma', case_id: 'case-emma', source_message_id: 'message-emma', source_text_sha256: 'valid-hash', status: 'failed', stage: 'retry', message: '失败', error: { code: 'generation_retry_limit', message: '失败' }, last_error_code: 'model_timeout', retry_status: 'exhausted', created_at: Date.now(), started_at: Date.now(), completed_at: Date.now() };
+    act(() => bridge.emit({ event: 'job.updated', data: failed }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'AI不可用' })).getByRole('button', { name: '知道了' }));
+    act(() => bridge.emit({ event: 'job.updated', data: failed }));
+    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+  });
+
+  it('checks the authoritative source version even when it is outside the visible message window', async () => {
+    const bridge = new FakeBridge(); await openApp(bridge);
+    bridge.details.emma.messages = [];
+    bridge.details.emma.automatic_source = { message_id: 'old-buyer', text_sha256: 'new-text' };
+    const failed: Job = { job_id: 'old-version', kind: 'generate_draft', conversation_id: 'emma', case_id: 'case-emma', source_message_id: 'old-buyer', source_text_sha256: 'old-text', status: 'failed', stage: 'model', message: '', error: { code: 'model_timeout', message: '' }, created_at: Date.now(), started_at: null, completed_at: Date.now() };
+    act(() => bridge.emit({ event: 'job.updated', data: failed }));
+    await waitFor(() => expect(calls(bridge, 'get_conversation').length).toBeGreaterThan(1));
+    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    act(() => bridge.emit({ event: 'job.updated', data: { ...failed, job_id: 'current-version', source_text_sha256: 'new-text' } }));
+    await screen.findByRole('dialog', { name: 'AI不可用' });
+  });
+
+  it('discards an automatic failure when the source changes while verification is pending', async () => {
+    const bridge = new FakeBridge(); await openApp(bridge);
+    const check = deferred<ConversationDetail>();
+    let reads = 0;
+    bridge.detailHandler = () => reads++ === 0 ? check.promise : Promise.resolve(clone(bridge.details.emma));
+    const failed: Job = { job_id: 'pending-source', kind: 'generate_draft', conversation_id: 'emma', case_id: 'case-emma', source_message_id: 'message-emma', source_text_sha256: 'hash', status: 'failed', stage: 'model', message: '', error: { code: 'model_timeout', message: '' }, created_at: Date.now(), started_at: null, completed_at: Date.now() };
+    act(() => bridge.emit({ event: 'job.updated', data: failed }));
+    act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
+    await act(async () => check.resolve({ ...bridge.details.emma, automatic_source: { message_id: 'message-emma', text_sha256: 'hash' } }));
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+  });
+
+  it('reports a current automatic failure followed by its normal state change', async () => {
+    const bridge = new FakeBridge(); await openApp(bridge);
+    bridge.details.emma.automatic_source = { message_id: 'message-emma', text_sha256: 'hash' };
+    const failed: Job = { job_id: 'auto-with-state', kind: 'generate_draft', conversation_id: 'emma', case_id: 'case-emma', source_message_id: 'message-emma', source_text_sha256: 'hash', status: 'failed', stage: 'model', message: '', error: { code: 'model_timeout', message: '' }, created_at: Date.now(), started_at: null, completed_at: Date.now() };
+    act(() => {
+      bridge.emit({ event: 'job.updated', data: failed });
+      bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } });
+    });
+    await screen.findByRole('dialog', { name: 'AI不可用' });
+    expect(calls(bridge, 'get_conversation').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('keeps a current automatic failure through a normal detail refresh', async () => {
+    const bridge = new FakeBridge(); await openApp(bridge);
+    bridge.details.emma.automatic_source = { message_id: 'message-emma', text_sha256: 'hash' };
+    const check = deferred<ConversationDetail>(); let first = true;
+    bridge.detailHandler = () => { if (first) { first = false; return check.promise; } return Promise.resolve(clone(bridge.details.emma)); };
+    const failed: Job = { job_id: 'auto-with-refresh', kind: 'generate_draft', conversation_id: 'emma', case_id: 'case-emma', source_message_id: 'message-emma', source_text_sha256: 'hash', status: 'failed', stage: 'model', message: '', error: { code: 'model_timeout', message: '' }, created_at: Date.now(), started_at: null, completed_at: Date.now() };
+    act(() => {
+      bridge.emit({ event: 'job.updated', data: failed });
+      bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } });
+    });
+    await waitFor(() => expect(calls(bridge, 'get_conversation').length).toBeGreaterThanOrEqual(3));
+    await act(async () => check.resolve(clone(bridge.details.emma)));
+    await screen.findByRole('dialog', { name: 'AI不可用' });
+  });
+
+  it('retries an uncertain supplement save with the original mutation', async () => {
+    const bridge = new FakeBridge(); const invoke = bridge.invoke.bind(bridge); let first = true;
+    bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => {
+      if (method !== 'save_conversation_supplement') return invoke<T>(method, params);
+      if (first) { first = false; await invoke(method, params); throw new Error('连接中断'); }
+      bridge.calls.push({ method, params: clone(params) });
+      if (params.client_mutation_id !== calls(bridge, method)[0].params.client_mutation_id) throw new Error('版本冲突');
+      return clone(bridge.details.emma.supplement) as T;
+    };
+    await openApp(bridge);
+    fireEvent.change(screen.getByRole('textbox', { name: '业务补充内容' }), { target: { value: '原文' } });
+    fireEvent.click(await screen.findByRole('button', { name: '重试保存' }, { timeout: 3000 }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '重试保存' })).not.toBeInTheDocument());
+    expect(calls(bridge, 'save_conversation_supplement')[1].params).toEqual(calls(bridge, 'save_conversation_supplement')[0].params);
+  });
+  it('preserves new typing through a real supplement conflict and reapplies only after comparison', async () => {
+    const bridge = new FakeBridge(); const invoke = bridge.invoke.bind(bridge); const response = deferred<ConversationDetail>(); let conflict = true;
+    bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => {
+      if (method === 'save_conversation_supplement' && conflict) {
+        bridge.calls.push({ method, params: clone(params) }); conflict = false;
+        bridge.details.emma.supplement = { conversation_id: 'emma', body: '其他位置的内容', revision: 2, updated_at: 1 };
+        throw Object.assign(new Error('业务补充已变化，请保留输入并重新读取'), { code: 'revision_conflict' });
+      }
+      if (method === 'get_conversation' && !conflict && !responseUsed) { responseUsed = true; return await response.promise as T; }
+      return invoke<T>(method, params);
+    };
+    let responseUsed = false;
+    await openApp(bridge); const input = screen.getByRole('textbox', { name: '业务补充内容' });
+    fireEvent.change(input, { target: { value: '我的初稿' } });
+    await waitFor(() => expect(responseUsed).toBe(true), { timeout: 3000 });
+    fireEvent.change(input, { target: { value: '继续输入的内容' } });
+    await act(async () => response.resolve(clone(bridge.details.emma)));
+    expect(await screen.findByText('最新保存内容：其他位置的内容')).toBeInTheDocument();
+    expect(input).toHaveValue('继续输入的内容');
+    expect(calls(bridge, 'save_conversation_supplement')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '重新应用我的内容' }));
+    await waitFor(() => expect(calls(bridge, 'save_conversation_supplement')).toHaveLength(2), { timeout: 3000 });
+    expect(calls(bridge, 'save_conversation_supplement')[1].params).toMatchObject({ expected_revision: 2, body: '继续输入的内容' });
+  });
+
+  it('ignores deferred, cancelled and old customer automatic failures', async () => {
+    const bridge = new FakeBridge(); await openApp(bridge);
+    const job: Job = { job_id: 'other-auto', kind: 'generate_draft', conversation_id: 'emma', case_id: 'case-emma', status: 'deferred', stage: 'retry', message: '', last_error_code: 'model_timeout', created_at: Date.now(), started_at: Date.now(), completed_at: Date.now() };
+    act(() => bridge.emit({ event: 'job.updated', data: job }));
+    act(() => bridge.emit({ event: 'job.updated', data: { ...job, status: 'cancelled' } }));
+    act(() => bridge.emit({ event: 'job.updated', data: { ...job, status: 'failed' } }));
+    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Sofia.*Do you have this mug in white/s }));
+    await screen.findByRole('main', { name: 'Sofia 的客户接待' });
+    act(() => bridge.emit({ event: 'job.updated', data: { ...job, status: 'failed' } }));
+    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+  });
+
   it('allows a verified live merchant to generate without checking AI on startup', async () => {
     const bridge = failedAiBridge(); bridge.snapshot.checks.ai.status = 'not_checked'; bridge.details.emma.chat_draft = null;
     await openApp(bridge);
@@ -611,7 +726,7 @@ describe('manual suggestion and supplement', () => {
     expect(textarea()).toHaveValue(original);
     act(() => bridge.emit({ event: 'state.changed', data: { conversation_id: 'emma' } }));
     const toggle = screen.getByRole('checkbox', { name: '自动中文翻译' });
-    if (!(toggle as HTMLInputElement).checked) fireEvent.click(toggle);
+    if ((toggle as HTMLInputElement).checked) fireEvent.click(toggle);
     await screen.findByRole('region', { name: '待处理回复建议' });
     expect(await screen.findByText('建议中文译文')).toBeInTheDocument();
     expect(textarea()).toHaveValue(original);
@@ -752,13 +867,14 @@ describe('conversation chat and automatic reception', () => {
     await edit('Second message'); fireEvent.click(sendButton());
     await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(2));
     act(() => bridge.finish('chat-job-2', 'unknown'));
-    await screen.findByText('发送结果未知，请核查原操作');
-    await screen.findByRole('button', { name: '核查原操作 operation-chat-job-2' });
+    await screen.findByText('发送结果待确认');
+    expect(screen.queryByRole('button', { name: /核查原操作/ })).not.toBeInTheDocument();
     vi.useFakeTimers();
     try {
       act(() => vi.advanceTimersByTime(10000));
-      expect(screen.getByText('发送结果未知，请核查原操作')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: '核查原操作 operation-chat-job-2' })).toBeInTheDocument();
+      expect(screen.getByText('发送结果待确认')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /核查原操作/ })).not.toBeInTheDocument();
+      expect(bridge.snapshot.outbox.some(item => item.status === 'unknown')).toBe(true);
     } finally { vi.useRealTimers(); }
   });
 
@@ -778,7 +894,7 @@ describe('conversation chat and automatic reception', () => {
       };
     }
     await openApp(bridge);
-    if (state === 'pausing') fireEvent.click(screen.getByRole('button', { name: '暂停自动接待', exact: true }));
+    if (state === 'pausing') fireEvent.click(screen.getByRole('button', { name: '关闭自动接待', exact: true }));
     await edit('A normal reply regardless of automation readiness.');
     fireEvent.click(sendButton());
     await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(1));
@@ -832,21 +948,17 @@ describe('conversation chat and automatic reception', () => {
     expect(calls(bridge, 'save_chat_draft')).toHaveLength(1);
   });
 
-  it('preserves the same request and exact arguments after a lost acknowledgement even with new input', async () => {
-    const bridge = new FakeBridge(); let tries = 0;
-    bridge.sendHandler = async params => { const ack = bridge.enqueue(params); if (++tries === 1) throw new Error('模拟通信失败'); return ack; };
+  it('fences a lost send acknowledgement and retains subsequent input', async () => {
+    const bridge = new FakeBridge();
+    bridge.sendHandler = async params => { bridge.enqueue(params); throw new Error('模拟通信失败'); };
     await openApp(bridge); await edit('Original exact body');
     fireEvent.click(sendButton());
-    const retry = await screen.findByRole('button', { name: '重试原发送' });
+    await screen.findAllByText('发送结果待确认');
     fireEvent.change(textarea(), { target: { value: 'New text for the next message' } });
-    expect(retry).toBeEnabled();
-    fireEvent.click(retry);
-    await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(2));
-    expect(calls(bridge, 'send_chat')[1].params).toEqual(calls(bridge, 'send_chat')[0].params);
+    expect(sendButton()).toBeDisabled();
+    expect(screen.queryByRole('button', { name: '重试原发送' })).not.toBeInTheDocument();
+    expect(calls(bridge, 'send_chat')).toHaveLength(1);
     expect(bridge.requests.size).toBe(1);
-    expect(calls(bridge, 'save_chat_draft')).toHaveLength(1);
-    act(() => bridge.finish('chat-job-1'));
-    await waitFor(() => expect(sendButton()).toBeEnabled());
     expect(textarea()).toHaveValue('New text for the next message');
     noLegacySend(bridge);
   });
@@ -891,16 +1003,10 @@ describe('conversation chat and automatic reception', () => {
     await waitFor(() => expect(screen.getByRole('combobox', { name: '当前采购事项' })).toHaveValue('old-case'));
     expect(sendButton()).toBeDisabled(); fireEvent.keyDown(textarea(), { key: 'Enter', ctrlKey: true });
     expect(calls(bridge, 'send_chat')).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: '查看并核查原操作' }));
-    const receipt = await screen.findByText('原发送结果待核查');
-    const row = receipt.closest('article')!;
-    bridge.reconcileHandler = async () => { bridge.snapshot.outbox[0].status = 'accepted'; return { status: 'accepted', message: '已核实原发送' }; };
-    fireEvent.click(within(row).getByRole('button', { name: '核查原操作' }));
-    await screen.findByText(/已核实原发送/);
-    expect(calls(bridge, 'reconcile_operation')[0].params).toEqual({ operation_id: 'original-unknown' });
+    expect(screen.queryByRole('button', { name: /核查原操作/ })).not.toBeInTheDocument();
+    expect(bridge.snapshot.outbox[0]).toMatchObject({ operation_id: 'original-unknown', status: 'unknown' });
+    expect(calls(bridge, 'reconcile_operation')).toHaveLength(0);
     expect(calls(bridge, 'send_chat')).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: '客户接待', exact: true }));
-    await waitFor(() => expect(sendButton()).toBeEnabled());
   });
 
   it('queries an unknown original operation without discarding new unsaved input or creating a send', async () => {
@@ -909,26 +1015,20 @@ describe('conversation chat and automatic reception', () => {
     await waitFor(() => expect(calls(bridge, 'send_chat')).toHaveLength(1));
     fireEvent.change(textarea(), { target: { value: 'Unsaved next message' } });
     act(() => bridge.finish('chat-job-1', 'unknown'));
-    const query = await screen.findByRole('button', { name: '核查原操作 operation-chat-job-1' });
+    await screen.findByText('发送结果待确认');
     expect(sendButton()).toBeDisabled();
-    bridge.reconcileHandler = async () => {
-      bridge.snapshot.outbox[0].status = 'accepted';
-      bridge.details.emma.chat_draft!.status = 'accepted';
-      return { status: 'accepted', message: '原操作已核实' };
-    };
-    fireEvent.click(query);
-    await screen.findByText('原操作已核实');
-    await waitFor(() => expect(sendButton()).toBeEnabled());
+    expect(screen.queryByRole('button', { name: /核查原操作/ })).not.toBeInTheDocument();
+    expect(bridge.snapshot.outbox[0]).toMatchObject({ operation_id: 'operation-chat-job-1', status: 'unknown' });
     expect(textarea()).toHaveValue('Unsaved next message');
     expect(calls(bridge, 'send_chat')).toHaveLength(1);
-    expect(calls(bridge, 'reconcile_operation')[0].params).toEqual({ operation_id: 'operation-chat-job-1' });
+    expect(calls(bridge, 'reconcile_operation')).toHaveLength(0);
   });
 
   it('fences an unknown send job before the operation row has arrived', async () => {
     const bridge = await openApp();
     act(() => bridge.emit({ event: 'job.updated', data: { job_id: 'unknown-early', kind: 'send_chat', conversation_id: 'emma', case_id: 'a-different-case', status: 'unknown', stage: 'send', message: '等待核查', created_at: Date.now(), started_at: null, completed_at: Date.now() } satisfies Job }));
     expect(sendButton()).toBeDisabled();
-    expect(screen.getByRole('button', { name: '查看并核查原操作' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /核查原操作/ })).not.toBeInTheDocument();
   });
 
   it('keeps chat text across Case changes and never saves it to the AI suggestion', async () => {
@@ -992,10 +1092,10 @@ describe('conversation chat and automatic reception', () => {
   it.each(['开始', '连接与设置'])('removes the separate manual mode from %s and gates automatic authorization on checks', async page => {
     const bridge = await openApp(failedAiBridge());
     fireEvent.click(screen.getByRole('button', { name: page, exact: true }));
-    await screen.findByRole('heading', { name: page === '开始' ? /今天先把哪些客户/ : '连接与设置', exact: page !== '开始' });
+    await screen.findByRole('heading', { name: page, exact: true });
     expect(screen.queryByRole('region', { name: '人工接待模式' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /开启人工接待|恢复人工接待|切换为人工接待/ })).not.toBeInTheDocument();
-    if (page === '连接与设置') expect(screen.getByRole('button', { name: '授权并开始自动接待' })).toBeDisabled();
+    if (page === '连接与设置') expect(screen.getByRole('button', { name: '开启自动接待' })).toBeEnabled();
     expect(bridge.calls.some(call => call.params.manual_only === true)).toBe(false);
   });
 
@@ -1149,8 +1249,9 @@ describe('editing safeguards and existing workspace layout', () => {
 
   it('keeps the editor mounted while collapsing both sidebars and opening responsive drawers', async () => {
     const bridge = await openApp(); const original = textarea(); await edit('Layout preserves input');
-    fireEvent.click(screen.getByRole('button', { name: '收起导航' }));
+    const navigation = screen.getByRole('navigation', { name: '主导航' });
     fireEvent.click(screen.getByRole('button', { name: '收起需求侧栏' }));
+    expect(screen.getByRole('navigation', { name: '主导航' })).toBe(navigation);
     expect(textarea()).toBe(original); expect(textarea()).toHaveValue('Layout preserves input');
     expect(calls(bridge, 'get_conversation')).toHaveLength(1);
     act(() => { Object.defineProperty(window, 'innerWidth', { value: 850 }); window.dispatchEvent(new Event('resize')); });
@@ -1158,7 +1259,7 @@ describe('editing safeguards and existing workspace layout', () => {
     expect(within(screen.getByRole('dialog', { name: '采购需求' })).getByText('当前没有采购需求')).toBeInTheDocument();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(textarea()).toHaveValue('Layout preserves input');
-    expect(bridge.preferences.nav_preference).toBe('icons'); expect(bridge.preferences.details_preference).toBe('rail');
+    expect(bridge.preferences.details_preference).toBe('rail');
   });
 
   it('protects window unload and flushes conversation drafts on the native save-before-close event', async () => {
@@ -1198,9 +1299,38 @@ describe('editing safeguards and existing workspace layout', () => {
     const older: Case = { ...clone(bridge.details.emma.case), case_id: 'older-procurement', state: 'waiting_quote', requirements_format: 'ai-v1', requirements: { product: { value: '原陶瓷杯采购', evidence_ids: ['message-emma'] } } };
     bridge.snapshot.handoff_cases = [older]; bridge.details.emma.cases.push(older);
     await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '待我报价', exact: true }));
-    await screen.findByText('原陶瓷杯采购'); fireEvent.click(screen.getByRole('button', { name: '查看依据与会话' }));
+    await screen.findByText('原陶瓷杯采购'); fireEvent.click(screen.getByRole('button', { name: '打开聊天' }));
     await waitFor(() => expect(screen.getByRole('combobox', { name: '当前采购事项' })).toHaveValue(older.case_id));
     expect(calls(bridge, 'get_conversation').at(-1)?.params).toEqual({ conversation_id: 'emma', case_id: older.case_id, refresh_empty: true });
+  });
+
+  it.each([false, true])('saves quote supplement before navigating to reception and preserves it on conflict: %s', async conflict => {
+    const bridge = new FakeBridge();
+    bridge.snapshot.handoff_cases = [{ ...clone(bridge.details.emma.case), state: 'waiting_quote' }];
+    const original = bridge.invoke.bind(bridge);
+    bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => {
+      if (method === 'save_conversation_supplement' && conflict) {
+        bridge.calls.push({ method, params: clone(params) });
+        throw new Error('补充内容版本冲突');
+      }
+      return original<T>(method, params);
+    };
+    await openApp(bridge);
+    fireEvent.click(screen.getByRole('button', { name: '待我报价', exact: true }));
+    const input = await screen.findByRole('textbox', { name: '报价业务补充' });
+    await waitFor(() => expect(input).toBeEnabled());
+    fireEvent.change(input, { target: { value: '报价相关信息' } });
+    fireEvent.click(screen.getByRole('button', { name: '客户接待', exact: true }));
+    await waitFor(() => expect(calls(bridge, 'save_conversation_supplement')).toHaveLength(1));
+    expect(calls(bridge, 'save_conversation_supplement')[0].params).toMatchObject({ conversation_id: 'emma', body: '报价相关信息', expected_revision: null });
+    if (conflict) {
+      expect((await screen.findAllByText('补充内容版本冲突')).length).toBeGreaterThan(0);
+      expect(screen.getByRole('textbox', { name: '报价业务补充' })).toHaveValue('报价相关信息');
+      expect(screen.queryByRole('textbox', { name: '回复正文' })).not.toBeInTheDocument();
+    } else {
+      await screen.findByRole('textbox', { name: '回复正文' });
+      expect(bridge.details.emma.supplement?.body).toBe('报价相关信息');
+    }
   });
 
   it('blocks send immediately after disconnect and retains the input', async () => {
@@ -1234,14 +1364,13 @@ describe('editing safeguards and existing workspace layout', () => {
       return original<T>(method, params);
     };
     await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '连接与设置', exact: true }));
-    fireEvent.click(await screen.findByRole('checkbox', { name: /我确认允许在本轮范围内自动发送/ }));
-    fireEvent.click(screen.getByRole('button', { name: '授权并开始自动接待' }));
+    fireEvent.click(await screen.findByRole('button', { name: '开启自动接待', exact: true }));
     await waitFor(() => expect(calls(bridge, 'set_reception').some(call => call.params.enabled === true)).toBe(true));
     const stale = clone(bridge.snapshot); stale.reception.running = true; stale.reception.auto_send = true;
     bridge.snapshot.reception.running = true; bridge.snapshot.reception.auto_send = true;
     act(() => bridge.emit({ event: 'state.changed', data: {} }));
-    await screen.findByRole('button', { name: '暂停自动接待', exact: true });
-    fireEvent.click(screen.getByRole('button', { name: '暂停并检查 AI' }));
+    await screen.findByRole('button', { name: '关闭自动接待', exact: true });
+    fireEvent.click(screen.getByRole('button', { name: '关闭自动接待', exact: true }));
     await waitFor(() => expect(calls(bridge, 'set_reception').some(call => call.params.enabled === false)).toBe(true));
     await act(async () => started.resolve(stale));
     await waitFor(() => expect(screen.getAllByText('自动接待已暂停').length).toBeGreaterThan(0));
@@ -1256,10 +1385,11 @@ describe('editing safeguards and existing workspace layout', () => {
       return { job_id: 'reconcile-job' };
     };
     await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '运行记录', exact: true }));
-    await screen.findByText('等待原操作核查'); fireEvent.click(screen.getByRole('button', { name: '核查原操作', exact: true }));
-    await screen.findByText(/原操作核查已排队/);
-    expect(screen.queryByText(/平台消息编号/)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '核查原操作', exact: true })).toBeDisabled();
+    await screen.findByRole('heading', { name: '运行记录' });
+    expect(screen.queryByText('等待原操作核查')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /核查原操作/ })).not.toBeInTheDocument();
+    expect(bridge.snapshot.outbox[0]).toMatchObject({ operation_id: 'queued-receipt', status: 'unknown' });
+    expect(calls(bridge, 'reconcile_operation')).toHaveLength(0);
     noLegacySend(bridge);
   });
 
@@ -1282,6 +1412,7 @@ describe('editing safeguards and existing workspace layout', () => {
 
   it('persists the Feishu write switch separately from enabling the integration', async () => {
     const bridge = await openApp(); fireEvent.click(screen.getByRole('button', { name: '连接与设置', exact: true }));
+    fireEvent.click(await screen.findByRole('button', { name: '飞书登记', exact: true }));
     fireEvent.change(await screen.findByRole('textbox', { name: '飞书 CLI 完整路径' }), { target: { value: 'C:/Tools/lark-cli.exe' } });
     for (const [name, value] of [['多维表格标识', 'synthetic-base'], ['数据表 ID', 'synthetic-table'], ['原表单分享标识', 'synthetic-form'], ['联系账号选项', 'synthetic-account'], ['初始接待状态', 'pending']]) fireEvent.change(screen.getByRole('textbox', { name }), { target: { value } });
     fireEvent.click(screen.getByText('数据表字段映射（首次配置必填）'));
@@ -1292,73 +1423,66 @@ describe('editing safeguards and existing workspace layout', () => {
     await waitFor(() => expect(calls(bridge, 'save_settings').some(call => (call.params.feishu as { write_enabled?: boolean })?.write_enabled === true)).toBe(true));
   });
 
-  it('keeps the empty scope by default and saves unlimited scope without starting automation', async () => {
+  it('saves selected scope without starting automation or running an AI check', async () => {
     const bridge = await openApp(); fireEvent.click(screen.getByRole('button', { name: '连接与设置', exact: true }));
-    expect(await screen.findByRole('radio', { name: '仅选定客户', exact: true })).toBeChecked();
-    expect(screen.queryByRole('spinbutton', { name: /自动 AI 与发送各自上限/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '授权并开始自动接待' })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: '应用首晚建议' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('radio', { name: '只接待授权后新消息（含新客户）' }));
-    fireEvent.click(screen.getByRole('button', { name: '保存本轮范围' }));
-    await screen.findByText('本轮范围已保存。');
-    expect(calls(bridge, 'set_scope')[0].params).toEqual({ mode: 'incoming', conversation_ids: [], max_auto_replies: null });
+    expect(await screen.findByRole('radio', { name: '选中客户' })).toBeChecked();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Emma' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存范围' }));
+    await waitFor(() => expect(calls(bridge, 'set_scope')[0]?.params).toEqual({ mode: 'selected', conversation_ids: ['emma'], max_auto_replies: null }));
     expect(calls(bridge, 'set_reception')).toHaveLength(0);
+    expect(calls(bridge, 'check_ai')).toHaveLength(0);
   });
 
-  it.each(['not_checked', 'failed'] as const)('authorizes incoming without customers or drafts when send_preview is %s', async previewStatus => {
+  it.each(['not_checked', 'failed'] as const)('starts automatic reception without send preview when preview is %s', async previewStatus => {
     const bridge = new FakeBridge(); bridge.snapshot.conversations = [];
     bridge.snapshot.app.mode = 'live'; bridge.snapshot.app.account_verified = true;
     for (const key of ['identity', 'messages', 'ai'] as const) bridge.snapshot.checks[key] = { ...bridge.snapshot.checks[key], status: 'passed', simulated: false };
     bridge.snapshot.checks.send_preview = { ...bridge.snapshot.checks.send_preview, status: previewStatus, simulated: false };
-    bridge.snapshot.reception.scope = { mode: 'incoming', conversation_ids: [], max_auto_replies: 5 };
-    render(<App bridge={bridge} />); fireEvent.click(screen.getByRole('button', { name: '连接与设置', exact: true }));
-    await waitFor(() => expect(screen.getByRole('radio', { name: '只接待授权后新消息（含新客户）' })).toBeChecked());
-    expect(screen.getByRole('button', { name: '预演当前 AI 草稿' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('checkbox', { name: /我确认允许在本轮范围内自动发送/ }));
-    expect(screen.getByRole('button', { name: '授权并开始自动接待' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: '授权并开始自动接待' }));
-    await waitFor(() => expect(calls(bridge, 'set_reception')[0]?.params).toEqual({ enabled: true, auto_send: true, manual_only: false }));
+    bridge.snapshot.reception.scope = { mode: 'all', conversation_ids: [], max_auto_replies: null };
+    render(<App bridge={bridge} />);
+    const start = await screen.findByRole('button', { name: '开启自动接待', exact: true });
+    await waitFor(() => expect(start).toBeEnabled()); fireEvent.click(start);
+    await waitFor(() => expect(calls(bridge, 'set_reception')[0]?.params).toMatchObject({ enabled: true, auto_send: true }));
     expect(calls(bridge, 'preview_send')).toHaveLength(0);
   });
 
-  it.each(['identity', 'messages', 'ai'] as const)('still requires the current %s check to start automatic reception', async key => {
-    const bridge = new FakeBridge(); bridge.snapshot.reception.scope = { mode: 'incoming', conversation_ids: [], max_auto_replies: 5 };
+  it.each(['identity', 'messages', 'ai'] as const)('requires the current %s check to start automatic reception', async key => {
+    const bridge = new FakeBridge(); bridge.snapshot.reception.scope = { mode: 'all', conversation_ids: [], max_auto_replies: null };
     bridge.snapshot.checks[key] = { ...bridge.snapshot.checks[key], status: 'failed' };
-    await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '连接与设置', exact: true }));
-    const consent = await screen.findByRole('checkbox', { name: /我确认允许在本轮范围内自动发送/ });
-    expect(consent).toBeDisabled();
-    expect(screen.getByRole('button', { name: '授权并开始自动接待' })).toBeDisabled();
-    expect(calls(bridge, 'set_reception')).toHaveLength(0);
+    const original = bridge.invoke.bind(bridge);
+    bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}) => {
+      if (method === 'set_reception') { bridge.calls.push({ method, params }); throw new Error(`${key} 检查未通过`); }
+      return original<T>(method, params);
+    };
+    await openApp(bridge);
+    fireEvent.click(screen.getByRole('button', { name: '开启自动接待', exact: true }));
+    await screen.findByText(`${key} 检查未通过`);
+    expect(bridge.snapshot.reception.running).toBe(false);
   });
 
-  it('preserves independent automatic AI and send budgets and the reception start time', async () => {
+  it.each([5, null])('keeps automatic usage and reception start in the snapshot without exposing budgets', async limit => {
     const bridge = new FakeBridge(); bridge.snapshot.reception.started_at_ms = 1793950000000;
-    bridge.snapshot.reception.budget = { limit: 5, used: 1, remaining: 4, ai_used: 3, ai_remaining: 2 };
+    bridge.snapshot.reception.budget = { limit, used: 1, remaining: limit === null ? null : 4, ai_used: 3, ai_remaining: limit === null ? null : 2 };
     await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '连接与设置', exact: true }));
-    expect(await screen.findByText('自动 AI 额度：已用 3 / 5，剩余 2 次。')).toBeInTheDocument();
-    expect(screen.getByText('自动发送额度：已用 1 / 5，剩余 4 次。')).toBeInTheDocument();
-    expect(screen.getByText(/接待起点：/)).toHaveTextContent('暂停后恢复将延续已有起点及使用记录');
-  });
-
-  it('shows null budgets as unlimited while keeping usage counts', async () => {
-    const bridge = new FakeBridge();
-    bridge.snapshot.reception.budget = { limit: null, used: 101, remaining: null, ai_used: 105, ai_remaining: null, unlimited: true };
-    await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '连接与设置', exact: true }));
-    expect(await screen.findByText('接待 AI 已用 105 次，不限次数。')).toBeInTheDocument();
-    expect(screen.getByText('自动发送已用 101 次，不限次数。')).toBeInTheDocument();
+    await screen.findByRole('heading', { name: '连接与设置' });
+    expect(bridge.snapshot.reception).toMatchObject({ started_at_ms: 1793950000000, budget: { limit, used: 1, ai_used: 3 } });
+    expect(screen.queryByText(/自动 AI 额度|自动发送额度/)).not.toBeInTheDocument();
   });
 
   it('reports native AI check cancellation without inventing a failed job', async () => {
     const bridge = new FakeBridge(); const original = bridge.invoke.bind(bridge);
     bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}) => method === 'check_ai' ? { cancelled: true } as T : original<T>(method, params);
     await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '连接与设置', exact: true }));
-    fireEvent.click(await screen.findByRole('button', { name: '暂停并检查 AI' })); await screen.findByText('已取消本次操作。');
+    fireEvent.click(await screen.findByRole('button', { name: '平台连接', exact: true }));
+    fireEvent.click(screen.getByText('连接诊断'));
+    fireEvent.click(screen.getByRole('button', { name: '检查模型' })); await screen.findByText('已取消本次操作。');
+    expect(bridge.snapshot.jobs).toHaveLength(0);
   });
 
   it('does not invent service readiness without a desktop bridge', async () => {
     delete window.reception; render(<App />);
     expect(await screen.findByText(/未找到桌面服务桥/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '设置自动接待' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '开启自动接待' })).toBeDisabled();
   });
 });
 
@@ -1435,10 +1559,11 @@ describe('merchant card and adjustable reception layout', () => {
     try {
       const bridge = new FakeBridge();
       bridge.preferences = { ...bridge.preferences, details_width: 600, requirements_ratio: 0.8 };
+      window.innerWidth = 1380;
       await openApp(bridge);
       const side = screen.getByRole('separator', { name: '调整右侧栏宽度' });
       const vertical = screen.getByRole('separator', { name: '调整采购需求与业务补充高度' });
-      await waitFor(() => expect(side).toHaveAttribute('aria-valuenow', '596'));
+      await waitFor(() => expect(side).toHaveAttribute('aria-valuenow', '584'));
       expect(vertical).toHaveAttribute('aria-valuenow', '126');
       expect(bridge.preferences).toMatchObject({ details_width: 600, requirements_ratio: 0.8 });
       expect(notifyResize).toBeTypeOf('function');
@@ -1507,8 +1632,10 @@ it('shows executor failure without losing editing or allowing queued sends and c
   await waitFor(() => expect(calls(bridge, 'save_chat_draft').length).toBeGreaterThan(0));
   expect(textarea()).toHaveValue('保留的正文');
   fireEvent.click(screen.getByRole('button', { name: '连接与设置' }));
-  expect(await screen.findByRole('button', { name: '暂停并检查 AI' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: '授权并开始自动接待' })).toBeDisabled();
+  fireEvent.click(await screen.findByRole('button', { name: '平台连接', exact: true }));
+  fireEvent.click(screen.getByText('连接诊断'));
+  expect(screen.getByRole('button', { name: '检查模型' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '关闭自动接待' })).toBeEnabled();
 });
 
 it('treats long external waits as healthy and recovery as temporarily unavailable', async () => {

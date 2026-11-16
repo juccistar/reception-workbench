@@ -170,10 +170,12 @@ class ReplyBatchServiceTests(unittest.TestCase):
             self.assertFalse(self.service._reply_batch_basis_current(batch))
         with patch.object(self.service, '_in_scope', return_value=False):
             self.assertFalse(self.service._reply_batch_basis_current(batch))
-        with patch.object(self.service, '_latest_buyer', return_value={**self.added_source(), 'timestamp_ms': None}):
+        with patch.object(self.service.repo, 'automatic_source_facts',
+                          return_value=({**self.added_source(), 'timestamp_ms': None}, False)):
             self.assertFalse(self.service._reply_batch_basis_current(batch))
         source = self.added_source()
-        with patch.object(self.service, '_latest_buyer', return_value={**source, 'buyer_id': 'other-buyer'}):
+        with patch.object(self.service.repo, 'automatic_source_facts',
+                          return_value=({**source, 'buyer_id': 'other-buyer'}, False)):
             self.assertFalse(self.service._reply_batch_basis_current(batch))
         self.assertTrue(self.service._reply_batch_basis_current(batch))
 

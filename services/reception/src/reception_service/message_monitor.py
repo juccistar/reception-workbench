@@ -128,6 +128,7 @@ class MessageMonitorMixin:
                 (signature and signature != old.get('signature') or clock != old.get('activity_clock', 'message'))):
             self.repo.put('message_activity', cid, {'conversation_id': cid, 'latest_timestamp': stamp,
                           'signature': signature, 'activity_clock': clock, 'version': old.get('version', 0) + 1,
+                          'observed_at': now_ms(),
                           'latest_message_id': info.get('latest_message_id'),
                           'latest_text_sha256': info.get('latest_text_sha256')})
             task = self.repo.get('message_sync_task', cid, {})
@@ -372,15 +373,17 @@ class MessageMonitorMixin:
         self.repo.put('message_sync_task', cid, task)
 
     def _complete_message_sync(self, cid, target, version, latest, job_id, token, message_id=None, text_hash=None,
-                               *, activity_clock='message', changed=False):
+                               *, activity_clock='message', changed=False, read_messages=None):
         """Acknowledge activity separately from the body's platform timestamp."""
         self._require_current_read(token)
         if target is not None and latest is None:
             return False
         exact_evidence = message_id is not None or text_hash is not None
+        observed = self._messages(cid) if read_messages is None else read_messages
         if exact_evidence:
-            candidates = [m for m in self._messages(cid) if
-                          (m['message_id'] == message_id if message_id is not None else m['timestamp_ms'] == target)]
+            candidates = [m for m in observed if
+                          (m['message_id'] == message_id if message_id is not None else
+                           m['timestamp_ms'] == (latest if activity_clock == 'conversation' else target))]
             if text_hash is not None:
                 candidates = [m for m in candidates if hashlib.sha256(m['text'].encode('utf-8')).hexdigest() == text_hash]
             if not candidates:
@@ -389,13 +392,17 @@ class MessageMonitorMixin:
             return False  # A true message-clock target still requires its body frontier.
         watermark = self.repo.get('message_watermark', cid, {})
         task = self.repo.get('message_sync_task', cid, {})
-        weak_summary = activity_clock == 'conversation' and not exact_evidence
+        weak_summary = activity_clock == 'conversation' and message_id is None
         fresh_activity = version > watermark.get('activity_version', 0)
+        if weak_summary and fresh_activity and not any(m['timestamp_ms'] == latest for m in observed):
+            return False
         if weak_summary and fresh_activity and not changed:
             # The native summary exposes an activity time, not a message ID. If
             # no body changed, confirm a second completed read after retry backoff.
             # Never ignore a sub-second activity change or forge message times.
-            newest = [m for m in self._messages(cid) if m['timestamp_ms'] == latest]
+            fields = ('message_id', 'seller_id', 'buyer_id', 'conversation_id', 'role', 'text', 'timestamp_ms', 'attachments')
+            newest = sorted(({key: m.get(key) for key in fields} for m in observed if m['timestamp_ms'] == latest),
+                            key=lambda m: m['message_id'])
             confirmation = {'target': target, 'version': version,
                             'fingerprint': hashlib.sha256(encoded(newest).encode('utf-8')).hexdigest()}
             if task.get('read_confirmation') != confirmation:

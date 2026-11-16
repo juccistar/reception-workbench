@@ -1,0 +1,13 @@
+{
+  "status": "verification_selector_corrected",
+  "primary_pages_and_details_captured": 33,
+  "external_requests": [],
+  "checks_before_failure": [
+    "All primary pages and settings sections render without customer avatars or send-history entries",
+    "Product, supplier, sourcing, document, reception grant, quote note and WhatsApp isolation checks pass",
+    "390 px layouts and account sheet remain within the viewport"
+  ],
+  "failure": "The screenshot driver clicked the background scrim to close a full-width mobile sheet; the sheet correctly covered that scrim.",
+  "correction": "The driver now clicks the sheet's visible close button.",
+  "application_change_needed": false
+}

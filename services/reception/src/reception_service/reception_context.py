@@ -129,7 +129,8 @@ def semantic_fingerprint(context):
                 'history_coverage': context.get('history_coverage')}
     coverage = semantic.get('history_coverage')
     if isinstance(coverage, dict):
-        # A no-change audit refreshes only the read timestamp. Coverage status,
+        # Display wording and audit time do not change the history read. Status,
         # frontier and cursor remain part of the frozen generation basis.
-        semantic['history_coverage'] = {key: value for key, value in coverage.items() if key != 'updated_at'}
+        semantic['history_coverage'] = {key: value for key, value in coverage.items()
+                                        if key not in ('updated_at', 'message')}
     return hashlib.sha256(encoded(semantic).encode('utf-8')).hexdigest()

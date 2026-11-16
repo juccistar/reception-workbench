@@ -22,12 +22,12 @@ it('shows both channels and directs actions to the corresponding account', async
   fireEvent.click(screen.getByText('授权')); expect(onAuthorization).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByText('国际站')); expect(screen.queryByText('账号a')).toBeNull();
 });
-it('shows unknown only on the affected account and reconciles its original operation', async () => {
+it('shows pending status only on the affected account without a manual verification action', async () => {
   const { bridge } = setup();
-  fireEvent.click(await screen.findByText('1 条待核查'));
-  fireEvent.click(await screen.findByText('核查结果'));
-  await waitFor(() => expect(bridge.reconcileWhatsAppAccountOperation).toHaveBeenCalledWith({ workspace_id: 'a', operation_id: 'original' }));
-  expect(screen.queryByText('重发')).toBeNull();
+  const status = await screen.findByText('发送结果待确认');
+  expect(status.closest('article')?.textContent).toContain('账号a');
+  expect(screen.queryByRole('button', { name: /核查|重发/ })).toBeNull();
+  expect(bridge.reconcileWhatsAppAccountOperation).not.toHaveBeenCalled();
 });
 it('retains unsaved drafts and reports a partial save', async () => {
   const { bridge } = setup();

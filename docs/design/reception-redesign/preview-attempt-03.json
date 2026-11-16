@@ -1,0 +1,8 @@
+{
+  "status": "failed",
+  "synthetic_only": true,
+  "stage": "supplement-drag-assertion",
+  "error": "277 !== 277.375",
+  "cause": "The drag handler rounds heights to whole pixels; the assertion compared against a fractional starting height without rounding.",
+  "correction": "Compare the result with the rounded expected height. No layout source change required."
+}

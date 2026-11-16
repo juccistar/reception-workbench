@@ -11,6 +11,7 @@ import time
 import uuid
 
 from .model_providers.encoding import failure
+from .model_providers.owned_sync import owned_sync
 
 
 def _directory():
@@ -163,7 +164,7 @@ class ModelRequestBudget:
                 await asyncio.sleep(0.05)
         except BaseException:
             if enqueued:
-                self._remove(token)
+                await owned_sync(lambda: self._remove(token), complete_on_cancel=True)
             raise
 
     def release(self, token):

@@ -40,6 +40,33 @@ describe('private customer panel bridge', () => {
     expect(f.messages.some(m => m.kind === 'clear')).toBe(true);
     expect(JSON.stringify(f.messages)).not.toContain('Private');
   });
+  it('saves supplement only for the current verified chat and revision', async () => {
+    const f = fixture();
+    f.controller.view.supplement = { body: '', revision: 2 };
+    f.options.saveSupplement = vi.fn(async () => ({ body: 'note', revision: 3 }));
+    await f.controller.handleBinding(f.event('supplement', { body: 'note', expected_revision: 1 }), 0);
+    expect(f.options.saveSupplement).not.toHaveBeenCalled();
+    await f.controller.handleBinding(f.event('supplement', { body: 'note', expected_revision: 2 }), 0);
+    expect(f.options.saveSupplement).toHaveBeenCalledWith(expect.objectContaining({ chat_id: 'a@c.us', merchant_id: 'merchant', binding_revision: 0, expected_revision: 2, body: 'note' }), expect.any(Function));
+  });
+  it('rejects a queued supplement after the current chat changes', async () => {
+    const f = fixture();
+    f.controller.view.supplement = { body: '', revision: 2 };
+    let release!: () => void;
+    const queue = new Promise<void>(resolve => { release = resolve; });
+    const saved: string[] = [];
+    f.options.saveSupplement = vi.fn(async (input: any, assertCurrent: () => Promise<void>) => {
+      await queue;
+      await assertCurrent();
+      saved.push(input.body);
+      return { body: input.body, revision: 3 };
+    });
+    const pending = f.controller.handleBinding(f.event('supplement', { body: 'A only', expected_revision: 2 }), 0);
+    await vi.waitFor(() => expect(f.options.saveSupplement).toHaveBeenCalled());
+    f.setChat('b@c.us'); release(); await pending;
+    expect(saved).toEqual([]);
+    expect(f.messages.some(m => m.result)).toBe(false);
+  });
   it('does not report a late mutation against a different customer', async () => {
     const f = fixture(); let finish!: () => void;
     f.options.takeover.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));

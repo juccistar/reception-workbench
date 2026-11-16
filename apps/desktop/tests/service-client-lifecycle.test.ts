@@ -25,6 +25,20 @@ it('rejects unavailable RPCs on error but keeps shutdown pending until the owned
   expect(finished).toBe(true);
 });
 
+it('drops stdout events drained after a child disconnects', () => {
+  const client = new ServiceClient('synthetic', [], process.cwd(), {});
+  const forwarded: unknown[] = [];
+  client.on('event', event => forwarded.push(event));
+  seam.child.stdout.write(JSON.stringify({ event: 'job.updated', data: { job_id: 'before' } }) + '\n');
+  seam.child.emit('exit', 1);
+  seam.child.stdout.write(JSON.stringify({ event: 'job.updated', data: { job_id: 'late' } }) + '\n');
+  expect(forwarded).toEqual([
+    { event: 'job.updated', data: { job_id: 'before' } },
+    expect.objectContaining({ event: 'backend.disconnected' }),
+  ]);
+  seam.child.emit('close', 1);
+});
+
 it('waits for close after a normal exit rather than treating its event as complete cleanup', async () => {
   const client = new ServiceClient('synthetic', [], process.cwd(), {});
   seam.child.stdin.on('data', (data: Buffer) => {

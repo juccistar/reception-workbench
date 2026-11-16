@@ -27,6 +27,9 @@ REPOSITORY_SCHEMA = (
     "CREATE INDEX entities_conversation ON entities(kind,json_extract(data,'$.conversation_id'))",
     "CREATE INDEX entities_case ON entities(kind,json_extract(data,'$.case_id'))",
 )
+MESSAGE_CURSOR_INDEX = "CREATE INDEX entities_message_cursor ON entities(kind,json_extract(data,'$.conversation_id'),COALESCE(json_extract(data,'$.timestamp_ms'),-1),json_extract(data,'$.message_id'))"
+REPOSITORY_INDEXED_SCHEMA = (*REPOSITORY_SCHEMA, MESSAGE_CURSOR_INDEX)
+
 LEDGER_SCHEMA = (
     'CREATE TABLE operations (operation_id TEXT PRIMARY KEY, logical_key TEXT UNIQUE, kind TEXT, request TEXT, result TEXT)',
     'CREATE TABLE retry_grants (operation_id TEXT PRIMARY KEY)',
@@ -89,7 +92,8 @@ def validate_database(path, kind):
                     raise StorageError('Unsupported database version')
                 if db.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
                     raise StorageError('Database integrity check failed')
-                if _signature(db) != _expected(REPOSITORY_SCHEMA if kind == 'repository' else LEDGER_SCHEMA):
+                accepted = (REPOSITORY_SCHEMA, REPOSITORY_INDEXED_SCHEMA) if kind == 'repository' else (LEDGER_SCHEMA,)
+                if _signature(db) not in tuple(_expected(schema) for schema in accepted):
                     raise StorageError('Unrecognized database schema')
                 return version
             finally:

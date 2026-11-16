@@ -118,6 +118,11 @@ class ReplyBatchMixin:
         self._changed(batch['conversation_id'], batch['case_id'])
         return {'batch_id': batch['batch_id'], 'message': '分条回复已冻结，等待逐条受理'}
 
+    def _reply_batch_awaits_echo(self, batch):
+        return any(part['status'] == 'accepted' and (not part.get('message_id') or
+            self.repo.get('message', encoded([batch['conversation_id'], part['message_id']])) is None)
+            for part in batch['parts'])
+
     def _reply_batch_gate(self, batch, *, excluding=None, check_sync=True):
         # Every hard condition is evaluated before the sole recoverable condition.
         if self._closing:
@@ -162,7 +167,7 @@ class ReplyBatchMixin:
                 return SendGateDecision(False, 'basis_changed')
         except ServiceError:
             return SendGateDecision(False, 'guard_evaluation_failed')
-        if check_sync and self._message_sync_pending(batch['conversation_id']):
+        if check_sync and (self._message_sync_pending(batch['conversation_id']) or self._reply_batch_awaits_echo(batch)):
             activity = self.repo.get('message_activity', batch['conversation_id'], {})
             return SendGateDecision(False, 'source_sync_pending', {
                 'sync_target_version': activity.get('version', 0),
@@ -217,7 +222,25 @@ class ReplyBatchMixin:
         original_rows = {row['message_id']: row for row in snapshot['messages']}
         current_rows = {row['message_id']: row for row in self.repo.list('message', conversation_id=cid)}
         if set(current_rows) != set(original_rows):
-            return False
+            # An accepted receipt may lack a platform timestamp. The first real
+            # echo must match that exact operation before the waiting tail moves.
+            added = set(current_rows) - set(original_rows)
+            if len(added) != 1 or not set(original_rows).issubset(current_rows):
+                return False
+            mid = next(iter(added))
+            part = next((p for p in batch['parts'] if p['status'] == 'accepted' and p.get('message_id') == mid), None)
+            operation = (self.repo.get('operation', part['operation_ids'][-1])
+                         if part and part.get('operation_ids') else None)
+            if (not operation or operation.get('status') != 'accepted' or operation.get('message_id') != mid
+                    or operation.get('submission_started') is not True
+                    or self._reply_batch_operation_snapshot(batch, operation) is None):
+                return False
+            result = {'status': 'accepted', 'message_id': mid, 'submission_started': True}
+            if not self._reply_batch_echo_basis_current(batch, operation, result, snapshot, check_sync=False):
+                return False
+            self._reply_batch_refresh_basis(batch, accepted_self_sync=True)
+            self.repo.put('reply_batch', batch['batch_id'], batch, history=True)
+            return True
         accepted = {p['message_id']: p for p in batch['parts'] if p['status'] == 'accepted' and p.get('message_id')}
         changed = []
         for mid, original in original_rows.items():
@@ -310,16 +333,81 @@ class ReplyBatchMixin:
                     'message': batch.get('message', '等待会话同步，尚未创建发送操作')}
         return None
 
+    def _reply_batch_operation_snapshot(self, batch, operation):
+        record = operation.get('batch_send_basis')
+        intent = operation.get('intent')
+        part = next((p for p in batch['parts'] if p['part_id'] == operation.get('part_id')), None)
+        if (not isinstance(record, dict) or type(record.get('version')) is not int or record['version'] != 1
+                or not isinstance(intent, dict) or not part
+                or not part.get('operation_ids') or part['operation_ids'][-1] != operation.get('operation_id')
+                or operation.get('batch_id') != batch['batch_id'] or operation.get('part_index') != part['part_index']
+                or operation.get('seller_id') != self.seller_id or operation.get('buyer_id') != batch['buyer_id']
+                or operation.get('conversation_id') != batch['conversation_id']
+                or operation.get('case_id') != batch['case_id']
+                or operation.get('source_message_id') != batch['source_message_id']
+                or intent.get('reply') != part['body']
+                or any(record.get(key) != operation.get(key) for key in ('operation_id', 'batch_id', 'part_id'))):
+            return None
+        saved = self.repo.get('reply_batch_send_basis', operation['operation_id'])
+        if not isinstance(saved, dict) or {key: value for key, value in saved.items() if key != 'snapshot'} != record:
+            return None
+        snapshot = saved.get('snapshot')
+        if (not isinstance(snapshot, dict) or not isinstance(snapshot.get('conversation'), dict)
+                or not isinstance(snapshot.get('coverage'), dict) or not isinstance(snapshot.get('messages'), list)
+                or type(snapshot['conversation'].get('revision')) is not int
+                or any(not isinstance(row, dict) or not isinstance(row.get('message_id'), str)
+                       or not row['message_id'].strip() for row in snapshot['messages'])
+                or any(snapshot['conversation'].get(key) != batch.get(key)
+                       for key in ('seller_id', 'buyer_id', 'conversation_id'))):
+            return None
+        return snapshot
+
+    def _reply_batch_receipt_basis_current(self, batch, operation, result, snapshot, *, check_sync=False):
+        current = self._reply_batch_basis_current(batch, excluding=operation['operation_id'], check_sync=check_sync)
+        mid = result.get('message_id')
+        if (result.get('status') == 'accepted' and result.get('submission_started') is True
+                and isinstance(mid, str) and mid.strip()
+                and self.repo.get('message', encoded([batch['conversation_id'], mid])) is not None):
+            return bool(snapshot and self._reply_batch_echo_basis_current(
+                batch, operation, result, snapshot, check_sync=check_sync))
+        return current
+
+    def _reply_batch_unknown_can_wait(self, batch, operation):
+        if not operation or operation.get('status') != 'unknown':
+            return False
+        gate = self._reply_batch_gate(batch, excluding=operation['operation_id'], check_sync=False)
+        if gate.allowed:
+            return True
+        if gate.reason != 'basis_changed':
+            return False
+        snapshot = self._reply_batch_operation_snapshot(batch, operation)
+        if snapshot is None:
+            return False
+        original_ids = {row['message_id'] for row in snapshot['messages']}
+        candidates = [row['message_id'] for row in self.repo.list('message', conversation_id=batch['conversation_id'])
+                      if row['message_id'] not in original_ids]
+        # This only preserves a blocked unknown operation while its receipt is
+        # checked. A matching body never authorizes acceptance or a tail send.
+        return len(candidates) == 1 and self._reply_batch_echo_projection_current(
+            batch, operation, snapshot, candidates[0], check_sync=False)
+
     def _reply_batch_echo_basis_current(self, batch, operation, result, snapshot, *, check_sync=True):
         """Compare the original basis after excluding only the exact accepted echo."""
-        cid = batch['conversation_id']
         mid = result.get('message_id')
         if (result.get('status') != 'accepted' or result.get('submission_started') is not True
-                or not isinstance(mid, str) or not mid.strip() or check_sync and self._message_sync_pending(cid)):
+                or not isinstance(mid, str) or not mid.strip()):
+            return False
+        return self._reply_batch_echo_projection_current(batch, operation, snapshot, mid, check_sync=check_sync)
+
+    def _reply_batch_echo_projection_current(self, batch, operation, snapshot, mid, *, check_sync):
+        """Read-only basis comparison; this alone is not proof of acceptance."""
+        cid = batch['conversation_id']
+        if not snapshot or check_sync and self._message_sync_pending(cid):
             return False
         key = encoded([cid, mid])
         echo = self.repo.get('message', key)
         if (not echo or echo.get('role') != 'seller' or echo.get('text') != operation['intent']['reply']
+                or echo.get('attachments') != []
                 or echo.get('seller_id') != self.seller_id or echo.get('buyer_id') != batch['buyer_id']
                 or echo.get('conversation_id') != cid or echo.get('message_id') != mid
                 or any(row['message_id'] == mid for row in snapshot['messages'])):
@@ -346,8 +434,7 @@ class ReplyBatchMixin:
             return False
         stamps = [row['timestamp_ms'] for row in messages if row['timestamp_ms'] is not None]
         if (current_coverage.get('earliest_ms') != (min(stamps) if stamps else None)
-                or current_coverage.get('latest_ms') != (max(stamps) if stamps else None)
-                or current_coverage.get('message') != '已读取部分消息'):
+                or current_coverage.get('latest_ms') != (max(stamps) if stamps else None)):
             return False
         # The enclosing service lock and transaction isolate this temporary view;
         # the savepoint is always rolled back, including on validation errors.
@@ -470,7 +557,7 @@ class ReplyBatchMixin:
             elif basis_current and not batch.get('stopped'):
                 batch.update(status='prepared', wait_reason=None)
                 self._reply_batch_refresh_basis(batch)
-                if self._message_sync_pending(batch['conversation_id']):
+                if self._message_sync_pending(batch['conversation_id']) or self._reply_batch_awaits_echo(batch):
                     self._wait_reply_batch_sync(batch)
             else:
                 self._stop_reply_batch(batch, '原来源或授权已变化，剩余条目已停止')
@@ -513,7 +600,8 @@ class ReplyBatchMixin:
                 # returns; receipt handling rechecks every condition before tail.
                 if unknown['status'] == 'sending':
                     continue
-                if not self._reply_batch_basis_current(batch, excluding=unknown['operation_ids'][-1] if unknown['operation_ids'] else None):
+                operation = self.repo.get('operation', unknown['operation_ids'][-1]) if unknown['operation_ids'] else None
+                if not self._reply_batch_unknown_can_wait(batch, operation):
                     self._stop_reply_batch(batch, '授权或对话已变化，未提交尾部已停止')
                 continue
             gate = self._reply_batch_gate(batch)

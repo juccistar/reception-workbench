@@ -94,6 +94,22 @@ class AccountCoreTest(unittest.TestCase):
         result = self.service.get_whatsapp_context('chat')
         self.assertEqual([m['text'] for m in result['whatsapp_messages']], ['new content'])
 
+    def test_supplement_is_revision_checked_and_isolated_by_contact_and_segment(self):
+        s = self.service
+        self.ingest()
+        s.save_whatsapp_binding('chat', 'merchant-a', None, 0, 'account', 'epoch')
+        note = s._wa_save_supplement('chat', 'merchant-a', 1, 0, 'private note', 'account', 'epoch')
+        self.assertEqual(note, {'body': 'private note', 'revision': 1})
+        self.assertEqual(s.get_whatsapp_context('chat')['wa_supplement']['body'], 'private note')
+        with self.assertRaises(ServiceError):
+            s._wa_save_supplement('chat', 'merchant-a', 1, 0, 'stale', 'account', 'epoch')
+        self.ingest(chat='other', mid='other-message')
+        self.assertEqual(s.get_whatsapp_context('other')['wa_supplement']['body'], '')
+        s.save_whatsapp_binding('chat', 'merchant-b', None, 1, 'account', 'epoch')
+        self.assertEqual(s.get_whatsapp_context('chat')['wa_supplement']['body'], '')
+        with self.assertRaises(ServiceError):
+            s._wa_save_supplement('chat', 'merchant-a', 1, 1, 'wrong merchant', 'account', 'epoch')
+
     def test_unknown_fence_queues_binding_until_exact_receipt(self):
         self.ingest()
         s = self.service

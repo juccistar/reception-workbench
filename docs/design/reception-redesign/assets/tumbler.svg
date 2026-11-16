@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="460" viewBox="0 0 600 460" role="img" aria-label="鼠尾草绿色保温杯，合成商品图">
+<defs>
+ <linearGradient id="background" x2="0" y2="1"><stop stop-color="#edf0eb"/><stop offset="1" stop-color="#e3e8e0"/></linearGradient>
+ <linearGradient id="body"><stop stop-color="#8c9d86"/><stop offset=".16" stop-color="#b0bba8"/><stop offset=".38" stop-color="#b7c2b0"/><stop offset=".68" stop-color="#a4b29c"/><stop offset="1" stop-color="#879a80"/></linearGradient>
+ <linearGradient id="cap"><stop stop-color="#535c4c"/><stop offset=".25" stop-color="#7d876e"/><stop offset=".63" stop-color="#7b866c"/><stop offset="1" stop-color="#4d5845"/></linearGradient>
+ <linearGradient id="steel"><stop stop-color="#9baba0"/><stop offset=".23" stop-color="#eef0e5"/><stop offset=".4" stop-color="#a6afa4"/><stop offset=".6" stop-color="#e2e6d9"/><stop offset="1" stop-color="#858f83"/></linearGradient>
+ <radialGradient id="light"><stop stop-color="#fff" stop-opacity=".52"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+ <filter id="shadow" x="-70%" width="240%" y="-100%" height="300%"><feGaussianBlur stdDeviation="12"/></filter>
+ <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".65" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/><feComponentTransfer><feFuncA type="linear" slope=".035"/></feComponentTransfer><feBlend in="SourceGraphic" mode="multiply"/></filter>
+</defs>
+<path fill="url(#background)" d="M0 0h600v460H0z"/>
+<ellipse cx="218" cy="95" rx="330" ry="320" fill="url(#light)"/>
+<path d="M0 360 600 296v164H0z" fill="#d9e0d4" opacity=".34"/>
+<ellipse cx="311" cy="394" rx="103" ry="16" fill="#69755e" opacity=".23" filter="url(#shadow)"/>
+<g transform="translate(0 -7)">
+ <path d="M220 140h160l-19 234q-2 23-26 25h-70q-24-2-26-25z" fill="url(#body)" stroke="#82947c" stroke-width="1"/>
+ <path d="m225 150 18 219q2 21 24 24" fill="none" stroke="#e3e9db" opacity=".4" stroke-width="2"/>
+ <path d="m375 150-18 219q-2 21-23 24" fill="none" stroke="#657d60" opacity=".2" stroke-width="2"/>
+ <ellipse cx="300" cy="143" rx="80" ry="14" fill="url(#steel)"/>
+ <path d="M219 116h162v25q-6 15-81 15t-81-15z" fill="url(#cap)"/>
+ <ellipse cx="300" cy="116" rx="81" ry="17" fill="#7c866e"/>
+ <ellipse cx="300" cy="113" rx="72" ry="12" fill="#929a83"/>
+ <ellipse cx="300" cy="111" rx="68" ry="10" fill="#89937d"/>
+ <path d="m278 103 44-2q6 1 5 5l-1 6q-1 4-6 4h-44q-6-1-5-5l1-4q1-3 6-4" fill="#4e5949"/>
+ <path d="m280 105 36-1" stroke="#bdc5ac" opacity=".3" stroke-width="2" stroke-linecap="round"/>
+ <path d="M222 130q80 25 156 0" stroke="#bbc4ad" stroke-width="1" opacity=".3" fill="none"/>
+ <text x="300" y="288" fill="#62765a" text-anchor="middle" font-family="Arial,sans-serif" font-size="16" letter-spacing="5">LUMA</text>
+ <path d="M287 302h26" stroke="#7f9275" stroke-width="1"/>
+</g>
+</svg>

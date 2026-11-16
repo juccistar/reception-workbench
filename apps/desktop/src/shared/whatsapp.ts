@@ -22,6 +22,7 @@ export interface WhatsAppContext {
   task_mode: 'whatsapp_reply';
   whatsapp_messages: WhatsAppContextMessage[];
   wa_summary: string;
+  wa_supplement?: { body: string; revision: number };
   knowledge: unknown[];
   guidance: unknown[];
   style: unknown[];

@@ -304,7 +304,7 @@ export class WhatsAppAccountManager {
     const state = await active.backend.invoke<WhatsAppAccountState>('get_whatsapp_state');
     if (!state.connected || state.account_id !== input.expected_account_id || state.connection_epoch !== input.expected_connection_epoch) throw new Error('WhatsApp 账号已变化，请刷新后重试。');
   }
-  binding(input: WhatsAppBindingInput): Promise<WhatsAppAccountSnapshot> {
+  binding(input: WhatsAppBindingInput, assertCurrent?: () => Promise<void>): Promise<WhatsAppAccountSnapshot> {
     return this.exclusive(input.workspace_id, async () => {
       packet(input, ['workspace_id', ...identityFields, 'chat_id', 'merchant_id', 'conversation_id', 'expected_revision']);
       identity(input);
@@ -316,6 +316,7 @@ export class WhatsAppAccountManager {
         await this.options.broker.request(record, { request_id: randomUUID(), account_id: input.expected_account_id, chat_id: input.chat_id, merchant_id: record.record_id, conversation_id: input.conversation_id, binding_revision: input.expected_revision + 1 });
       }
       await this.assertIdentity(active, input);
+      await assertCurrent?.();
       await active.backend.invoke('save_whatsapp_binding', serviceInput(input));
       return this.detail(input.workspace_id);
     });
@@ -339,8 +340,6 @@ export class WhatsAppAccountManager {
         await this.requireLegacyDeclaration(active);
         const available = await this.snapshot();
         if (!input.allowed_merchant_ids.length || input.allowed_merchant_ids.some(id => !available.merchants.some(merchant => merchant.merchant_id === id && merchant.available))) throw new Error('请先核验并选择允许接待的商家。');
-        const names = available.merchants.filter(item => input.allowed_merchant_ids.includes(item.merchant_id)).map(item => `${item.name}（${item.account_tail}）`).join('、');
-        if (!await this.options.confirm('开启 WhatsApp 自动接待？', `账号尾号：${input.expected_account_id.split('@')[0].slice(-4)}\n允许商家：${names}\n仅已绑定这些商家的单聊可自动回复。历史加载不补答，未决发送只核查，不重发。`)) return this.detail(input.workspace_id);
         await this.assertIdentity(active, input);
         await this.synchronizeModels(active);
       }
@@ -365,6 +364,17 @@ export class WhatsAppAccountManager {
       await active.backend.invoke('reconcile_whatsapp_operation', { operation_id: input.operation_id });
       await active.coordinator.reconcile(input.operation_id);
       return this.detail(input.workspace_id);
+    });
+  }
+  async saveSupplement(input: { workspace_id: string; expected_account_id: string; expected_connection_epoch: string; chat_id: string; merchant_id: string; binding_revision: number; expected_revision: number; body: string }, assertCurrent?: () => Promise<void>): Promise<{ body: string; revision: number }> {
+    packet(input, ['workspace_id', ...identityFields, 'chat_id', 'merchant_id', 'binding_revision', 'expected_revision', 'body']);
+    identity(input);
+    if (!text(input.chat_id) || !uuid(input.merchant_id) || !Number.isSafeInteger(input.binding_revision) || input.binding_revision < 0 || !Number.isSafeInteger(input.expected_revision) || input.expected_revision < 0 || typeof input.body !== 'string' || input.body.length > 4000) throw new Error('业务补充无效。');
+    return this.exclusive(input.workspace_id, async () => {
+      const active = await this.current(input.workspace_id, false);
+      await this.assertIdentity(active, input);
+      await assertCurrent?.();
+      return active.backend.invoke('_wa_save_supplement', serviceInput(input));
     });
   }
   async context(input: { workspace_id: string; chat_id: string }): Promise<WhatsAppContext> {

@@ -31,6 +31,53 @@ describe('WhatsApp host/service coordination', () => {
     coordinator.handleServiceEvent(request);
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('_wa_transport_result', { operation_id: intent.operation_id, account_id: intent.account_id, connection_epoch: intent.connection_epoch, status: 'unknown' }));
   });
+  it('continues sweeping other operations while one lookup stays pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const { coordinator, host, invoke } = setup(); await coordinator.connect();
+      const other = { ...intent, operation_id: 'other' };
+      invoke.mockImplementation(async method => method === 'get_whatsapp_state' ? { pending_operations: [{ operation_id: intent.operation_id }, { operation_id: other.operation_id }] } : {});
+      host.readLedger.mockImplementation(id => ({ intent: id === 'other' ? other : intent, result: { message_id: id, ack: 0 } }));
+      let finish!: (value: { message_id: string; ack: number }) => void;
+      host.lookupMessage.mockImplementation(id => id === intent.operation_id ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({ message_id: id, ack: 1 }));
+      coordinator.receive({ type: 'account', status: 'ready', account_id: intent.account_id, connection_epoch: intent.connection_epoch });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(host.lookupMessage.mock.calls.map(call => call[0])).toEqual([intent.operation_id, other.operation_id]);
+      expect(invoke).toHaveBeenCalledWith('_wa_transport_result', expect.objectContaining({ operation_id: other.operation_id, ack: 1 }));
+      await vi.advanceTimersByTimeAsync(20000);
+      expect(host.lookupMessage.mock.calls.filter(call => call[0] === intent.operation_id)).toHaveLength(1);
+      expect(host.sendFrozen).not.toHaveBeenCalled();
+      finish({ message_id: intent.operation_id, ack: 1 });
+      await coordinator.stop();
+    } finally { vi.useRealTimers(); }
+  });
+  it('deduplicates concurrent reconciliation of the same original operation', async () => {
+    const { coordinator, host } = setup(); await coordinator.connect();
+    host.readLedger.mockReturnValue({ intent, result: { message_id: 'exact-id', ack: 0 } });
+    let finish!: (value: { message_id: string; ack: number }) => void;
+    host.lookupMessage.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const first = coordinator.reconcile(intent.operation_id);
+    const second = coordinator.reconcile(intent.operation_id);
+    await vi.waitFor(() => expect(host.lookupMessage).toHaveBeenCalledTimes(1));
+    finish({ message_id: 'exact-id', ack: 1 });
+    await Promise.all([first, second]);
+    expect(host.sendFrozen).not.toHaveBeenCalled();
+    await coordinator.stop();
+  });
+  it('coalesces concurrent reconciliation of the same original operation', async () => {
+    const { coordinator, host } = setup(); await coordinator.connect();
+    host.readLedger.mockReturnValue({ intent, result: { message_id: 'exact-id', ack: 0 } });
+    let finish!: (value: { message_id: string; ack: number }) => void;
+    host.lookupMessage.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const first = coordinator.reconcile(intent.operation_id);
+    const second = coordinator.reconcile(intent.operation_id);
+    expect(host.lookupMessage).toHaveBeenCalledTimes(1);
+    finish({ message_id: 'exact-id', ack: 1 });
+    await Promise.all([first, second]);
+    expect(host.sendFrozen).not.toHaveBeenCalled();
+    await coordinator.stop();
+  });
   it('reconciles the exact recorded id using the original epoch after reconnect', async () => {
     const { coordinator, host, invoke } = setup(); await coordinator.connect();
     host.getStatus.mockReturnValue({ status: 'ready', account_id: intent.account_id, connection_epoch: 'epoch-new' });

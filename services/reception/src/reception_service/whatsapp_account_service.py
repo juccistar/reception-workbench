@@ -77,6 +77,17 @@ class AccountRepository:
     def list(self, kind):
         return [json.loads(row[0]) for row in self.db.execute('SELECT data FROM records WHERE kind=? ORDER BY rowid', (kind,))]
 
+    def list_owned(self, kind, account, chat=None, segment=None):
+        sql = "SELECT data FROM records WHERE kind=? AND json_extract(data, '$.account_id')=?"
+        args = [kind, account]
+        if chat is not None:
+            sql += " AND json_extract(data, '$.chat_id')=?"
+            args.append(chat)
+        if segment is not None:
+            sql += " AND json_extract(data, '$.segment_id')=?"
+            args.append(segment)
+        return [json.loads(row[0]) for row in self.db.execute(sql + ' ORDER BY rowid', args)]
+
     @contextmanager
     def transaction(self):
         with self.lock:
@@ -132,10 +143,11 @@ class WhatsAppAccountService(AccountMediaMixin, AccountGenerationMixin):
         self._legacy_check_status = None
 
     def close(self):
-        self.enabled = False
-        self._generation_closed = True
-        self._cancel_account_generation()
-        self._cancel_account_media()
+        with self.repo.lock:
+            self.enabled = False
+            self._generation_closed = True
+            self._cancel_account_generation()
+            self._cancel_account_media()
         if self.router is not None:
             self.router.close()
         if self._legacy_worker and self._legacy_worker is not threading.current_thread():
@@ -143,14 +155,21 @@ class WhatsAppAccountService(AccountMediaMixin, AccountGenerationMixin):
         active = self._generation_active
         if active and active.get('thread') is not threading.current_thread():
             active['thread'].join()
-        self.repo.close()
+        with self.repo.lock:
+            rows = self.repo.db.execute("SELECT id, data FROM records WHERE kind='generation_attempt'").fetchall()
+            for key, data in rows:
+                attempt = json.loads(data)
+                if attempt.get('owner_run_id') == self._generation_run_id and attempt.get('status') in ('in_flight', 'unknown'):
+                    attempt.update(status='failed', runtime_settled=True)
+                    self.repo.put('generation_attempt', key, attempt)
+            self.repo.close()
 
     def _changed(self):
         self.emit({'event': 'state.changed', 'data': {}})
 
     def call(self, method, params):
         methods = {'get_whatsapp_state', 'save_whatsapp_binding', 'save_whatsapp_default_merchant',
-                   'set_whatsapp_reception', 'takeover_whatsapp', 'get_whatsapp_context',
+                   'set_whatsapp_reception', 'takeover_whatsapp', 'get_whatsapp_context', '_wa_save_supplement',
                    'reconcile_whatsapp_operation', '_wa_get_reconcile_record', '_wa_set_account', '_wa_ingest', '_wa_ack',
                    '_wa_prepare_send', '_wa_transport_result', '_wa_get_context_request',
                    '_wa_set_merchant_context', '_wa_set_legacy_status', '_wa_verify_legacy_sources', '_configure_models',
@@ -285,9 +304,8 @@ class WhatsAppAccountService(AccountMediaMixin, AccountGenerationMixin):
         self.allowed = []
         self._cancel_account_generation()
         if enabled:
-            if not allowed_merchant_ids or self._legacy_projection(self.account)['status'] != 'ready' or self.router is None:
-                _error('checks_required', '账号接待模型或旧来源核验尚未就绪')
-            self.router.resolve('reception', ('text', 'structure'))
+            if not allowed_merchant_ids or self._legacy_projection(self.account)['status'] != 'ready':
+                _error('checks_required', '接待商家或旧来源核验尚未就绪')
             self.enabled = True
             self.allowed = list(dict.fromkeys(allowed_merchant_ids))
             self._schedule_account_replies()
@@ -374,12 +392,35 @@ class WhatsAppAccountService(AccountMediaMixin, AccountGenerationMixin):
     def get_whatsapp_context(self, chat_id):
         self._conversation(chat_id)
         binding = self.repo.get('binding', _key(self.account, chat_id))
-        rows = [r for r in self.repo.list('message') if r['account_id'] == self.account and r['chat_id'] == chat_id and r['segment_id'] == binding['segment_id']]
+        rows = self.repo.list_owned('message', self.account, chat_id, binding['segment_id'])
         rows.sort(key=lambda r: (r['timestamp_ms'], r['id']))
         return {'task_mode': 'whatsapp_reply', 'whatsapp_messages': [{'source_id': 'wa_' + _key(self.account, r['id'])[:20],
                 'role': 'seller' if r['from_me'] else 'buyer', 'timestamp_ms': r['timestamp_ms'], 'text': r['body'][:3000]} for r in rows[-30:]],
                 'wa_summary': self.repo.get('wa_summary', _key(self.account, chat_id, binding['segment_id']), {}).get('body', ''),
+                'wa_supplement': {**self.repo.get('wa_supplement', _key(self.account, chat_id, binding['segment_id']), {'body': '', 'revision': 0}),
+                                  'source_id': 'wa_note_' + _key(self.account, chat_id, binding['segment_id'])[:20]},
                 'knowledge': [], 'guidance': [], 'style': [], 'binding_revision': binding['revision']}
+
+    def _wa_save_supplement(self, chat_id, merchant_id, binding_revision, expected_revision, body, expected_account_id, expected_connection_epoch):
+        self._identity(expected_account_id, expected_connection_epoch)
+        self._conversation(chat_id)
+        binding = self.repo.get('binding', _key(self.account, chat_id))
+        if (not binding or not merchant_id or binding.get('merchant_id') != merchant_id
+                or binding.get('revision') != binding_revision or binding.get('requested_binding') is not None):
+            _error('source_changed', '客户商家关联已变化')
+        if not isinstance(body, str) or len(body) > 4000 or type(expected_revision) is not int:
+            _error('invalid_params', '业务补充无效')
+        key = _key(self.account, chat_id, binding['segment_id'])
+        old = self.repo.get('wa_supplement', key, {'body': '', 'revision': 0})
+        if old['revision'] != expected_revision:
+            _error('revision_conflict', '业务补充已变化')
+        if old['body'] != body:
+            old = {'body': body, 'revision': expected_revision + 1}
+            self.repo.put('wa_supplement', key, old)
+            self._cancel_account_generation(chat_id)
+            self._schedule_account_replies()
+            self._changed()
+        return old
 
     def get_whatsapp_writeback_capabilities(self):
         return {'format': 'wa-writeback-capabilities-v1', 'available': False, 'enabled': False, 'reason': '反写尚未开放',
@@ -733,7 +774,7 @@ class WhatsAppAccountService(AccountMediaMixin, AccountGenerationMixin):
             self._cancel_account_generation()
         self._model_packet_digest = digest
         try:
-            self.router.resolve('reception', ('text', 'structure'))
+            self.router.resolve('reception', ('text', 'structure'), allow_unchecked=True)
             ready = True
         except (ServiceError, AttributeError):
             ready = False

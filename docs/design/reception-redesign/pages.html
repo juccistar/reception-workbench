@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>接待工作台 · 全套页面设计</title>
+  <link rel="stylesheet" href="preview.css">
+  <link rel="stylesheet" href="suite.css">
+  <link rel="stylesheet" href="account-pages.css">
+  <link rel="stylesheet" href="navigation.css">
+  <script src="navigation.js" defer></script>
+  <script src="account-pages.js" defer></script>
+  <script src="suite.js" defer></script>
+</head>
+<body>
+  <div class="design-toolbar suite-preview-toolbar"><a class="design-label" href="README.md"><span class="design-dot"></span>接待工作台<span class="design-caption">全套页面设计</span></a><label class="suite-preview-select">预览页面<select id="preview-page" aria-label="切换预览页面"><option value="home">开始</option><option value="reception">客户接待</option><option value="products">产品库</option><option value="suppliers">供应商</option><option value="procurement">采购中心</option><option value="quotes">待我报价</option><option value="customers">客户资料</option><option value="library">资料与政策</option><option value="settings">连接与设置</option><option value="activity">运行记录</option><option value="launcher">账号启动台</option><option value="models">共享模型</option><option value="whatsapp">WhatsApp 客户侧栏</option></select></label><span class="design-disclaimer">合成数据 · 可交互预览</span></div>
+  <div class="suite-app" id="suite-app">
+    <nav class="app-nav" id="suite-nav" aria-label="工作台导航"></nav>
+    <header class="workspace-header suite-header"><div class="workspace-identity"><span class="suite-merchant-symbol" id="suite-merchant-symbol"></span><div><div class="merchant-name" id="suite-merchant-name">澄野生活</div><p id="suite-context">客户接待工作台</p></div></div><div class="header-actions"><span class="reception-state-label" id="suite-reception-state" role="status"></span><button class="global-status" data-action="core:toggle-reception" id="suite-global"><span id="suite-global-label">关闭自动接待</span></button><button class="text-button" data-nav="launcher" id="suite-header-link" hidden></button></div></header>
+    <main id="suite-content" class="suite-content" tabindex="-1"></main>
+  </div>
+  <div class="suite-sheet-overlay" id="suite-sheet-overlay" hidden><button class="suite-sheet-scrim" data-action="core:close-sheet" aria-label="关闭详情"></button><aside class="suite-sheet" id="suite-sheet" role="dialog" aria-modal="true" aria-labelledby="suite-sheet-title" tabindex="-1"><header class="suite-sheet-heading"><h2 id="suite-sheet-title"></h2><button class="icon-button" data-action="core:close-sheet" aria-label="关闭侧栏"></button></header><div class="suite-sheet-body" id="suite-sheet-body"></div><footer class="suite-sheet-footer" id="suite-sheet-footer"></footer></aside></div>
+  <dialog class="modal suite-modal" id="suite-modal" aria-labelledby="suite-modal-title"><header class="modal-heading"><h2 id="suite-modal-title"></h2><button class="icon-button" data-action="core:close-modal" aria-label="关闭弹窗"></button></header><div class="suite-modal-body" id="suite-modal-body"></div><footer class="modal-actions" id="suite-modal-actions"></footer></dialog>
+  <div class="toast" id="suite-toast" role="status" hidden></div>
+</body>
+</html>

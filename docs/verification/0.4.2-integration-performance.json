@@ -1,0 +1,724 @@
+{
+  "scope": "0.4.2 working-tree optimization only; synthetic local measurements, no comparison to 0.4.1 or whole-machine performance",
+  "before_original_no_case_dataset": {
+    "comparison_scope": "Same synthetic integration benchmark, 0.4.2 working tree before and after reply-pending projection optimization; not a comparison to 0.4.1 or overall system performance.",
+    "before": {
+      "conditions": {
+        "platform": "Windows-10-10.0.19045-SP0",
+        "python": "3.12.2",
+        "sqlite": "3.43.1",
+        "dataset": "20 synthetic conversations x 300 messages plus 3 fixture conversations",
+        "cache": "first call after seeding is not OS-cold; warm 20 successive calls",
+        "storage": "temporary SQLite WAL; no real accounts, model, or credentials",
+        "decode_metric": "json.loads calls yielding objects; message count identifies objects by keys, not SQLite scanned rows",
+        "memory": "tracemalloc Python allocations after gc; excludes native SQLite, RSS and other processes"
+      },
+      "service": {
+        "snapshot": {
+          "first_after_seed": {
+            "ms": 221.921,
+            "sql_statements": 56,
+            "sql_selects": 50,
+            "decoded_json_objects": 6049,
+            "decoded_message_objects": 6009,
+            "response_utf8_bytes": 15940
+          },
+          "warm": {
+            "median_ms": 219.661,
+            "p95_ms": 276.712,
+            "runs": 20,
+            "last_counts": {
+              "sql_statements": 49,
+              "sql_selects": 48,
+              "decoded_json_objects": 6047,
+              "decoded_message_objects": 6009,
+              "response_utf8_bytes": 15854
+            }
+          }
+        },
+        "conversation": {
+          "first_after_seed": {
+            "ms": 13.11,
+            "sql_statements": 35,
+            "sql_selects": 33,
+            "decoded_json_objects": 411,
+            "decoded_message_objects": 401,
+            "response_utf8_bytes": 21462
+          },
+          "warm": {
+            "median_ms": 13.05,
+            "p95_ms": 15.549,
+            "runs": 20,
+            "last_counts": {
+              "sql_statements": 24,
+              "sql_selects": 24,
+              "decoded_json_objects": 409,
+              "decoded_message_objects": 401,
+              "response_utf8_bytes": 21462
+            }
+          }
+        },
+        "detail_after_300_more_messages_in_other_customer": {
+          "ms": 14.068,
+          "sql_statements": 24,
+          "sql_selects": 24,
+          "decoded_json_objects": 409,
+          "decoded_message_objects": 401,
+          "response_utf8_bytes": 21462
+        },
+        "switch_memory": [
+          {
+            "switches": 20,
+            "python_current_bytes_after_gc": 11996,
+            "python_peak_bytes": 891342
+          },
+          {
+            "switches": 40,
+            "python_current_bytes_after_gc": 22292,
+            "python_peak_bytes": 924622
+          },
+          {
+            "switches": 60,
+            "python_current_bytes_after_gc": 15252,
+            "python_peak_bytes": 924622
+          },
+          {
+            "switches": 80,
+            "python_current_bytes_after_gc": 8164,
+            "python_peak_bytes": 928950
+          }
+        ],
+        "blocked_model": {
+          "snapshot_ms": 156.207,
+          "save_ms": 17.885,
+          "pause_ms": 172.707,
+          "granted_before": 1,
+          "granted_while_blocked_after_local_operations": 1,
+          "granted_after_cancellation_before_worker_exit": 1,
+          "granted_after_worker_exit": 0,
+          "cancellation_result": "model_cleanup_timeout",
+          "note": "Independent real ModelRuntime with blocked owned synchronous worker; no provider or network. Pause does not cancel this independent worker; cancellation is separately exercised."
+        }
+      },
+      "whatsapp_accounts": {
+        "parallel": [
+          {
+            "elapsed_ms": 10.183,
+            "account": "account-0"
+          },
+          {
+            "elapsed_ms": 12.322,
+            "account": "account-1"
+          }
+        ],
+        "iterations_each": 20,
+        "note": "Two real account services, separate disposable workspaces, identical chat IDs; concurrent state reads and takeover writes."
+      },
+      "baseline": {
+        "status": "not_measured",
+        "reason": "No isolated f8339ad source/dependency comparison was executed; no speedup claim."
+      },
+      "limitations": [
+        "Synthetic local service calls are not end-to-end UI, cold OS boot, real accounts, provider latency or model quality.",
+        "SQL trace counts statements on workspace connection only; JSON decoding count includes any instrumented Python JSON objects and does not count SQLite internal scans.",
+        "Blocked runtime is independent of the service generation task; service pause and cancellation are not tested as a single service-owned generation lifecycle."
+      ]
+    },
+    "after": {
+      "conditions": {
+        "platform": "Windows-10-10.0.19045-SP0",
+        "python": "3.12.2",
+        "sqlite": "3.43.1",
+        "dataset": "20 synthetic conversations x 300 messages plus 3 fixture conversations",
+        "cache": "first call after seeding is not OS-cold; warm 20 successive calls",
+        "storage": "temporary SQLite WAL; no real accounts, model, or credentials",
+        "decode_metric": "json.loads calls yielding objects; message count identifies objects by keys, not SQLite scanned rows",
+        "memory": "tracemalloc Python allocations after gc; excludes native SQLite, RSS and other processes"
+      },
+      "service": {
+        "snapshot": {
+          "first_after_seed": {
+            "ms": 33.364,
+            "sql_statements": 57,
+            "sql_selects": 28,
+            "decoded_json_objects": 47,
+            "decoded_message_objects": 6,
+            "response_utf8_bytes": 15945
+          },
+          "warm": {
+            "median_ms": 27.596,
+            "p95_ms": 37.36,
+            "runs": 20,
+            "last_counts": {
+              "sql_statements": 49,
+              "sql_selects": 25,
+              "decoded_json_objects": 44,
+              "decoded_message_objects": 6,
+              "response_utf8_bytes": 16026
+            }
+          }
+        },
+        "conversation": {
+          "first_after_seed": {
+            "ms": 4.678,
+            "sql_statements": 25,
+            "sql_selects": 24,
+            "decoded_json_objects": 109,
+            "decoded_message_objects": 101,
+            "response_utf8_bytes": 21462
+          },
+          "warm": {
+            "median_ms": 4.867,
+            "p95_ms": 6.141,
+            "runs": 20,
+            "last_counts": {
+              "sql_statements": 24,
+              "sql_selects": 23,
+              "decoded_json_objects": 109,
+              "decoded_message_objects": 101,
+              "response_utf8_bytes": 21462
+            }
+          }
+        },
+        "detail_after_300_more_messages_in_other_customer": {
+          "ms": 5,
+          "sql_statements": 31,
+          "sql_selects": 30,
+          "decoded_json_objects": 111,
+          "decoded_message_objects": 101,
+          "response_utf8_bytes": 21462
+        },
+        "switch_memory": [
+          {
+            "switches": 20,
+            "python_current_bytes_after_gc": 4660,
+            "python_peak_bytes": 172404
+          },
+          {
+            "switches": 40,
+            "python_current_bytes_after_gc": 13540,
+            "python_peak_bytes": 183084
+          },
+          {
+            "switches": 60,
+            "python_current_bytes_after_gc": 22140,
+            "python_peak_bytes": 183084
+          },
+          {
+            "switches": 80,
+            "python_current_bytes_after_gc": 12876,
+            "python_peak_bytes": 183916
+          }
+        ],
+        "blocked_model": {
+          "snapshot_ms": 27.436,
+          "save_ms": 20.249,
+          "pause_ms": 28.756,
+          "granted_before": 1,
+          "granted_while_blocked_after_local_operations": 1,
+          "granted_after_cancellation_before_worker_exit": 1,
+          "granted_after_worker_exit": 0,
+          "cancellation_result": "model_cleanup_timeout",
+          "note": "Independent real ModelRuntime with blocked owned synchronous worker; no provider or network. Pause does not cancel this independent worker; cancellation is separately exercised."
+        }
+      },
+      "whatsapp_accounts": {
+        "parallel": [
+          {
+            "elapsed_ms": 20.959,
+            "account": "account-0"
+          },
+          {
+            "elapsed_ms": 16.81,
+            "account": "account-1"
+          }
+        ],
+        "iterations_each": 20,
+        "note": "Two real account services, separate disposable workspaces, identical chat IDs; concurrent state reads and takeover writes."
+      },
+      "baseline": {
+        "status": "not_measured",
+        "reason": "No isolated f8339ad source/dependency comparison was executed; no speedup claim."
+      },
+      "limitations": [
+        "Synthetic local service calls are not end-to-end UI, cold OS boot, real accounts, provider latency or model quality.",
+        "SQL trace counts statements on workspace connection only; JSON decoding count includes any instrumented Python JSON objects and does not count SQLite internal scans.",
+        "Blocked runtime is independent of the service generation task; service pause and cancellation are not tested as a single service-owned generation lifecycle."
+      ]
+    },
+    "additional_limitations": [
+      "The 20 added conversations have no case; automatic source projection for conversations with cases may still decode full history repeatedly and is not measured by this dataset.",
+      "SQL trace SELECT count excludes statements beginning WITH; total statement count includes them.",
+      "SQLite still scans and sorts as needed, particularly on old databases without the optional cursor index; no online schema migration was performed."
+    ]
+  },
+  "after_and_matched_case_comparisons": {
+    "conditions": {
+      "platform": "Windows-10-10.0.19045-SP0",
+      "python": "3.12.2",
+      "sqlite": "3.43.1",
+      "dataset": "20 synthetic conversations x 300 messages plus 3 fixture conversations",
+      "cache": "first call after seeding is not OS-cold; warm 20 successive calls",
+      "storage": "temporary SQLite WAL; no real accounts, model, or credentials",
+      "decode_metric": "json.loads calls yielding objects; message count identifies objects by keys, not SQLite scanned rows",
+      "memory": "tracemalloc Python allocations after gc; excludes native SQLite, RSS and other processes"
+    },
+    "service": {
+      "snapshot": {
+        "first_after_seed": {
+          "ms": 32.079,
+          "sql_statements": 57,
+          "sql_selects": 28,
+          "decoded_json_objects": 47,
+          "decoded_message_objects": 6,
+          "response_utf8_bytes": 15945
+        },
+        "warm": {
+          "median_ms": 28.09,
+          "p95_ms": 32.906,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 56,
+            "sql_selects": 32,
+            "decoded_json_objects": 46,
+            "decoded_message_objects": 6,
+            "response_utf8_bytes": 16030
+          }
+        }
+      },
+      "conversation": {
+        "first_after_seed": {
+          "ms": 5.232,
+          "sql_statements": 25,
+          "sql_selects": 24,
+          "decoded_json_objects": 109,
+          "decoded_message_objects": 101,
+          "response_utf8_bytes": 21462
+        },
+        "warm": {
+          "median_ms": 4.985,
+          "p95_ms": 5.948,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 24,
+            "sql_selects": 23,
+            "decoded_json_objects": 109,
+            "decoded_message_objects": 101,
+            "response_utf8_bytes": 21462
+          }
+        }
+      },
+      "detail_after_300_more_messages_in_other_customer": {
+        "ms": 5.202,
+        "sql_statements": 31,
+        "sql_selects": 30,
+        "decoded_json_objects": 111,
+        "decoded_message_objects": 101,
+        "response_utf8_bytes": 21462
+      },
+      "switch_memory": [
+        {
+          "switches": 20,
+          "python_current_bytes_after_gc": 5188,
+          "python_peak_bytes": 172444
+        },
+        {
+          "switches": 40,
+          "python_current_bytes_after_gc": 14316,
+          "python_peak_bytes": 181060
+        },
+        {
+          "switches": 60,
+          "python_current_bytes_after_gc": 23194,
+          "python_peak_bytes": 183028
+        },
+        {
+          "switches": 80,
+          "python_current_bytes_after_gc": 12876,
+          "python_peak_bytes": 183028
+        }
+      ],
+      "blocked_model": {
+        "snapshot_ms": 28.272,
+        "save_ms": 20.513,
+        "pause_ms": 29.283,
+        "granted_before": 1,
+        "granted_while_blocked_after_local_operations": 1,
+        "granted_after_cancellation_before_worker_exit": 1,
+        "granted_after_worker_exit": 0,
+        "cancellation_result": "model_cleanup_timeout",
+        "note": "Independent real ModelRuntime with blocked owned synchronous worker; no provider or network. Pause does not cancel this independent worker; cancellation is separately exercised."
+      }
+    },
+    "case_customers_new_schema": {
+      "snapshot": {
+        "before_reply_projection": {
+          "median_ms": 643.716,
+          "p95_ms": 827.05,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 149,
+            "sql_selects": 148,
+            "decoded_json_objects": 18127,
+            "decoded_message_objects": 18009,
+            "response_utf8_bytes": 16032
+          }
+        },
+        "after_reply_projection": {
+          "median_ms": 464.003,
+          "p95_ms": 549.306,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 159,
+            "sql_selects": 133,
+            "decoded_json_objects": 12126,
+            "decoded_message_objects": 12006,
+            "response_utf8_bytes": 16029
+          }
+        }
+      },
+      "conversation": {
+        "before_reply_projection": {
+          "median_ms": 39.454,
+          "p95_ms": 82.538,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 47,
+            "sql_selects": 47,
+            "decoded_json_objects": 1340,
+            "decoded_message_objects": 1301,
+            "response_utf8_bytes": 23354
+          }
+        },
+        "after_reply_projection": {
+          "median_ms": 31.003,
+          "p95_ms": 63.951,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 40,
+            "sql_selects": 39,
+            "decoded_json_objects": 1038,
+            "decoded_message_objects": 1001,
+            "response_utf8_bytes": 23354
+          }
+        }
+      }
+    },
+    "case_customers_old_schema_without_cursor_index": {
+      "snapshot": {
+        "before_reply_projection": {
+          "median_ms": 638.082,
+          "p95_ms": 784.759,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 149,
+            "sql_selects": 148,
+            "decoded_json_objects": 18127,
+            "decoded_message_objects": 18009,
+            "response_utf8_bytes": 16032
+          }
+        },
+        "after_reply_projection": {
+          "median_ms": 460.322,
+          "p95_ms": 563.937,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 159,
+            "sql_selects": 133,
+            "decoded_json_objects": 12126,
+            "decoded_message_objects": 12006,
+            "response_utf8_bytes": 16029
+          }
+        }
+      },
+      "conversation": {
+        "before_reply_projection": {
+          "median_ms": 38.177,
+          "p95_ms": 77.281,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 40,
+            "sql_selects": 40,
+            "decoded_json_objects": 1338,
+            "decoded_message_objects": 1301,
+            "response_utf8_bytes": 23354
+          }
+        },
+        "after_reply_projection": {
+          "median_ms": 32.149,
+          "p95_ms": 72.273,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 47,
+            "sql_selects": 46,
+            "decoded_json_objects": 1040,
+            "decoded_message_objects": 1001,
+            "response_utf8_bytes": 23354
+          }
+        }
+      }
+    },
+    "whatsapp_accounts": {
+      "parallel": [
+        {
+          "elapsed_ms": 11.45,
+          "account": "account-0"
+        },
+        {
+          "elapsed_ms": 8.753,
+          "account": "account-1"
+        }
+      ],
+      "iterations_each": 20,
+      "note": "Two real account services, separate disposable workspaces, identical chat IDs; concurrent state reads and takeover writes."
+    },
+    "baseline": {
+      "status": "not_measured",
+      "reason": "No isolated f8339ad source/dependency comparison was executed; no speedup claim."
+    },
+    "limitations": [
+      "Synthetic local service calls are not end-to-end UI, cold OS boot, real accounts, provider latency or model quality.",
+      "SQL trace counts statements on workspace connection only; sql_selects counts statements beginning SELECT and excludes WITH queries. JSON decoding count includes any instrumented Python JSON objects and does not count SQLite internal scans.",
+      "Case measurements compare the old reply-pending algorithm with the new one on the same dataset and current service source; they do not isolate or claim any service-layer automatic-source optimization.",
+      "Blocked runtime is independent of the service generation task; service pause and cancellation are not tested as a single service-owned generation lifecycle."
+    ]
+  },
+  "notes": [
+    "Original no-case dataset and case datasets are separate; do not mix their timings or counts.",
+    "Case comparisons switch only the reply-pending projection within the same current service; automatic-source implementation was unchanged at measurement time and remains a bottleneck.",
+    "Old schema case sample drops the optional cursor index; it is not an online schema migration.",
+    "Two earlier case attempts were discarded because the fixture merge window expired between measurements; the final dataset fixes its activity timestamp."
+  ],
+  "final_current_service_measurement": {
+    "conditions": {
+      "platform": "Windows-10-10.0.19045-SP0",
+      "python": "3.12.2",
+      "sqlite": "3.43.1",
+      "dataset": "20 synthetic conversations x 300 messages plus 3 fixture conversations",
+      "cache": "first call after seeding is not OS-cold; warm 20 successive calls",
+      "storage": "temporary SQLite WAL; no real accounts, model, or credentials",
+      "decode_metric": "json.loads calls yielding objects; message count identifies objects by keys, not SQLite scanned rows",
+      "memory": "tracemalloc Python allocations after gc; excludes native SQLite, RSS and other processes"
+    },
+    "service": {
+      "snapshot": {
+        "first_after_seed": {
+          "ms": 33.653,
+          "sql_statements": 64,
+          "sql_selects": 33,
+          "decoded_json_objects": 41,
+          "decoded_message_objects": 3,
+          "response_utf8_bytes": 15853
+        },
+        "warm": {
+          "median_ms": 28.061,
+          "p95_ms": 36.942,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 49,
+            "sql_selects": 25,
+            "decoded_json_objects": 41,
+            "decoded_message_objects": 3,
+            "response_utf8_bytes": 16029
+          }
+        }
+      },
+      "conversation": {
+        "first_after_seed": {
+          "ms": 5.17,
+          "sql_statements": 25,
+          "sql_selects": 24,
+          "decoded_json_objects": 109,
+          "decoded_message_objects": 101,
+          "response_utf8_bytes": 21486
+        },
+        "warm": {
+          "median_ms": 4.629,
+          "p95_ms": 5.672,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 24,
+            "sql_selects": 23,
+            "decoded_json_objects": 109,
+            "decoded_message_objects": 101,
+            "response_utf8_bytes": 21486
+          }
+        }
+      },
+      "detail_after_300_more_messages_in_other_customer": {
+        "ms": 5.421,
+        "sql_statements": 24,
+        "sql_selects": 23,
+        "decoded_json_objects": 109,
+        "decoded_message_objects": 101,
+        "response_utf8_bytes": 21486
+      },
+      "switch_memory": [
+        {
+          "switches": 20,
+          "python_current_bytes_after_gc": 4564,
+          "python_peak_bytes": 173628
+        },
+        {
+          "switches": 40,
+          "python_current_bytes_after_gc": 13484,
+          "python_peak_bytes": 182444
+        },
+        {
+          "switches": 60,
+          "python_current_bytes_after_gc": 21636,
+          "python_peak_bytes": 182444
+        },
+        {
+          "switches": 80,
+          "python_current_bytes_after_gc": 12280,
+          "python_peak_bytes": 183972
+        }
+      ],
+      "blocked_model": {
+        "snapshot_ms": 26.893,
+        "save_ms": 17.721,
+        "pause_ms": 27.967,
+        "granted_before": 1,
+        "granted_while_blocked_after_local_operations": 1,
+        "granted_after_cancellation_before_worker_exit": 1,
+        "granted_after_worker_exit": 0,
+        "cancellation_result": "model_cleanup_timeout",
+        "note": "Independent real ModelRuntime with blocked owned synchronous worker; no provider or network. Pause does not cancel this independent worker; cancellation is separately exercised."
+      }
+    },
+    "case_customers_new_schema": {
+      "snapshot": {
+        "before_reply_projection": {
+          "median_ms": 233.969,
+          "p95_ms": 564.173,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 159,
+            "sql_selects": 156,
+            "decoded_json_objects": 6146,
+            "decoded_message_objects": 6026,
+            "response_utf8_bytes": 16031
+          }
+        },
+        "after_reply_projection": {
+          "median_ms": 43.939,
+          "p95_ms": 51.223,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 149,
+            "sql_selects": 125,
+            "decoded_json_objects": 141,
+            "decoded_message_objects": 23,
+            "response_utf8_bytes": 16031
+          }
+        }
+      },
+      "conversation": {
+        "before_reply_projection": {
+          "median_ms": 19.071,
+          "p95_ms": 25.341,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 40,
+            "sql_selects": 40,
+            "decoded_json_objects": 739,
+            "decoded_message_objects": 702,
+            "response_utf8_bytes": 23378
+          }
+        },
+        "after_reply_projection": {
+          "median_ms": 11.104,
+          "p95_ms": 12.6,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 40,
+            "sql_selects": 39,
+            "decoded_json_objects": 439,
+            "decoded_message_objects": 402,
+            "response_utf8_bytes": 23378
+          }
+        }
+      }
+    },
+    "case_customers_old_schema_without_cursor_index": {
+      "snapshot": {
+        "before_reply_projection": {
+          "median_ms": 239.748,
+          "p95_ms": 253.542,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 156,
+            "sql_selects": 155,
+            "decoded_json_objects": 6146,
+            "decoded_message_objects": 6026,
+            "response_utf8_bytes": 16029
+          }
+        },
+        "after_reply_projection": {
+          "median_ms": 51.05,
+          "p95_ms": 56.633,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 149,
+            "sql_selects": 125,
+            "decoded_json_objects": 141,
+            "decoded_message_objects": 23,
+            "response_utf8_bytes": 16032
+          }
+        }
+      },
+      "conversation": {
+        "before_reply_projection": {
+          "median_ms": 21.559,
+          "p95_ms": 46.871,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 40,
+            "sql_selects": 40,
+            "decoded_json_objects": 739,
+            "decoded_message_objects": 702,
+            "response_utf8_bytes": 23378
+          }
+        },
+        "after_reply_projection": {
+          "median_ms": 14.247,
+          "p95_ms": 28.271,
+          "runs": 20,
+          "last_counts": {
+            "sql_statements": 40,
+            "sql_selects": 39,
+            "decoded_json_objects": 439,
+            "decoded_message_objects": 402,
+            "response_utf8_bytes": 23378
+          }
+        }
+      }
+    },
+    "whatsapp_accounts": {
+      "parallel": [
+        {
+          "elapsed_ms": 13.629,
+          "account": "account-0"
+        },
+        {
+          "elapsed_ms": 11.574,
+          "account": "account-1"
+        }
+      ],
+      "iterations_each": 20,
+      "note": "Two real account services, separate disposable workspaces, identical chat IDs; concurrent state reads and takeover writes."
+    },
+    "baseline": {
+      "status": "not_measured",
+      "reason": "No isolated f8339ad source/dependency comparison was executed; no speedup claim."
+    },
+    "limitations": [
+      "Synthetic local service calls are not end-to-end UI, cold OS boot, real accounts, provider latency or model quality.",
+      "SQL trace counts statements on workspace connection only; sql_selects counts statements beginning SELECT and excludes WITH queries. JSON decoding count includes any instrumented Python JSON objects and does not count SQLite internal scans.",
+      "Case measurements compare the old reply-pending algorithm with the new one on the same dataset and current service source; they do not isolate or claim any service-layer automatic-source optimization.",
+      "Blocked runtime is independent of the service generation task; service pause and cancellation are not tested as a single service-owned generation lifecycle."
+    ]
+  },
+  "final_current_service_measurement_note": "Final current service includes bounded automatic-source queries. Earlier measurements retain their own stage and sample; compare matching workloads only. No 0.4.1 baseline or whole-machine speedup is claimed. A prior benchmark close hit its artificial 150ms cleanup deadline; this successful run waits for the real runtime finished callback before closing."
+}

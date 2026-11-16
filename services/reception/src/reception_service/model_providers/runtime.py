@@ -7,6 +7,7 @@ import threading
 import time
 
 from .encoding import failure
+from .owned_sync import owned_sync
 
 
 class ModelRuntime:
@@ -35,7 +36,7 @@ class ModelRuntime:
         self._loop.run_forever()
         self._loop.close()
 
-    def run(self, purpose, operation, *, cancel=None, deadline=120, heavy=False, on_abandon=None, on_complete=None):
+    def run(self, purpose, operation, *, cancel=None, deadline=120, heavy=False, on_abandon=None, on_complete=None, on_finished=None):
         if purpose not in ('reception', 'translation') or not callable(operation) or deadline <= 0:
             if on_complete is not None:
                 on_complete()
@@ -71,11 +72,12 @@ class ModelRuntime:
                     complete_inputs()
                 finally:
                     if token is not None:
-                        self._budget.release(token)
+                        await owned_sync(lambda: self._budget.release(token), complete_on_cancel=True)
         def start():
             if abandoned.is_set():
-                if on_complete is not None:
-                    on_complete()
+                complete_inputs()
+                if on_finished is not None:
+                    on_finished()
                 future.cancel()
                 task_ready.set()
                 return
@@ -84,6 +86,8 @@ class ModelRuntime:
             def complete(done):
                 try:
                     complete_inputs()
+                    if on_finished is not None:
+                        on_finished()
                 except BaseException as error:
                     future.set_exception(error)
                     return

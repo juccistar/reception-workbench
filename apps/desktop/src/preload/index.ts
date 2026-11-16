@@ -18,7 +18,7 @@ const bridge: ReceptionBridge = {
   openProductLink: reference => ipcRenderer.invoke('reception:product:open', reference),
   copyProductText: reference => ipcRenderer.invoke('reception:product:copy-text', reference),
   invoke: (method, params = {}) => {
-    if (!allowed.has(method) || method === 'confirm_send') return Promise.reject(new Error('不允许此界面操作。'));
+    if (!allowed.has(method)) return Promise.reject(new Error('不允许此界面操作。'));
     try { validateChatParameters(method, params); } catch (error) { return Promise.reject(error); }
     return ipcRenderer.invoke('reception:invoke', method, params);
   },
@@ -29,7 +29,6 @@ const bridge: ReceptionBridge = {
   },
   getPreferences: () => ipcRenderer.invoke('reception:preferences:get'),
   savePreferences: partial => ipcRenderer.invoke('reception:preferences:save', partial),
-  confirmSend: confirmation => ipcRenderer.invoke('reception:confirm-send', { draft_id: confirmation.draft_id, revision: confirmation.revision }),
   chooseWorkctl: () => ipcRenderer.invoke('reception:choose-workctl'),
   chooseSupplementAttachment: conversationId => ipcRenderer.invoke('reception:choose-supplement-attachment', conversationId),
   chooseSupplementAttachments: conversationId => {

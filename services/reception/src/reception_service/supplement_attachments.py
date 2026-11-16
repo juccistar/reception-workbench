@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import io
 from pathlib import PurePath
@@ -101,9 +102,7 @@ def parse_attachment(name, content_b64):
     return result, content_b64
 
 
-def attachment_rows(repo, conversation_id):
-    rows = [row for row in repo.list('supplement_attachment', conversation_id=conversation_id)
-            if row.get('status') != 'removed']
+def _validate_rows(rows):
     for row in rows:
         try:
             content = base64.b64decode(row['original_b64'], validate=True)
@@ -117,6 +116,34 @@ def attachment_rows(repo, conversation_id):
             row.pop('text', None)
             row['error'] = '附件读取或完整性校验失败，请移除或从备份恢复'
     return rows
+
+
+def attachment_rows(repo, conversation_id):
+    """Read and verify originals for model use and other authoritative operations."""
+    rows = [row for row in repo.list('supplement_attachment', conversation_id=conversation_id)
+            if row.get('status') != 'removed']
+    return _validate_rows(rows)
+
+
+def attachment_projections(repo, conversation_id):
+    """Display-only projections; never use these as evidence for model inputs."""
+    with repo.lock:
+        ids = [row[0] for row in repo.db.execute(
+            "SELECT id FROM entities WHERE kind='supplement_attachment' AND json_extract(data,'$.conversation_id')=? ORDER BY rowid",
+            (conversation_id,))]
+        stamps = tuple((key, (repo.image_transfer_metadata('supplement_attachment', key) or {}).get('version')) for key in ids)
+        cache = repo._supplement_projection_cache
+        cached = cache.get(conversation_id)
+        if not repo.db.in_transaction and cached and cached[0] == stamps:
+            return copy.deepcopy(cached[1])
+        rows = [public_attachment(row) for row in attachment_rows(repo, conversation_id)]
+        if not repo.db.in_transaction:
+            after = tuple((key, (repo.image_transfer_metadata('supplement_attachment', key) or {}).get('version')) for key in ids)
+            if stamps == after:
+                if len(cache) >= 128:
+                    cache.clear()
+                cache[conversation_id] = (stamps, rows)
+        return copy.deepcopy(rows)
 
 
 def public_attachment(row, *, preview=True):

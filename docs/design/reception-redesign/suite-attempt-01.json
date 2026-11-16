@@ -1,0 +1,9 @@
+{
+  "status": "failed_then_corrected",
+  "phase": "initial_isolated_browser_preview",
+  "primary_pages_captured": 19,
+  "external_requests": [],
+  "failure": "The document draft had a new title in its editor while the list still used its saved title, so the draft-title selector timed out.",
+  "correction": "The document list now displays the in-memory draft title when present.",
+  "not_a_production_or_model_test": true
+}

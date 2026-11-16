@@ -170,7 +170,7 @@ class AccountMediaMixin:
             binding = self.repo.get('binding', _key(self.account, chat_id))
             if not binding or binding.get('segment_id') != segment_id:
                 _error()
-            rows = [r for r in self.repo.list('message') if r.get('account_id') == self.account and r.get('chat_id') == chat_id and r.get('segment_id') == segment_id]
+            rows = self.repo.list_owned('message', self.account, chat_id, segment_id)
             rows.sort(key=lambda r: (r['timestamp_ms'], r['id']))
             refs, statuses = [], []
             for row in rows[-30:]:

@@ -103,7 +103,7 @@ class ManualReceptionTests(unittest.TestCase):
     def start_assisted(self, auto=False):
         for name in ('ai', 'send_preview'):
             self.service.checks[name]['status'] = 'passed'
-        self.service.set_scope('incoming', [], 5)
+        self.service.set_scope('all', [])
         snapshot = self.service.set_reception(True, auto_send=auto)
         self.service._next_poll = time.monotonic() + 100
         return snapshot

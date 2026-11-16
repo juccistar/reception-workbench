@@ -32,6 +32,8 @@ export class ServiceClient extends EventEmitter {
     this.child.once('close', () => this.resolveExit());
   }
   private receive(line: string) {
+    // stdout can drain after the child has reported exit or a spawn error.
+    if (this.exited) return;
     if (line.length > 8 * 1024 * 1024) { this.emit('protocol-error', '后台返回超过通信预算。'); return; }
     let value: Record<string, unknown>;
     try { value = JSON.parse(line); } catch { this.emit('protocol-error', '后台返回格式异常。'); return; }

@@ -223,7 +223,7 @@ class ModelRouter:
 
     def generate(self, purpose, system_prompt, user_payload, *, images=(), required_capabilities=(),
                  cancel=None, on_call_start=None, max_output_tokens=8192, deadline=None, _owned_input=None,
-                 _allow_unchecked=False):
+                 _allow_unchecked=False, _on_runtime_finished=None):
         started = time.monotonic()
         try:
             images = tuple(dict(item) for item in images)
@@ -361,7 +361,8 @@ class ModelRouter:
                 lifecycle.bind(operation_deadline)
             completion = {'on_complete': _owned_input.transfer()} if _owned_input is not None else {}
             result = runtime.run(purpose, operation, cancel=combined_cancel, heavy=bool(images),
-                                 deadline=remaining, on_abandon=local_cancel.set, **completion)
+                                 deadline=remaining, on_abandon=local_cancel.set,
+                                 on_finished=_on_runtime_finished, **completion)
             with self._lock:
                 if combined_cancel.is_set():
                     raise failure('model_cancelled')

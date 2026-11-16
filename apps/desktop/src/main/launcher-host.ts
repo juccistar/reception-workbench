@@ -111,7 +111,7 @@ export async function runLauncher(): Promise<void> {
                   return { ...context, international_background: lease.context.international_background } satisfies WhatsAppContext;
                 } catch { return context; }
               },
-              saveBinding: input => manager.binding(input), takeover: input => manager.takeover(input),
+              saveBinding: (input, assertCurrent) => manager.binding(input, assertCurrent), saveSupplement: (input, assertCurrent) => manager.saveSupplement(input, assertCurrent), takeover: input => manager.takeover(input),
               reconcile: operationId => manager.reconcile({ workspace_id: runtime.workspaceId, operation_id: operationId }),
               searchCustomers: async input => {
                 const snapshot = await manager.detail(runtime.workspaceId);

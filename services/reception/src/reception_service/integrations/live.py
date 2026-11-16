@@ -319,8 +319,7 @@ class LiveIntegration:
             required = ['text', 'structure']
             if images:
                 required.extend(['single_image' if len(images) == 1 else 'multi_image', 'combined'])
-            manual_route = ({'_allow_unchecked': True} if isinstance(self._model_router, ModelRouter)
-                            and payload.get('task_mode') in ('manual_suggestion', 'polish') else {})
+            manual_route = ({'_allow_unchecked': True} if isinstance(self._model_router, ModelRouter) else {})
             result = self._model_router.generate('reception', instructions, model_json(payload), images=images,
                         required_capabilities=required, cancel=cancel_event, on_call_start=on_call_start,
                         deadline=chain_deadline, **ownership, **manual_route)

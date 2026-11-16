@@ -11,15 +11,16 @@ export interface CustomerPanelOptions {
   resolveCurrentChat(): Promise<{ chat_id: string; name?: string } | null>;
   readState(): Promise<WhatsAppAccountSnapshot>;
   getContext(chatId: string): Promise<WhatsAppContext>;
-  saveBinding(input: WhatsAppBindingInput): Promise<WhatsAppAccountSnapshot>;
+  saveBinding(input: WhatsAppBindingInput, assertCurrent: () => Promise<void>): Promise<WhatsAppAccountSnapshot>;
   takeover(input: WhatsAppTakeoverInput): Promise<unknown>;
+  saveSupplement(input: { workspace_id: string; expected_account_id: string; expected_connection_epoch: string; chat_id: string; merchant_id: string; binding_revision: number; expected_revision: number; body: string }, assertCurrent: () => Promise<void>): Promise<{ body: string; revision: number }>;
   reconcile(operationId: string): Promise<unknown>;
   searchCustomers(input: { merchant_id: string; query: string; chat_id: string; binding_revision: number }): Promise<Customer[]>;
 }
 type Identity = { workspace_id: string; runtime_instance_id: string; account_id: string; connection_epoch: string; chat_id: string; view_revision: number };
-type View = { identity: Identity; name: string; merchants: Array<{ merchant_id: string; name: string; available: boolean }>; merchant_id: string | null; conversation_id: string | null; binding_revision: number; human_owned: boolean; reception_paused: boolean; reception_active: boolean; summary: string; requirements: string; context_status: 'loading' | 'unavailable' | 'ready' };
+type View = { identity: Identity; name: string; merchants: Array<{ merchant_id: string; name: string; available: boolean }>; merchant_id: string | null; conversation_id: string | null; binding_revision: number; human_owned: boolean; reception_paused: boolean; reception_active: boolean; summary: string; requirements: string; supplement: { body: string; revision: number }; send_status: string; context_status: 'loading' | 'unavailable' | 'ready' };
 const BINDING = '__receptionCustomerPanel';
-const MAX_REQUEST = 8192;
+const MAX_REQUEST = 20000;
 const MAX_RESPONSE = 65536;
 const MAX_INFLIGHT = 4;
 const keys = (value: unknown, allowed: string[]): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).every(k => allowed.includes(k));
@@ -188,7 +189,7 @@ export class CustomerPanelController {
       if (generation !== this.generation) return;
       const binding = observed?.state.bindings.find(b => b.chat_id === observed.chat.chat_id);
       const conversation = observed?.state.conversations.find(c => c.chat_id === observed.chat.chat_id);
-      const fingerprint = observed ? JSON.stringify([observed.state.account_id, observed.state.connection_epoch, observed.chat.chat_id, observed.chat.name, binding, conversation, observed.snapshot.merchants, observed.state.default_merchant_id, observed.state.default_revision, observed.state.enabled, observed.state.allowed_merchant_ids, observed.state.model.ready, observed.state.legacy.status]) : '';
+      const fingerprint = observed ? JSON.stringify([observed.state.account_id, observed.state.connection_epoch, observed.chat.chat_id, observed.chat.name, binding, conversation, observed.snapshot.merchants, observed.state.default_merchant_id, observed.state.default_revision, observed.state.enabled, observed.state.allowed_merchant_ids, observed.state.model.ready, observed.state.legacy.status, (observed.state.pending_operations ?? []).filter(op => op.chat_id === observed.chat.chat_id)]) : '';
       const emptyStatus = this.observedEmptyStatus;
       if (fingerprint !== this.fingerprint || (!!observed && !this.view) || (!observed && emptyStatus !== this.emptyStatus)) {
         this.emptyStatus = observed ? '' : emptyStatus;
@@ -197,7 +198,7 @@ export class CustomerPanelController {
         await this.emit({ kind: 'clear', status: observed ? '正在加载客户信息' : emptyStatus }, generation);
         if (observed) {
           const identity: Identity = { workspace_id: this.options.workspaceId, runtime_instance_id: this.options.runtimeInstanceId, account_id: observed.state.account_id!, connection_epoch: observed.state.connection_epoch!, chat_id: observed.chat.chat_id, view_revision: this.revision };
-          const view: View = { identity, name: observed.chat.name?.trim() || '当前客户', merchants: observed.snapshot.merchants.map(m => ({ merchant_id: m.merchant_id, name: m.name, available: m.available })), merchant_id: binding ? binding.merchant_id : observed.state.default_merchant_id, conversation_id: binding?.conversation_id ?? null, binding_revision: binding?.revision ?? 0, human_owned: !!conversation?.human_owned, reception_paused: !!conversation?.reception_paused, reception_active: !!observed.state.enabled && observed.state.allowed_merchant_ids.includes((binding ? binding.merchant_id : observed.state.default_merchant_id) ?? '') && observed.state.model.ready && observed.state.legacy.status === 'ready', summary: '', requirements: '', context_status: 'loading' };
+          const view: View = { identity, name: observed.chat.name?.trim() || '当前客户', merchants: observed.snapshot.merchants.map(m => ({ merchant_id: m.merchant_id, name: m.name, available: m.available })), merchant_id: binding ? binding.merchant_id : observed.state.default_merchant_id, conversation_id: binding?.conversation_id ?? null, binding_revision: binding?.revision ?? 0, human_owned: !!conversation?.human_owned, reception_paused: !!conversation?.reception_paused, reception_active: !!observed.state.enabled && observed.state.allowed_merchant_ids.includes((binding ? binding.merchant_id : observed.state.default_merchant_id) ?? '') && observed.state.legacy.status === 'ready', summary: '', requirements: '', supplement: { body: '', revision: 0 }, send_status: (observed.state.pending_operations ?? []).some(op => op.chat_id === observed.chat.chat_id) ? '发送结果待确认' : '', context_status: 'loading' };
           this.view = view;
           await this.emit({ kind: 'view', view }, generation);
         }
@@ -216,6 +217,7 @@ export class CustomerPanelController {
       await this.assertCurrent(view.identity, generation);
       if (context.binding_revision !== view.binding_revision) throw new Error('关联已更新');
       view.summary = context.wa_summary || '';
+      view.supplement = context.wa_supplement || { body: '', revision: 0 };
       view.requirements = formatRequirements(context.international_background?.requirements || {});
       view.context_status = 'ready';
       await this.emit({ kind: 'view', view }, generation);
@@ -250,6 +252,7 @@ export class CustomerPanelController {
     const requestId = request.request_id;
     if (this.inflight >= MAX_INFLIGHT) { await this.emit({ kind: 'response', request_id: requestId, error: '请求过多，请稍后重试' }, generation); return; }
     this.inflight++;
+    let committed = false;
     try {
       const identity = request.identity as Identity;
       await this.assertCurrent(identity, generation);
@@ -263,14 +266,16 @@ export class CustomerPanelController {
         for (const row of safeRows) this.candidates.add(JSON.stringify([input.merchant_id, row.conversation_id]));
         result = safeRows;
       } else if (request.action === 'save' && keys(input, ['merchant_id', 'conversation_id']) && (input.merchant_id === null || (short(input.merchant_id) && this.view!.merchants.some(m => m.merchant_id === input.merchant_id && m.available))) && (input.conversation_id === null || (short(input.conversation_id) && input.merchant_id !== null && ((input.merchant_id === this.view!.merchant_id && input.conversation_id === this.view!.conversation_id) || this.candidates.has(JSON.stringify([input.merchant_id, input.conversation_id])))))) {
-        await this.options.saveBinding({ workspace_id: identity.workspace_id, expected_account_id: identity.account_id, expected_connection_epoch: identity.connection_epoch, chat_id: identity.chat_id, merchant_id: input.merchant_id, conversation_id: input.conversation_id, expected_revision: this.view!.binding_revision }); result = true;
+        await this.options.saveBinding({ workspace_id: identity.workspace_id, expected_account_id: identity.account_id, expected_connection_epoch: identity.connection_epoch, chat_id: identity.chat_id, merchant_id: input.merchant_id, conversation_id: input.conversation_id, expected_revision: this.view!.binding_revision }, () => this.assertCurrent(identity, generation)); committed = true; result = true;
+      } else if (request.action === 'supplement' && keys(input, ['body', 'expected_revision']) && typeof input.body === 'string' && input.body.length <= 4000 && Number.isSafeInteger(input.expected_revision) && input.expected_revision >= 0 && this.view!.merchant_id && input.expected_revision === this.view!.supplement.revision) {
+        result = await this.options.saveSupplement({ workspace_id: identity.workspace_id, expected_account_id: identity.account_id, expected_connection_epoch: identity.connection_epoch, chat_id: identity.chat_id, merchant_id: this.view!.merchant_id, binding_revision: this.view!.binding_revision, expected_revision: input.expected_revision, body: input.body }, () => this.assertCurrent(identity, generation)); committed = true;
       } else if (request.action === 'takeover' && keys(input, ['enabled']) && typeof input.enabled === 'boolean') {
         await this.options.takeover({ workspace_id: identity.workspace_id, expected_account_id: identity.account_id, expected_connection_epoch: identity.connection_epoch, chat_id: identity.chat_id, enabled: input.enabled }); result = true;
       } else throw new Error('不支持的操作');
       await this.assertCurrent(identity, generation, request.action === 'save');
       await this.emit({ kind: 'response', request_id: requestId, result }, generation);
       if (request.action !== 'search') { this.fingerprint = ''; this.view = null; }
-    } catch { await this.emit({ kind: 'response', request_id: requestId, error: '操作未完成，请确认当前客户和连接状态' }, generation).catch(() => {}); }
+    } catch { if (!committed) await this.emit({ kind: 'response', request_id: requestId, error: '操作未完成，请确认当前客户和连接状态' }, generation).catch(() => {}); }
     finally { if (generation === this.generation) this.inflight--; }
   }
 }

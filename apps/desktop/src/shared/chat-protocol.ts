@@ -108,6 +108,16 @@ export function validateChatParameters(method: ApiMethod, params: Record<string,
     if (params.category_label !== undefined && (typeof params.category_label !== 'string' || !/^[一-鿿A-Za-z]{1,8}$/.test(params.category_label) || !/[一-鿿]/.test(params.category_label))) fail();
     return;
   }
+  if (method === 'set_reception') {
+    const keys = ['enabled', 'auto_send', 'manual_only'];
+    if (!Object.hasOwn(params, 'enabled') || Object.keys(params).some(key => !keys.includes(key) || typeof params[key] !== 'boolean')) throw new Error('接待开关参数无效。');
+    return;
+  }
+  if (method === 'cancel_manual_suggestion') {
+    const keys = ['conversation_id', 'job_id'];
+    if (Object.keys(params).length !== keys.length || keys.some(key => !Object.hasOwn(params, key) || typeof params[key] !== 'string' || !(params[key] as string).trim() || (params[key] as string).length > 256)) throw new Error('取消人工建议参数无效。');
+    return;
+  }
   if (!['begin_manual_edit', 'save_chat_draft', 'send_chat', 'generate_manual_suggestion'].includes(method)) return;
   if (method === 'generate_manual_suggestion') {
     const allowed = ['conversation_id', 'case_id', 'client_request_id', 'input_body', 'input_revision', 'input_hash'];

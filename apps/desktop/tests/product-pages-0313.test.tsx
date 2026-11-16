@@ -134,12 +134,23 @@ it('retains supplier form values and displays the actual save failure', async ()
   expect(screen.getByLabelText('平台')).toHaveValue('demo');
 });
 
-it('exposes the blocked inquiry capability and reconciles an unknown task without a new request', async () => {
+it('filters the compact product list without inventing customer associations', async () => {
+  setup(); render(<ProductsPage />);
+  const list = await screen.findByRole('region', { name: '产品目录' });
+  expect(within(list).getByText('棉帽')).toBeInTheDocument();
+  expect(within(list).getByText('关联客户')).toBeInTheDocument();
+  expect(within(list).getAllByText('—').length).toBeGreaterThan(0);
+  fireEvent.change(screen.getByLabelText('搜索产品'), { target: { value: '找不到' } });
+  expect(within(list).getByText('没有匹配的产品')).toBeInTheDocument();
+});
+
+it('keeps inquiry unavailable and reconciles a selected unknown procurement task', async () => {
   const invoke = setup(); render(<ProcurementPage />);
-  expect(await screen.findByText(/真实询价接口未验证/)).toBeInTheDocument();
-  expect(screen.getByLabelText('供应商上限')).toHaveAttribute('max', '3');
-  const task = screen.getByText('结果未知', { selector: 'strong' }).closest('article')!;
-  fireEvent.click(within(task).getByRole('button', { name: '核查原任务' }));
+  fireEvent.click(screen.getByText('找货设置'));
+  expect(await screen.findByLabelText('供应商上限')).toHaveAttribute('max', '3');
+  expect(screen.queryByLabelText('自动询价')).not.toBeInTheDocument();
+  fireEvent.click(await screen.findByRole('button', { name: /123.*结果未知/ }));
+  fireEvent.click(screen.getByRole('button', { name: '核查原任务' }));
   await waitFor(() => expect(invoke).toHaveBeenCalledWith('reconcile_procurement', { task_id: 't1' }));
   expect(invoke).not.toHaveBeenCalledWith('request_procurement', expect.anything());
 });

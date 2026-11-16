@@ -13,7 +13,7 @@ from .integrations.generation_metadata import checked_metadata
 from .requirement_media import get_reception_source_images
 from .repository import encoded, new_id, now_ms
 from .reply_messages import normalize_reply_output
-from .supplement_attachments import parse_attachment, attachment_rows, public_attachment, MAX_TOTAL, MAX_COUNT
+from .supplement_attachments import parse_attachment, attachment_rows, attachment_projections, MAX_TOTAL, MAX_COUNT
 
 
 def _strip_product_display(context):
@@ -40,7 +40,7 @@ class ConversationAssistanceMixin:
     def _supplement(self, cid):
         note = self.repo.get('conversation_supplement', cid) or {
             'conversation_id': cid, 'body': '', 'revision': None, 'updated_at': None}
-        return {**note, 'attachments': [public_attachment(row) for row in attachment_rows(self.repo, cid)]}
+        return {**note, 'attachments': attachment_projections(self.repo, cid)}
 
     def upload_supplement_attachment(self, conversation_id, name, content_b64):
         item, original = parse_attachment(name, content_b64)
@@ -194,6 +194,9 @@ class ConversationAssistanceMixin:
                         or draft.get('revision') != input_revision):
                     raise ServiceError('source_changed', '当前回复正文已变化，请保存后重新润色')
             context, fingerprint = self._manual_context(conversation_id, case_id, input_body, input_revision)
+            previous = self.repo.get('manual_latest', conversation_id, {}).get('job_id')
+            if previous:
+                self._cancel_manual_job(conversation_id, previous)
             job = {'job_id': new_id('job'), 'kind': 'manual_suggestion', 'conversation_id': conversation_id,
                    'case_id': case_id, 'status': 'queued', 'stage': 'queued', 'message': '等待生成回复建议',
                    'created_at': now_ms(), 'started_at': None, 'completed_at': None, 'automatic': False}
@@ -204,6 +207,30 @@ class ConversationAssistanceMixin:
                               'request_id': client_request_id, 'input_hash': input_hash}, self._epoch, False))
         self._emit('job.updated', job)
         return {'job_id': job['job_id']}
+
+    def _cancel_manual_job(self, conversation_id, job_id):
+        job = self.repo.get('job', job_id)
+        if not job or job.get('kind') != 'manual_suggestion' or job.get('conversation_id') != conversation_id:
+            raise ServiceError('not_found', '人工建议任务不存在')
+        if job.get('status') not in ('queued', 'running'):
+            return 'already_finished'
+        if self.repo.get('manual_latest', conversation_id, {}).get('job_id') == job_id:
+            self.repo.put('manual_latest', conversation_id, {'job_id': None})
+        self._generation_cancel_event(job_id).set()
+        if job['status'] == 'queued':
+            self._job_update(job_id, status='cancelled', stage='cancelled', completed_at=now_ms(),
+                             message='已取消生成', diagnostics={'cancel_reason': 'user_cancelled'})
+            return 'cancelled'
+        return 'cancel_requested'
+
+    def cancel_manual_suggestion(self, conversation_id, job_id):
+        if not isinstance(job_id, str) or not job_id:
+            raise ServiceError('invalid_params', '任务编号无效')
+        with self._lock, self.repo.transaction():
+            self._chat_owner(conversation_id)
+            status = self._cancel_manual_job(conversation_id, job_id)
+        self._changed(conversation_id)
+        return {'job_id': job_id, 'status': status}
 
     def _manual_suggestion(self, cid):
         suggestion = self.repo.get('manual_suggestion', cid)

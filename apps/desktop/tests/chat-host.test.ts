@@ -17,6 +17,7 @@ const host = vi.hoisted(() => ({
 vi.mock('../src/main/supplement-host', async original => ({ ...await original<typeof import('../src/main/supplement-host')>(), windowsClipboardPaths: vi.fn(async () => []) }));
 vi.mock('../src/main/model-settings-store', () => ({ createModelSettingsStore: vi.fn(async () => ({})), resolveModelSettingsDirectory: vi.fn(async () => 'C:/synthetic-host/models') }));
 vi.mock('../src/main/model-config-host', () => ({ ModelConfigHost: class { read = async () => ({ directory_revision: 0 }); synchronize = async () => {}; } }));
+vi.mock('../src/main/model-budget-environment', () => ({ modelBudgetEnvironment: vi.fn(async () => ({})) }));
 vi.mock('../src/main/translation-activation-host', () => ({ TranslationActivationHost: class { get = host.translationGet; set = host.translationSave; } }));
 vi.mock('../src/main/translation-host', () => ({ TranslationHost: class {
   start = vi.fn(async () => {}); stop = vi.fn(); get = host.translationGet; save = host.translationSave;
@@ -110,12 +111,38 @@ describe('native chat IPC boundary', () => {
     }
   });
 
+  it('forwards direct reception enablement without another native prompt', async () => {
+    host.invoke.mockClear(); host.showMessageBox.mockClear();
+    const params = { enabled: true, auto_send: true };
+    await host.handlers.get('reception:invoke')!(validEvent(), 'set_reception', params);
+    expect(host.invoke).toHaveBeenCalledWith('set_reception', params);
+    expect(host.showMessageBox).not.toHaveBeenCalled();
+    await expect(host.handlers.get('reception:invoke')!(validEvent(), 'set_reception', { ...params, allow_unchecked: true })).rejects.toThrow();
+    await expect(host.exposed!.invoke('set_reception', { ...params, allow_unchecked: true })).rejects.toThrow();
+    expect(host.handlers.has('reception:confirm-send')).toBe(false);
+  });
+
+  it('validates targeted cancellation at both boundaries', async () => {
+    const call = host.handlers.get('reception:invoke')!;
+    const valid = { conversation_id: 'customer-1', job_id: 'job-1' };
+    for (const invoke of [
+      (params: any) => call(validEvent(), 'cancel_manual_suggestion', params),
+      (params: any) => host.exposed!.invoke('cancel_manual_suggestion', params),
+    ]) {
+      await expect(invoke(valid)).resolves.toBeDefined();
+      for (const invalid of [{ ...valid, job_id: '' }, { conversation_id: 'customer-1' }, { ...valid, allow_unchecked: true }, { ...valid, conversation_id: ' '.repeat(3) }, { ...valid, job_id: 'a'.repeat(257) }]) {
+        await expect(invoke(invalid)).rejects.toThrow();
+      }
+    }
+    await expect(call({ ...validEvent(), sender: {} }, 'cancel_manual_suggestion', valid)).rejects.toThrow('无效的操作来源');
+  });
+
   it('rejects raw body injection, missing dedupe keys, shell methods and direct legacy confirmation', async () => {
     const call = host.handlers.get('reception:invoke')!; host.invoke.mockClear();
     await expect(call(validEvent(), 'send_chat', { ...request, body: 'not a saved version' })).rejects.toThrow();
     await expect(call(validEvent(), 'send_chat', { ...request, client_request_id: '' })).rejects.toThrow();
     await expect(call(validEvent(), 'exec', { command: 'arbitrary' })).rejects.toThrow('不允许');
-    await expect(call(validEvent(), 'confirm_send', {})).rejects.toThrow('不允许');
+    for (const method of ['preview_send', 'prepare_send', 'confirm_send']) await expect(call(validEvent(), method, {})).rejects.toThrow('不允许');
     await expect(call(validEvent(), 'configure_translation_credential', { api_key: 'synthetic' })).rejects.toThrow('不允许');
     await expect(call(validEvent(), 'save_translation_settings', { enabled: true })).rejects.toThrow('不允许');
     await expect(call(validEvent(), 'validate_translation_settings', { base_url: 'https://example.com/v1' })).rejects.toThrow('不允许');
@@ -216,11 +243,11 @@ describe('native chat IPC boundary', () => {
     host.ipcInvoke.mockClear();
     await expect(bridge.invoke('send_chat', { ...request, expected_revision: null })).rejects.toThrow('版本无效');
     await expect(bridge.invoke('shell' as any, {})).rejects.toThrow('不允许');
-    await expect(bridge.invoke('confirm_send', {})).rejects.toThrow('不允许');
+    await expect(bridge.invoke('confirm_send' as any, {})).rejects.toThrow('不允许');
     for (const method of ['get_whatsapp_state', 'save_whatsapp_binding', 'get_whatsapp_context', 'set_whatsapp_reception', 'takeover_whatsapp', 'reconcile_whatsapp_operation']) {
       await expect(bridge.invoke(method as any, {})).rejects.toThrow('不允许');
     }
     expect(host.ipcInvoke).not.toHaveBeenCalled();
-    expect(Object.keys(bridge).sort()).toEqual(['chooseWorkctl', 'chooseSupplementAttachment', 'chooseSupplementAttachments', 'uploadSupplementAttachments', 'pasteSupplementAttachments', 'confirmSend', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate', 'getTranslationSettings', 'setTranslationEnabled', 'importLegacyTranslation', 'getModelSummary', 'openModelLauncher', 'clearTranslationCache', 'copyProductText', 'openProductLink', 'getImageOriginal', 'cancelImageOriginal', 'showImageMenu'].sort());
+    expect(Object.keys(bridge).sort()).toEqual(['chooseWorkctl', 'chooseSupplementAttachment', 'chooseSupplementAttachments', 'uploadSupplementAttachments', 'pasteSupplementAttachments', 'getPreferences', 'invoke', 'onEvent', 'savePreferences', 'getStorageInfo', 'chooseStorageDirectory', 'openStorageDirectory', 'manageStorage', 'getAccioLaunchInfo', 'copyAccioLaunchInstructions', 'getUpdateInfo', 'saveUpdateSettings', 'checkForUpdates', 'downloadUpdate', 'installUpdate', 'getTranslationSettings', 'setTranslationEnabled', 'importLegacyTranslation', 'getModelSummary', 'openModelLauncher', 'clearTranslationCache', 'copyProductText', 'openProductLink', 'getImageOriginal', 'cancelImageOriginal', 'showImageMenu'].sort());
   });
 });

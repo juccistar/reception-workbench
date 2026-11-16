@@ -13,6 +13,7 @@ from unittest.mock import patch
 from test_core import MockFacade
 from reception_service import __version__
 from reception_service.errors import ServiceError
+from reception_service.integrations.accio_native.gateway import digest
 from reception_service.repository import encoded, now_ms
 from reception_service.service import ReceptionService
 from reception_test_support.model import configure_synthetic_model, synthetic_snapshot
@@ -79,6 +80,291 @@ class MessageMonitorTests(unittest.TestCase):
         self.monitor_patch.stop()
         self.factory.stop()
         self.temp.cleanup()
+
+    def test_scope_persists_and_all_includes_later_customers_without_ai_check(self):
+        self.connect([self.info()])
+        self.assertNotEqual(self.service.checks['ai']['status'], 'passed')
+        self.service.set_scope('all', [])
+        self.service._model_config_valid = False
+        self.service.set_reception(True, auto_send=True)
+        self.service._ingest(self.info('later'), [])
+        self.assertTrue(self.service._in_scope('later'))
+        self.service._pause()
+        self.service._scope = {'mode': 'selected', 'conversation_ids': [], 'max_auto_replies': None}
+        self.service._load_scope()
+        self.assertEqual(self.service._scope['mode'], 'all')
+        self.assertFalse(self.service._running)
+
+    def test_legacy_incoming_scope_migrates_on_restart_without_authorization(self):
+        self.connect([self.info()])
+        self.service.repo.put('reception_scope', 'international', {'mode': 'incoming', 'conversation_ids': [], 'max_auto_replies': 5})
+        self.service.close()
+        self.service = ReceptionService(self.root, 'live', seller_id='10001')
+        self.service._activate_seller('10001')
+        self.assertEqual(self.service._scope['mode'], 'all')
+        self.assertEqual(self.service.repo.get('reception_scope', 'international')['mode'], 'all')
+        self.assertFalse(self.service._running)
+        self.assertIsNone(self.service._authorized_scope)
+
+    def test_independent_ai_check_does_not_pause_running_reception(self):
+        self.connect([self.info()])
+        self.service.set_scope('all', [])
+        self.service.set_reception(True, auto_send=True)
+        self.wait_job(self.service.call('check_ai'))
+        self.assertTrue(self.service._running)
+        self.assertTrue(self.service._auto_send)
+
+    def test_history_only_buyer_cannot_become_automatic_source(self):
+        self.connect([self.info()])
+        self.service.set_scope('all', [])
+        self.service.set_reception(True, auto_send=True)
+        cid = 'customer-a'
+        old_last_buyer = self.service.repo.get('conversation', cid)['last_buyer_at']
+        message = self.message(cid, now_ms() + 1000, 'backfilled')
+        self.service._ingest(self.info(cid), [message], history=True)
+        self.assertEqual(self.service.repo.get('conversation', cid)['last_buyer_at'], old_last_buyer)
+        self.assertIsNone(self.service._automatic_source(cid))
+
+    def test_fill_history_during_reception_does_not_create_reply_source(self):
+        self.connect([self.info()])
+        self.service.set_scope('all', [])
+        self.service.set_reception(True, auto_send=True)
+        cid = 'customer-a'
+        self.facade.bodies[cid] = [self.message(cid, now_ms() + 1000, 'history-head')]
+        result = self.wait_job(self.service.call('fill_history', {'conversation_id': cid}))
+        self.assertEqual(result['status'], 'succeeded', result)
+        self.assertIsNone(self.service._automatic_source(cid))
+        self.assertFalse(any(j.get('kind') == 'generate_draft' for j in self.service.repo.list('job')))
+
+    def test_history_marker_survives_ordinary_sync_and_later_exact_activity_promotes(self):
+        self.connect([self.info()])
+        cid = 'customer-a'
+        stamp = now_ms()
+        message = self.message(cid, stamp, 'history-head', 'New buyer request')
+        self.facade.bodies[cid] = [message]
+        self.assertEqual(self.wait_job(self.service.call('fill_history', {'conversation_id': cid}))['status'], 'succeeded')
+        key = encoded([cid, message['message_id']])
+        self.assertIsNotNone(self.service.repo.get('history_only_message', key))
+        self.assertEqual(self.wait_job(self.service.call('sync_messages'))['status'], 'succeeded')
+        self.assertIsNotNone(self.service.repo.get('history_only_message', key))
+        info = dict(self.info(cid, stamp=stamp, signature='new'), latest_message_id=message['message_id'],
+                    latest_text_sha256=hashlib.sha256(message['text'].encode()).hexdigest())
+        self.facade.summaries[None] = self.facade.summary_page([info])
+        conversation = self.service.repo.get('conversation', cid)
+        conversation['last_buyer_at'] = None
+        self.service.repo.put('conversation', cid, conversation)
+        before_case = self.service.repo.get('case', conversation['case_id'])
+        self.assertEqual(self.wait_job(self.service.call('sync_messages'))['status'], 'succeeded')
+        self.assertIsNone(self.service.repo.get('history_only_message', key))
+        promoted = self.service.repo.get('conversation', cid)
+        self.assertIsNotNone(promoted['last_buyer_at'])
+        promoted_case = self.service.repo.get('case', promoted['case_id'])
+        self.assertEqual(promoted_case['revision'], before_case['revision'] + 1)
+        self.assertEqual(self.wait_job(self.service.call('sync_messages'))['status'], 'succeeded')
+        self.assertEqual(self.service.repo.get('conversation', cid)['last_buyer_at'], promoted['last_buyer_at'])
+        self.assertEqual(self.service.repo.get('case', promoted['case_id'])['revision'], promoted_case['revision'])
+
+    def test_weak_activity_after_history_promotes_and_schedules_buyer(self):
+        self._assert_confirmed_history_head('none')
+
+    def test_summary_id_without_body_promotes_the_identified_message(self):
+        self._assert_confirmed_history_head('id')
+
+    def test_summary_body_without_id_requires_two_matching_native_heads(self):
+        self._assert_confirmed_history_head('body')
+
+    def _assert_confirmed_history_head(self, evidence):
+        self.connect([self.info()])
+        self.idle()
+        self.service.set_scope('all', [])
+        self.service.set_reception(True, auto_send=True)
+        cid = 'customer-a'
+        message = self.message(cid, now_ms() + 1000, 'weak-live')
+        baseline = self.message(cid)
+        self.facade.bodies[cid] = [baseline, message]
+        self.assertEqual(self.wait_job(self.service.call('fill_history', {'conversation_id': cid}))['status'], 'succeeded')
+        key = encoded([cid, message['message_id']])
+        self.assertIsNotNone(self.service.repo.get('history_only_message', key))
+        info = dict(self.info(cid, stamp=2000, signature=digest({'activity_at': 2000, 'latest': {}})),
+                    activity_clock='conversation')
+        if evidence == 'id':
+            info['latest_message_id'] = message['message_id']
+        elif evidence == 'body':
+            info['latest_text_sha256'] = hashlib.sha256(message['text'].encode()).hexdigest()
+        self.facade.summaries[None] = self.facade.summary_page([info])
+        with patch.object(self.service, '_dispatch_message_syncs', return_value=None):
+            if evidence != 'id':
+                self.assertEqual(self.wait_job(self.service.call('sync_messages'))['status'], 'deferred')
+                self.assertIsNotNone(self.service.repo.get('history_only_message', key))
+            self.assertEqual(self.wait_job(self.service.call('sync_messages'))['status'], 'succeeded')
+        self.assertIsNone(self.service.repo.get('history_only_message', key))
+        self.assertIsNotNone(self.service.repo.get('conversation', cid)['last_buyer_at'])
+        self.assertEqual(self.service._automatic_source(cid)['message_id'], message['message_id'])
+        with patch.object(self.service, '_enqueue') as enqueue:
+            with patch('reception_service.service.now_ms', return_value=now_ms() + 10000):
+                self.schedule(self.service)
+            self.assertTrue(any(call.args[0] == 'generate_draft' for call in enqueue.call_args_list))
+
+    def test_weak_confirmation_requires_two_native_heads_not_the_local_cache(self):
+        self.connect([self.info()])
+        self.idle()
+        self.service.set_scope('all', [])
+        self.service.set_reception(True, auto_send=True)
+        cid, stamp = 'customer-a', now_ms() + 1000
+        older = self.message(cid, stamp, 'weak-a', 'Earlier same-second request')
+        head = self.message(cid, stamp, 'weak-z', 'Latest same-second request')
+        self.facade.bodies[cid] = [older, head]
+        self.wait_job(self.service.call('fill_history', {'conversation_id': cid}))
+        self.facade.summaries[None] = self.facade.summary_page([
+            dict(self.info(cid, stamp=2000, signature='weak-live-after-fill'), activity_clock='conversation')])
+        key = encoded([cid, head['message_id']])
+        with patch.object(self.service, '_dispatch_message_syncs', return_value=None):
+            self.facade.bodies[cid] = [older]
+            self.assertEqual(self.wait_job(self.service.call('sync_messages'))['status'], 'deferred')
+            self.facade.bodies[cid] = [older, head]
+            self.assertEqual(self.wait_job(self.service.call('sync_messages'))['status'], 'deferred')
+            self.assertIsNotNone(self.service.repo.get('history_only_message', key))
+            self.assertIsNone(self.service._automatic_source(cid))
+            self.assertEqual(self.wait_job(self.service.call('sync_messages'))['status'], 'succeeded')
+        self.assertIsNone(self.service.repo.get('history_only_message', key))
+        self.assertIsNotNone(self.service.repo.get('history_only_message', encoded([cid, older['message_id']])))
+        self.assertEqual(self.service._automatic_source(cid)['message_id'], head['message_id'])
+
+    def test_automatic_source_projection_is_authoritative_outside_the_message_window(self):
+        self.connect([self.info()])
+        self.idle()
+        self.service.set_scope('all', [])
+        self.service.set_reception(True, auto_send=True)
+        cid = 'customer-a'
+        stamp = now_ms() + 1000
+        source = self.message(cid, stamp, 'source-outside-window', 'Original request')
+        later = [{**self.message(cid, stamp + index + 1, f'seller-{index}', 'Seller follow-up'), 'role': 'seller'}
+                 for index in range(105)]
+        self.service._ingest(self.info(cid), [source, *later], has_more=False)
+        detail = self.service.get_conversation(cid)
+        self.assertNotIn(source['message_id'], {row['message_id'] for row in detail['messages']})
+        self.assertEqual(detail['automatic_source'], {'message_id': source['message_id'],
+                         'text_sha256': hashlib.sha256(source['text'].encode()).hexdigest()})
+        changed = {**source, 'text': 'Corrected request'}
+        self.service._ingest(self.info(cid), [changed], has_more=False)
+        self.assertEqual(self.service.get_conversation(cid)['automatic_source']['text_sha256'],
+                         hashlib.sha256(changed['text'].encode()).hexdigest())
+        self.service.set_reception(False)
+        self.assertIsNone(self.service.get_conversation(cid)['automatic_source'])
+
+    def test_pending_live_activity_before_history_promotes_exact_body(self):
+        self.connect([self.info()])
+        self.idle()
+        self.service.set_scope('all', [])
+        self.service.set_reception(True, auto_send=True)
+        cid = 'customer-a'
+        message = self.message(cid, now_ms() + 1000, 'live-before-history', 'Live buyer request')
+        info = dict(self.info(cid, stamp=message['timestamp_ms'], signature='live'),
+                    latest_message_id=message['message_id'],
+                    latest_text_sha256=hashlib.sha256(message['text'].encode()).hexdigest())
+        with patch.object(self.service, '_dispatch_message_syncs', return_value=None):
+            with self.service._lock, self.service.repo.transaction():
+                self.service._observe_message_activity(info)
+            self.facade.bodies[cid] = [message]
+            result = self.wait_job(self.service.call('fill_history', {'conversation_id': cid}))
+            self.assertEqual(result['status'], 'succeeded', result)
+            self.assertIsNone(self.service.repo.get('history_only_message', encoded([cid, message['message_id']])))
+            self.assertEqual(self.service._automatic_source(cid)['message_id'], message['message_id'])
+
+    def test_activity_during_history_survives_restart_and_promotes_exact_message(self):
+        self.connect([self.info()])
+        self.idle()
+        cid = 'customer-a'
+        message = self.message(cid, now_ms(), 'concurrent', 'Concurrent buyer request')
+        started, release = threading.Event(), threading.Event()
+        def body(_cid, _cursor):
+            started.set()
+            if not release.wait(3):
+                raise AssertionError('history release missing')
+            return {'messages': [message], 'has_more': False, 'next_cursor': None}
+        self.facade.body_hook = body
+        dispatch = patch.object(self.service, '_dispatch_message_syncs', return_value=None)
+        dispatch.start()
+        self.addCleanup(dispatch.stop)
+        enqueue = self.service._enqueue
+        def hold_followup(kind, *args, **kwargs):
+            if kind == 'sync_messages':
+                return {'job_id': 'held-until-restart'}
+            return enqueue(kind, *args, **kwargs)
+        followup = patch.object(self.service, '_enqueue', side_effect=hold_followup)
+        followup.start()
+        self.addCleanup(followup.stop)
+        ack = self.service.call('fill_history', {'conversation_id': cid})
+        info = dict(self.info(cid, stamp=message['timestamp_ms'], signature='concurrent'),
+                    latest_message_id=message['message_id'],
+                    latest_text_sha256=hashlib.sha256(message['text'].encode()).hexdigest())
+        try:
+            self.assertTrue(started.wait(2))
+            with self.service._lock, self.service.repo.transaction():
+                self.service._observe_message_activity(info)
+        finally:
+            release.set()
+        result = self.wait_job(ack)
+        self.assertIn(result['status'], ('succeeded', 'deferred'), result)
+        key = encoded([cid, message['message_id']])
+        self.assertIsNotNone(self.service.repo.get('history_only_message', key))
+        self.service.close()
+        self.service = ReceptionService(self.root, 'live', seller_id='10001')
+        self.service._activate_seller('10001')
+        self.service.checks['messages']['status'] = 'passed'
+        self.assertIsNotNone(self.service.repo.get('history_only_message', key))
+        self.facade.body_hook = None
+        self.facade.bodies[cid] = [message]
+        self.facade.summaries[None] = self.facade.summary_page([info])
+        self.assertEqual(self.wait_job(self.service.call('sync_messages'))['status'], 'succeeded')
+        self.assertIsNone(self.service.repo.get('history_only_message', key))
+
+    def test_cancel_running_manual_suggestion_discards_late_result(self):
+        self.connect([self.info()])
+        cid = 'customer-a'
+        started, release = threading.Event(), threading.Event()
+        case = self.service.get_conversation(cid)['case']
+        def generate_manual(context, request_id, *, on_call_start, cancel_event):
+            on_call_start()
+            started.set()
+            if not release.wait(3):
+                raise AssertionError('synthetic AI release missing')
+            return {'reply_messages': [{'body': 'Late reply', 'reply_sources': [context['recent_messages'][-1]['message_id']]}],
+                    'model_snapshot': synthetic_snapshot(self.service._model_router)}
+        self.facade.generate_manual = generate_manual
+        ack = self.service.generate_manual_suggestion(cid, 'cancel-late', case['case_id'])
+        try:
+            self.assertTrue(started.wait(2))
+            result = self.service.call('cancel_manual_suggestion', {'conversation_id': cid, 'job_id': ack['job_id']})
+            self.assertEqual(result['status'], 'cancel_requested')
+        finally:
+            release.set()
+        job = self.wait_job(ack)
+        self.assertNotEqual(job['status'], 'succeeded', job)
+        suggestion = self.service.get_conversation(cid).get('manual_suggestion')
+        self.assertFalse(suggestion and suggestion.get('status') == 'ready', suggestion)
+
+    def test_cancel_manual_job_rejects_other_job_kinds(self):
+        self.connect([self.info()])
+        cid = 'customer-a'
+        job = {'job_id': 'manual-test', 'kind': 'manual_suggestion', 'conversation_id': cid,
+               'status': 'queued', 'created_at': now_ms()}
+        self.service.repo.put('job', job['job_id'], job)
+        self.service.repo.put('manual_latest', cid, {'job_id': job['job_id']})
+        result = self.service.call('cancel_manual_suggestion', {'conversation_id': cid, 'job_id': job['job_id']})
+        self.assertEqual(result['status'], 'cancelled')
+        self.assertEqual(self.service.repo.get('manual_latest', cid)['job_id'], None)
+        job.update(job_id='running-manual', status='running')
+        self.service.repo.put('job', job['job_id'], job)
+        self.service.repo.put('manual_latest', cid, {'job_id': job['job_id']})
+        result = self.service.call('cancel_manual_suggestion', {'conversation_id': cid, 'job_id': job['job_id']})
+        self.assertEqual(result['status'], 'cancel_requested')
+        self.assertTrue(self.service._generation_cancel_event(job['job_id']).is_set())
+        self.assertEqual(self.service.repo.get('job', job['job_id'])['status'], 'running')
+        job.update(job_id='send-test', kind='send_chat')
+        self.service.repo.put('job', job['job_id'], job)
+        with self.assertRaises(ServiceError):
+            self.service.call('cancel_manual_suggestion', {'conversation_id': cid, 'job_id': job['job_id']})
 
     def info(self, cid='customer-a', stamp=1000, signature=None):
         result = {'conversation_id': cid, 'buyer_id': 'buyer-' + cid,
@@ -654,14 +940,14 @@ class MessageMonitorTests(unittest.TestCase):
         started, release = threading.Event(), threading.Event()
         ai_started, ai_release, other_read = threading.Event(), threading.Event(), threading.Event()
         events = []
-        resolve = self.service._model_router.resolve
-        def ai(purpose, required_capabilities=()):
+        freeze = self.service._freeze_reception_model
+        def ai():
             events.append('ai-check')
             ai_started.set()
             if not ai_release.wait(3):
                 raise AssertionError('synthetic AI release missing')
-            return resolve(purpose, required_capabilities)
-        self.service._model_router.resolve = ai
+            return freeze()
+        self.service._freeze_reception_model = ai
         def body(cid, cursor):
             events.append('read-' + cid)
             if cid == 'customer-a':

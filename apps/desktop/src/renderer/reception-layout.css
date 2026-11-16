@@ -17,3 +17,35 @@
 .supplement-scroll{flex:1 1 auto;min-height:0;overflow:auto}.supplement-files{max-height:none;overflow:visible}.attachment-help>button{border:0;background:transparent;color:#7d956a;border-radius:50%;width:22px;height:22px;cursor:pointer}.attachment-help>button[aria-expanded=true]{background:#edf4e6}.product-url-text{border:0;background:transparent;padding:0;color:#237c54;text-align:left;white-space:normal;overflow-wrap:anywhere;word-break:break-all;cursor:pointer}.original-image-dialog{width:min(94vw,1100px);max-height:92vh;display:flex;flex-direction:column;gap:10px}.original-image-controls{display:flex;justify-content:flex-end;gap:8px}.original-image-viewport{width:100%;max-width:100%;min-width:0;min-height:0;flex:1;overflow:auto;display:flex;justify-content:center;align-items:center}.original-image-viewport img{max-width:100%;max-height:72vh;object-fit:contain}.original-image-viewport.original-size{display:block}.original-image-viewport.original-size img{max-width:none;max-height:none}.conversation-identity{min-width:0}.conversation-tools>.button{white-space:nowrap;font-size:11px;padding:5px 8px}
 
 .product-url-text{user-select:text;-webkit-user-select:text}.requirements .case-select{height:36px;padding:6px 10px;font-size:12px;line-height:22px;margin-bottom:8px}
+
+/* Shared navigation and reception surfaces follow the 0.4.2 workbench design. */
+:root{--green:#3458db;--green-dark:#2848bd;--green-light:#edf1ff;--text:#22314a;--muted:#8190a8;--border:#e3e9f2}
+.nav-is-icons .navigation-container{width:76px;flex-basis:76px;background:#1d2b42;border:0}
+.navigation-icons{background:#1d2b42;padding:10px 10px 0}
+.navigation-icons .nav-caption{display:none}
+.navigation-icons .nav-main{flex:1;gap:5px}
+.navigation-icons .nav-item,.navigation-icons .nav-lower>.nav-item{width:56px;height:51px;margin:0;padding:4px 0;display:flex;flex-direction:column;justify-content:center;gap:3px;color:#a1acc0;border-radius:11px}
+.navigation-icons .nav-item>span{display:block;font-size:9px;line-height:1.2}
+.navigation-icons .nav-item.active{background:#3458db;color:#fff}
+.navigation-icons .nav-item.active:before{display:none}
+.navigation-icons .nav-item:hover{background:#2a3952;color:#fff}
+.navigation-icons .nav-lower{padding-top:4px}
+.navigation-icons .merchant{display:none}
+.customer-column,.customer-list{background:#f7f9fc}
+.customer-row.active{background:#e9efff}
+.customer-row.active:before{background:#3458db}
+.list-search{background:#fff}
+.conversation-summary{background:#f6f8fd;border-color:#e2e8f4}
+.conversation-summary strong,.suggestion-heading strong{color:#5874b3}
+.message-bubble{background:#f2f4f8;border-color:#f2f4f8}
+.seller-message .message-bubble{background:#edf1ff;border-color:#edf1ff}
+.message-translation{color:#7589ac;border-color:#dce4f1}
+.composer{border-color:#cbd7f5}
+.composer>.suggestion-preview{background:#f4f6ff;border-color:#d3ddff}
+.suggestion-preview p{color:#3d5278}
+.requirements,.supplement-panel{background:#fbfcfe}
+.canonical-field{border-color:#e7ecf4}
+.canonical-field>strong{color:#8796ad}
+.supplement-composer{border-color:#dce4f1}
+.supplement-panel .supplement-composer textarea{color:#425b80}
+.conversation-tools>.icon-button:has(>span){width:auto;gap:5px;white-space:nowrap;font-size:11px}

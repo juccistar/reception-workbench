@@ -4,6 +4,7 @@
 
 | 用途 | 入口 |
 | --- | --- |
+| 0.4.2 新版界面与后端优化 | [开发方案](0.4.2开发方案.md)、[新版设计稿](design/reception-redesign/README.md)、[本版说明](0.4.2发布说明.md)、[实施及验证](verification/0.4.2.json)、[查询性能](verification/0.4.2-performance.json)、[集成测量](verification/0.4.2-integration-performance.json)；正在实施与定向验证，窗口、候选及公开状态分别记录 |
 | 环境、运行、测试和打包 | [开发说明](DEVELOPMENT.md) |
 | 源码迁移与旧数据保全 | [迁移说明](MIGRATION.md) |
 | 0.3.10历史公开交付 | [本版说明](0.3.10发布说明.md)、[验证记录](verification/0.3.10.json)；最终EXE窗口通过，四个附件已完整匿名下载核对 |

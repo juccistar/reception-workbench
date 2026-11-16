@@ -22,7 +22,7 @@ import { mkdir, readFile, writeFile, rename, lstat } from 'node:fs/promises';
 import { receivePaths, receiveUploads, validateConversation, windowsClipboardPaths } from './supplement-host';
 import type { Supplement, SupplementUpload } from '../shared/api';
 import { isWorkbenchPage } from './trusted-page';
-import { API_METHODS, type Mode, type Preferences, type Snapshot, type SendConfirmation } from '../shared/api';
+import { API_METHODS, type Mode, type Preferences, type Snapshot } from '../shared/api';
 import { ServiceClient, BackendError } from './service-client';
 import { buildAccioLaunchInfo } from './launch-command';
 import type { AccioLaunchInfo } from '../shared/launch';
@@ -485,40 +485,15 @@ function installIPC() {
   ipcMain.handle('reception:storage:manage', (event, request: unknown) => { validSender(event); return manageStorage(request); });
   ipcMain.handle('reception:invoke', async(event, method:unknown, input:unknown)=>{
     validSender(event);
-    if (typeof method!=='string'||!methods.has(method)||method==='confirm_send'||method.includes('whatsapp')) throw new Error('不允许此操作。');
+    if (typeof method!=='string'||!methods.has(method)||method.includes('whatsapp')) throw new Error('不允许此操作。');
     const params=parameters(input??{});
     validateChatParameters(method as ApiMethod, params);
     if(method==='set_scope'||method==='save_settings')++receptionIntent;
     const intent = method==='set_reception' ? ++receptionIntent : null;
     if (mode==='live'&&method==='check_ai'&&!(await confirm('合成 AI 检测','执行一次合成 AI 检测？','会消耗一次 AI 生成，不发送客户消息或写飞书；失败不会自动重试。请先暂停接待。','开始一次检测'))) return { cancelled:true };
     if (mode==='live'&&method==='run_outbox'&&!(await confirm('同步飞书待办','执行待办同步？','仅处理本账号已经保存的需求同步任务；未知提交不会换键重发。','同步待办'))) return { cancelled:true };
-    if (params.auto_send===true&&method==='set_reception') {
-      const s=await call<Snapshot>('get_snapshot');
-      const scope=s.reception.scope;
-      const scopeText=scope.mode==='incoming'
-        ? '只接待本账号授权起点后的新买家消息，包含后来出现的新客户；历史询盘需手工处理。'
-        : scope.mode==='all'
-          ? '仅限本次接待首次开启时已同步客户，名单冻结；暂停后恢复也不包含后来出现的新客户。'
-          : `仅选定客户：${scope.conversation_ids.join('、')||'尚未选择'}；本轮名单冻结。`;
-      const startText=s.reception.started_at_ms===null
-        ? '本次成功开启时新建接待起点（以服务记录时间为准）。'
-        : `延续已有接待起点：${new Date(s.reception.started_at_ms).toLocaleString('zh-CN', {hour12:false})}；起点后尚未处理的新消息仍在范围内。`;
-      const budget=s.reception.budget;
-      const budgetText = budget.limit === null ? `接待 AI 已用 ${budget.ai_used} 次，自动发送已用 ${budget.used} 次，均不限次数。` : `自动 AI 额度：已用 ${budget.ai_used}，剩余 ${budget.ai_remaining}，上限 ${budget.limit}。
-自动发送额度：已用 ${budget.used}，剩余 ${budget.remaining}，上限 ${budget.limit}。`;
-      if (!(await confirm('自动发送授权','开启本轮自动发送？',`账号尾号：${s.app.seller_suffix}\n范围：${scopeText}\n${scope.mode==='incoming'?`接待起点：${startText}\n`:''}${budgetText}\n后台会再次验证 AI、最新消息和授权范围。`,'确认开启'))) return s;
-    }
     if (method==='set_reception' && params.enabled===true && intent!==receptionIntent) return call('get_snapshot');
     return call(method,params);
-  });
-  ipcMain.handle('reception:confirm-send',async(event,input:unknown)=>{
-    validSender(event); const params=parameters(input);
-    if (typeof params.draft_id!=='string'||typeof params.revision!=='number') throw new Error('草稿版本无效。');
-    // Obtain a fresh, server-owned confirmation; never trust displayed renderer text.
-    const prepared=await call<SendConfirmation>('prepare_send',{draft_id:params.draft_id,expected_revision:params.revision});
-    const accepted=await confirm(mode==='demo'?'演示发送':'确认发送',`${mode==='demo'?'本地模拟发送给':'发送给'} ${prepared.customer_name}`,`商家尾号：${prepared.seller_suffix}\n来源消息：${prepared.source_message_id}\n\n${prepared.body}\n\n${mode==='demo'?'仅合成演示，不操作真实客户。':'仅提交本条已确认正文；提交前仍会复核账号、最新消息、版本和本次授权。不会因此开启自动发送。'}`,mode==='demo'?'确认本地模拟':'确认并发送');
-    if (!accepted) return null;
-    return call('confirm_send',{confirmation_id:prepared.confirmation_id});
   });
   const supplementReady = () => {
     if (!window || !backend || closing || storageBusy || updateTask || backendStartPromise) throw new Error('后台正在启动、退出或管理数据，请等待完成。');

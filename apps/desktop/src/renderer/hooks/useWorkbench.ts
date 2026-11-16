@@ -55,6 +55,7 @@ const generationBlocker = (snapshot: Snapshot | null, detail: ConversationDetail
 };
 
 const aiFailureCodes = new Set(['model_configuration_invalid', 'model_not_ready', 'model_timeout', 'model_invalid_response', 'model_invalid_input', 'model_network_error', 'model_auth_error', 'model_rate_limited', 'model_unavailable', 'ai_unavailable', 'invalid_ai_output', 'invalid_requirement_change', 'answer_non_json', 'answer_missing', 'answer_schema']);
+const aiReason = (code: string | undefined) => ({ model_timeout: '模型请求超时。', model_network_error: '模型网络连接失败。', model_auth_error: '模型认证失败。', model_rate_limited: '模型请求受限。', model_configuration_invalid: '模型配置不可用。', model_not_ready: '模型尚未配置。', model_unavailable: '模型服务暂不可用。' } as Record<string, string>)[code ?? ''] ?? '模型未返回可用结果。';
 const isAiFailure = (failure: unknown) => {
   if (!failure || typeof failure !== 'object') return false;
   if ('code' in failure && typeof failure.code === 'string') return aiFailureCodes.has(failure.code);
@@ -87,11 +88,17 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [aiUnavailable, setAiUnavailable] = useState(false);
+  const [aiFailureReason, setAiFailureReason] = useState('');
+  const reportedAutomaticJobs = useRef(new Set<string>());
+  const automaticSourceEpoch = useRef(0);
+  const automaticViewEpoch = useRef(0);
   const manualJobs = useRef(new Set<string>());
   const reportedManualJobs = useRef(new Set<string>());
+  const cancelledManualJobs = useRef(new Set<string>());
   useEffect(() => { if (!notice || /失败|未完成|未连接|断开|异常|未知|核查|重试|未保存|尚未确认/.test(notice)) return; const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer); }, [notice]);
   const [page, setPage] = useState<Page>('reception');
   const [selection, setSelection] = useState<{ conversationId: string; caseId: string }>({ conversationId: '', caseId: '' });
+  useEffect(() => { ++automaticSourceEpoch.current; ++automaticViewEpoch.current; setAiUnavailable(false); }, [selection.conversationId]);
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
@@ -104,7 +111,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const [, redraw] = useReducer((value: number) => value + 1, 0);
   // A procurement case is only context. Chat text, ownership and send attempts belong to the customer conversation.
   const editors = useRef(new Map<string, EditorState>());
-  const supplements = useRef(new Map<string, { body: string; revision: number | null; dirty: boolean; version: number; error: string; saving: Promise<boolean> | null; attachments: SupplementAttachment[]; attachmentBusy: boolean }>());
+  const supplements = useRef(new Map<string, { body: string; revision: number | null; dirty: boolean; version: number; error: string; saving: Promise<boolean> | null; attachments: SupplementAttachment[]; attachmentBusy: boolean; pending?: { body: string; version: number; revision: number | null; id: string }; conflict?: { body: string; revision: number | null } }>());
   const caseOwners = useRef(new Map<string, string>());
   const dirtyForms = useRef(new Set<string>());
   const setFormDirty = useCallback((id: string, dirty: boolean) => { if (dirty) dirtyForms.current.add(id); else dirtyForms.current.delete(id); }, []);
@@ -166,9 +173,9 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   }, [settleSend]);
 
   const reportManualFailure = useCallback((job: Job) => {
-    if (manualJobs.current.has(job.job_id) && !reportedManualJobs.current.has(job.job_id) && job.kind === 'manual_suggestion' && job.status === 'failed' && isAiFailure(job.error)) {
+    if (manualJobs.current.has(job.job_id) && !cancelledManualJobs.current.has(job.job_id) && !reportedManualJobs.current.has(job.job_id) && job.kind === 'manual_suggestion' && job.status === 'failed' && isAiFailure(job.error)) {
       reportedManualJobs.current.add(job.job_id);
-      if (mounted.current && !closingRef.current && job.conversation_id === selectionRef.current.conversationId) setAiUnavailable(true);
+      if (mounted.current && !closingRef.current && job.conversation_id === selectionRef.current.conversationId) { setAiFailureReason(aiReason(job.error?.code)); setAiUnavailable(true); }
     }
   }, []);
 
@@ -286,25 +293,60 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
         setLoading(false); setDetailLoading(false); setError(''); setNotice(''); return;
       }
       if (closingRef.current) return;
+      if (event.event === 'state.changed') ++automaticSourceEpoch.current;
       if (event.event === 'executor.health') { observeHealth(event.data as ExecutorHealth); return; }
       if (event.event === 'translation.settings_changed') { void refreshSnapshot(); return; }
       if (event.event === 'job.updated' && (event.data as Job)?.kind === 'translation') return;
       if (event.event === 'state.changed' && (event.data as { reason?: string } | null)?.reason === 'translations_updated') return;
       if (event.event === 'backend.disconnected') {
+        ++automaticSourceEpoch.current;
         ++snapshotSequence.current; ++detailSequence.current; connectedRef.current = false; setConnected(false); setDetailLoading(false);
         setError('接待服务已断开。消息和检查状态可能已过期，正文仍保留在当前窗口；请恢复连接后保存。'); return;
       }
       if (event.event === 'job.updated') {
         const job = event.data as Job;
         if (job?.job_id) {
+          const code = job.error?.code && aiFailureCodes.has(job.error.code) ? job.error.code
+            : job.retry_status === 'exhausted' && (!job.error?.code || job.error.code === 'generation_retry_limit') ? job.last_error_code : undefined;
+          const prior = jobsRef.current.find(item => item.job_id === job.job_id);
+          if (job.kind === 'generate_draft' && ['cancelled', 'stale', 'succeeded'].includes(job.status)) reportedAutomaticJobs.current.add(job.job_id);
+          if (job.kind === 'generate_draft' && job.status === 'failed' && !['cancelled', 'stale', 'succeeded'].includes(prior?.status ?? '') && code && aiFailureCodes.has(code) && !reportedAutomaticJobs.current.has(job.job_id)) {
+            reportedAutomaticJobs.current.add(job.job_id);
+            const conversationId = job.conversation_id;
+            const viewEpoch = automaticViewEpoch.current;
+            if (connectedRef.current && !closingRef.current && conversationId && conversationId === selectionRef.current.conversationId && job.source_message_id && job.source_text_sha256) {
+              const verify = (rechecks: number) => {
+                const epoch = automaticSourceEpoch.current;
+                void bridge.invoke<ConversationDetail>('get_conversation', { conversation_id: conversationId }).then(current => {
+                  const latest = jobsRef.current.find(item => item.job_id === job.job_id);
+                  if (!mounted.current || !connectedRef.current || closingRef.current || automaticViewEpoch.current !== viewEpoch
+                      || selectionRef.current.conversationId !== conversationId || latest?.status !== 'failed' || latest.source_message_id !== job.source_message_id
+                      || latest.source_text_sha256 !== job.source_text_sha256) return;
+                  if (epoch !== automaticSourceEpoch.current) {
+                    // Failed-job events normally precede their state.changed event.
+                    // Re-read once after that event rather than suppressing the
+                    // real failure or trusting the now superseded response.
+                    if (rechecks > 0) verify(rechecks - 1);
+                    return;
+                  }
+                  const source = current.automatic_source;
+                  if (source && source.message_id === job.source_message_id && source.text_sha256 === job.source_text_sha256) {
+                    setAiFailureReason(aiReason(code)); setAiUnavailable(true);
+                  }
+                }).catch(() => { /* An unverified source must not produce an AI failure dialog. */ });
+              };
+              verify(1);
+            }
+          }
           updateJobs([job]);
-          if (job.status === 'failed' && job.conversation_id === selectionRef.current.conversationId) setNotice(job.message || '本次任务未完成，请查看运行记录。');
+          if (job.status === 'failed' && job.kind !== 'manual_suggestion' && job.conversation_id === selectionRef.current.conversationId) setNotice(job.message || '本次任务未完成。');
         }
       }
       if (event.event === 'state.changed' || (event.event === 'job.updated'
           && (!isActive(event.data as Job) || ['generate_draft', 'send_chat', 'confirm_send', 'automatic_send'].includes((event.data as Job).kind)))) {
         refresh.request('snapshot');
-        if (selectionRef.current.conversationId) refresh.request(selectionRef.current.conversationId);
+        const owner = (event.data as { conversation_id?: string } | null)?.conversation_id;
+        if (selectionRef.current.conversationId && (!owner || owner === selectionRef.current.conversationId)) refresh.request(selectionRef.current.conversationId);
       }
     });
     return () => { refresh.stop(); unsubscribe(); };
@@ -374,14 +416,28 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     if (entry.attachmentBusy) return false;
     if (entry.saving) { if (!(await entry.saving)) return false; return entry.dirty ? saveSupplement(conversationId) : true; }
     if (!entry.dirty) return true;
+    if (entry.conflict) return false;
     if (!bridge || !connectedRef.current || closingRef.current) { entry.error = '服务未连接，补充内容尚未保存。'; redraw(); return false; }
-    const body = entry.body, version = entry.version;
+    const request = entry.pending ??= { body: entry.body, version: entry.version, revision: entry.revision, id: mutationId() };
     const operation = (async () => {
       try {
-        const saved = await bridge.invoke<Supplement>('save_conversation_supplement', { conversation_id: conversationId, body, expected_revision: entry.revision, client_mutation_id: mutationId() });
-        if (saved.conversation_id !== conversationId || saved.body !== body) throw new Error('保存结果不匹配，请重试。');
-        entry.revision = saved.revision; entry.dirty = entry.version !== version; entry.error = ''; return true;
-      } catch (failure) { entry.error = errorText(failure); return false; }
+        const saved = await bridge.invoke<Supplement>('save_conversation_supplement', { conversation_id: conversationId, body: request.body, expected_revision: request.revision, client_mutation_id: request.id });
+        if (saved.conversation_id !== conversationId || saved.body !== request.body) throw new Error('保存结果不匹配，请重试。');
+        entry.pending = undefined; entry.revision = saved.revision; entry.attachments = saved.attachments ?? entry.attachments; entry.dirty = entry.version !== request.version; entry.error = ''; return true;
+      } catch (failure) {
+        entry.error = errorText(failure);
+        if ((failure && typeof failure === 'object' && 'code' in failure && failure.code === 'revision_conflict') || /业务补充已变化，请保留输入并重新读取/.test(entry.error)) {
+          try {
+            const detail = await bridge.invoke<ConversationDetail>('get_conversation', { conversation_id: conversationId });
+            if (detail.conversation.conversation_id !== conversationId) throw new Error('客户资料不匹配');
+            entry.pending = undefined;
+            entry.conflict = { body: detail.supplement?.body ?? '', revision: detail.supplement?.revision ?? null };
+            entry.attachments = detail.supplement?.attachments ?? [];
+            entry.error = '业务补充已在其他位置修改，请比较后重新应用。';
+          } catch { entry.error = '业务补充已变化，读取最新内容失败，请重试保存。'; }
+        }
+        return false;
+      }
       finally { entry.saving = null; if (mounted.current) redraw(); }
     })();
     entry.saving = operation; redraw();
@@ -436,11 +492,29 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     return { ...result, errors: [...new Set([...errors, ...result.errors])] };
   }), [bridge, updateSupplementAttachments]);
   const pasteSupplementAttachments = useCallback(async (conversationId: string) => updateSupplementAttachments(conversationId, async () => bridge?.pasteSupplementAttachments?.(conversationId)), [bridge, updateSupplementAttachments]);
-  const editSupplement = useCallback((body: string) => {
-    const entry = supplements.current.get(selectionRef.current.conversationId);
+  const ensureSupplement = useCallback(async (conversationId: string): Promise<void> => {
+    if (supplements.current.has(conversationId)) return;
+    if (!bridge || !connectedRef.current || closingRef.current) throw new Error('服务未连接');
+    const detail = await bridge.invoke<ConversationDetail>('get_conversation', { conversation_id: conversationId });
+    if (detail.conversation.conversation_id !== conversationId) throw new Error('客户资料不匹配');
+    if (!supplements.current.has(conversationId)) {
+      const note = detail.supplement;
+      supplements.current.set(conversationId, { body: note?.body ?? '', revision: note?.revision ?? null, dirty: false, version: 0, error: '', saving: null, attachments: note?.attachments ?? [], attachmentBusy: false });
+      if (mounted.current) redraw();
+    }
+  }, [bridge]);
+  const supplementFor = useCallback((conversationId: string) => supplements.current.get(conversationId), []);
+  const editSupplementFor = useCallback((conversationId: string, body: string) => {
+    const entry = supplements.current.get(conversationId);
     if (!entry || closingRef.current) return;
-    entry.body = body; entry.dirty = true; entry.version++; entry.error = ''; redraw();
+    entry.body = body; entry.dirty = true; entry.version++; if (!entry.conflict) entry.error = ''; redraw();
   }, []);
+  const reapplySupplement = useCallback((conversationId: string) => {
+    const entry = supplements.current.get(conversationId);
+    if (!entry?.conflict) return;
+    entry.revision = entry.conflict.revision; entry.conflict = undefined; entry.error = ''; redraw();
+  }, []);
+  const editSupplement = useCallback((body: string) => editSupplementFor(selectionRef.current.conversationId, body), [editSupplementFor]);
   const supplement = supplements.current.get(selection.conversationId);
   useEffect(() => {
     if (!supplement?.dirty || supplement.saving || supplement.attachmentBusy || supplement.error) return;
@@ -480,6 +554,11 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   }, [editor?.body, editor?.dirty, editor?.saving, editor?.saveState, editor?.server?.revision, editor?.manualState, editor?.send?.status, selection.conversationId, saveDraft]);
 
   const flush = useCallback(async () => {
+    for (const [conversationId, note] of supplements.current) {
+      if ((note.dirty || note.saving) && !(await saveSupplement(conversationId))) {
+        setNotice(note.error || '业务补充尚未保存。'); return false;
+      }
+    }
     const current = selectionRef.current;
     const entry = editors.current.get(current.conversationId);
     if (!entry?.dirty && !entry?.saving) return true;
@@ -489,7 +568,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
       setNotice(entry.error || '正文尚未保存，已留在当前客户。请等待保存或发送回执后再切换。'); return false;
     }
     return true;
-  }, [saveDraft]);
+  }, [saveDraft, saveSupplement]);
 
   const selectConversation = useCallback(async (conversationId: string, caseId: string | null = '') => {
     caseId ??= '';
@@ -509,7 +588,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   }, [flush, loadDetail, canLeaveForms, saveSupplement]);
 
   const navigate = useCallback(async (target: Page) => {
-    if (!canLeaveForms() || (target !== 'reception' && !(await flush()))) return false;
+    if (!canLeaveForms() || !(await flush())) return false;
     setPage(target); return true;
   }, [flush, canLeaveForms]);
 
@@ -623,6 +702,19 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     await runJob('generate_manual_suggestion', params);
   }, [saveSupplement, saveDraft, runJob]);
 
+  const cancelSuggestion = useCallback(async (jobId: string) => {
+    const conversationId = selectionRef.current.conversationId;
+    if (!jobId || !conversationId) return;
+    cancelledManualJobs.current.add(jobId);
+    try {
+      await invoke('cancel_manual_suggestion' as ApiMethod, { conversation_id: conversationId, job_id: jobId });
+      setGenerationRequests(previous => previous.filter(item => item.job_id !== jobId));
+    } catch (failure) {
+      cancelledManualJobs.current.delete(jobId);
+      if (selectionRef.current.conversationId === conversationId) setNotice(errorText(failure));
+    }
+  }, [invoke]);
+
   const reviewedSuggestions = useRef(new Map<string, string>());
   const reviewKey = (conversationId: string) => `reception.suggestion.review.${snapshotRef.current?.app.mode ?? 'unknown'}.${snapshotRef.current?.app.seller_id ?? ''}.${conversationId}`;
   const finishSuggestionReview = useCallback(() => {
@@ -639,12 +731,6 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     try { reviewedSuggestions.current.set(suggestionKey, localStorage.getItem(suggestionKey) ?? ''); } catch { reviewedSuggestions.current.set(suggestionKey, ''); }
   }
   const pendingSuggestion = !!detail?.manual_suggestion && reviewedSuggestions.current.get(suggestionKey) !== detail.manual_suggestion.suggestion_id;
-
-  // The optional native preview belongs to the AI suggestion, never to manual chat.
-  const preview = useCallback(async () => {
-    const draft = detailRef.current?.draft;
-    if (draft) await runJob('preview_send', { draft_id: draft.draft_id, expected_revision: draft.revision });
-  }, [runJob]);
 
   const adoptSuggestion = useCallback(async () => {
     const suggestion = detailRef.current?.manual_suggestion;
@@ -672,7 +758,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     const unknownJob = jobsRef.current.some(job => isSendJob(job) && job.status === 'unknown' && job.conversation_id === conversationId &&
       !(entry?.send?.jobId === job.job_id && ['accepted', 'rejected'].includes(entry.send.status)) &&
       !state?.outbox.some(item => isSendOperation(item) && (item.job_id === job.job_id || item.operation_id === job.operation_id || item.operation_id === job.result?.operation_id) && ['accepted', 'rejected'].includes(item.status)));
-    if (entry?.server?.status === 'unknown' || entry?.send?.status === 'unknown' || unknownOperation || unknownJob) return '此客户上次发送结果未知，请先在运行记录核查原操作，避免重复发送。';
+    if (entry?.server?.status === 'unknown' || entry?.send?.status === 'unknown' || unknownOperation || unknownJob) return '发送结果待确认，暂不能再次发送。';
     if (entry?.send?.status !== 'retry' && (entry?.server?.status === 'sending' || jobsRef.current.some(job => isSendJob(job) && isActive(job) && job.conversation_id === conversationId))) return '此客户有发送任务正在处理，请等待回执。';
     return '';
   }, []);
@@ -726,8 +812,8 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
         syncSends();
       } catch (failure) {
         if (['accepted', 'rejected', 'unknown'].includes(attempt.status)) { redraw(); return; }
-        attempt.status = 'retry'; attempt.message = errorText(failure);
-        setNotice('发送请求尚未确认。重试将使用原请求编号和原正文，不会提交新的一条。'); redraw(); return;
+        attempt.status = 'unknown'; attempt.message = '发送结果待确认';
+        setNotice('发送结果待确认。'); redraw(); void refreshSnapshot(); return;
       }
       // Failure to refresh records after a known acknowledgement must not turn it into a new submission.
       try { updateJobs(await invoke<Job[]>('list_jobs')); } catch { setNotice('发送请求已提交，回执读取暂未完成，可刷新运行记录。'); }
@@ -773,12 +859,11 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const legacyBatchId = editor?.server?.blocked_batch_id ?? editor?.server?.batch_id;
   const legacyPartialBatch = detail?.reply_batches?.find(batch => batch.batch_id === legacyBatchId && batch.status === 'stopped' && batch.accepted > 0) ?? null;
 
-  return { bridge, snapshot, connected, closing, loading, error, notice, setError, setNotice, aiUnavailable, dismissAiUnavailable: () => setAiUnavailable(false), page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, historyRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, legacyPartialBatch, startNewDraft, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
+  return { bridge, snapshot, connected, closing, loading, error, notice, setError, setNotice, aiUnavailable, aiFailureReason, dismissAiUnavailable: () => setAiUnavailable(false), page, selection, detail, detailLoading, detailError, editor, supplement, supplementFor, ensureSupplement, editSupplementFor, editSupplement, saveSupplement, reapplySupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, historyRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, cancelSuggestion, send, editBody, legacyPartialBatch, startNewDraft, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
     aiReady, aiReceptionReady, executorReady: health.ready, executorMessage: health.message, sendIssue, generationIssue, reconcileOperation,
     unknownOperations: snapshot?.outbox.filter(item => isSendOperation(item) && item.status === 'unknown' && (item.conversation_id === selection.conversationId || caseOwners.current.get(item.case_id) === selection.conversationId)) ?? [],
     canSave: connected && !closing && !!editor?.dirty,
     canSend: connected && !closing && !sendIssue,
-    canPreview: connected && !closing && health.ready && !!detail?.draft,
     canGenerate: connected && !closing && !!detail && !generationIssue,
     busy: (kind: string, caseId?: string) => (kind === 'generate_draft' && generationRequests.some(item => !caseId || item.case_id === caseId)) || pending.some(key => caseId ? key === `${kind}:${caseId}` : key === kind || key.startsWith(`${kind}:`)) || jobs.some(job => job.kind === kind && isActive(job) && (!caseId || job.case_id === caseId)),
   };

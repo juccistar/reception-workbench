@@ -57,7 +57,7 @@ FAST = frozenset({'get_snapshot', 'get_executor_health', 'get_conversation', 'ge
                   'list_outbox', 'save_draft', 'save_policy', 'list_builtin_policies', 'adopt_builtin_policy', 'save_settings', 'set_scope',
                   'set_reception', 'takeover', 'begin_manual_edit', 'save_chat_draft', 'prepare_send', 'inject_demo', 'mark_messages_read',
                   'save_conversation_supplement', 'upload_supplement_attachment', 'remove_supplement_attachment',
-                  'generate_manual_suggestion', 'get_translations', 'request_translations',
+                  'generate_manual_suggestion', 'cancel_manual_suggestion', 'get_translations', 'request_translations',
                   'get_translation_info', 'get_translation_config', 'save_translation_settings',
                   'configure_translation_credential', 'validate_translation_settings',
                   'check_translation_provider', 'clear_translation_cache', 'set_case_category', 'create_procurement_case',
@@ -194,6 +194,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
         self._init_requirement_media()
         self._init_message_monitor()
         self._recover()
+        self._load_scope()
         self._init_product_library()
         self._init_whatsapp()
         self._initialize_unread()
@@ -319,6 +320,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                 self.seller_id = seller
                 self.account_verified = True
                 self._recover()
+                self._load_scope()
                 self._init_whatsapp()
                 self._initialize_unread()
                 # Preserve jobs created in the unverified empty workspace only after recovery.
@@ -592,7 +594,11 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                 summary = None
             summary = ({key: summary[key] for key in ('conversation_id', 'body', 'revision', 'updated_at')}
                        if summary else None)
+            current_source = (self._automatic_source(conversation_id)
+                              if self._running and self._in_scope(conversation_id) and not conversation.get('human_owned') else None)
             return {'conversation': {**self._summary(conversation), 'revision': conversation['revision']}, 'case': project_case(self.repo, case),
+                    'automatic_source': ({'message_id': current_source['message_id'], 'text_sha256': text_hash(current_source['text'])}
+                                         if current_source else None),
                     'cases': [project_case(self.repo, c) for c in self.repo.list('case', conversation_id=conversation_id)],
                     'messages': self.get_messages(conversation_id, limit=100)['items'],
                     'reading': unread.reading(self.repo, conversation_id),
@@ -726,7 +732,78 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                 snapshot['_inquiry_source_id'] = origin['message_id']
         return snapshot
 
-    def _ingest(self, info, messages, *, has_more=True, next_cursor=None, full=False, history=False):
+    def _record_new_buyer_activity(self, conversation):
+        cid = conversation['conversation_id']
+        conversation['last_buyer_at'] = now_ms()
+        case = self._require('case', conversation['case_id'])
+        case.update(revision=case['revision'] + 1, updated_at=now_ms())
+        case['missing'] = missing_fields_for_case(case['facts'], self.settings, case)
+        latest_buyer = self._latest_buyer(cid)
+        if latest_buyer and self._stop_requested(latest_buyer['text']):
+            case['state'] = 'closed'
+        elif not conversation['human_owned'] and case['state'] not in ('closed', 'waiting_quote'):
+            case['state'] = 'clarifying'
+        self.repo.put('case', case['case_id'], case, history=True)
+
+    def _weak_history_head(self, cid, messages, version):
+        """Bind a confirmed live read to its head, never to an older backfill row."""
+        if not self._running or self._started_at_ms is None or not version:
+            return None
+        activity = self.repo.get('message_activity', cid, {})
+        if (activity.get('version') != version or activity.get('activity_clock') != 'conversation'
+                or activity.get('observed_at', -1) < self._started_at_ms):
+            return None
+        ordered = self._messages(cid)
+        head = ordered[-1] if ordered else None
+        if (not head or head.get('role') != 'buyer' or type(head.get('timestamp_ms')) is not int
+                or head['timestamp_ms'] <= self._started_at_ms):
+            return None
+        baseline = self._source_baseline.get(cid)
+        if baseline and (head['message_id'] == baseline['message_id'] or
+                         baseline.get('timestamp_ms') is not None and head['timestamp_ms'] <= baseline['timestamp_ms']):
+            return None
+        marker = self.repo.get('history_only_message', encoded([cid, head['message_id']]))
+        if (not marker or type(marker.get('activity_version')) is not int
+                or version <= marker['activity_version']):
+            return None
+        # The real head read must contain this exact ID, role, body and time.
+        # Completion additionally requires two identical native body reads for a
+        # weak activity; historical pages and the synthetic follow-up cannot opt in.
+        return next((m for m in messages if m.get('message_id') == head['message_id']
+                     and m.get('role') == 'buyer' and m.get('text') == head['text']
+                     and m.get('timestamp_ms') == head['timestamp_ms']), None)
+
+    def _promote_history_activity(self, cid, messages, version, message_id, digest, *, confirmed_live_head=False):
+        if not version:
+            return False
+        if message_id and not digest:
+            identified = next((m for m in messages if m.get('message_id') == message_id
+                               and m.get('role') == 'buyer' and isinstance(m.get('text'), str)), None)
+            if not identified:
+                return False
+            digest = text_hash(identified['text'])
+        elif not message_id:
+            exact_head = self._weak_history_head(cid, messages, version) if confirmed_live_head else None
+            if not exact_head or digest and text_hash(exact_head['text']) != digest:
+                return False
+            message_id, digest = exact_head['message_id'], text_hash(exact_head['text'])
+        key = encoded([cid, message_id])
+        marker = self.repo.get('history_only_message', key)
+        exact = next((m for m in messages if m.get('message_id') == message_id), None)
+        if (marker and type(marker.get('activity_version')) is int
+                and version > marker['activity_version'] and exact
+                and exact.get('role') == 'buyer' and isinstance(exact.get('text'), str)
+                and text_hash(exact['text']) == digest):
+            self.repo.db.execute("DELETE FROM entities WHERE kind='history_only_message' AND id=?", (key,))
+            conversation = self._require('conversation', cid)
+            self._record_new_buyer_activity(conversation)
+            conversation['revision'] += 1
+            self.repo.put('conversation', cid, conversation)
+            self._invalidate(cid)
+            return True
+        return False
+
+    def _ingest(self, info, messages, *, has_more=True, next_cursor=None, full=False, history=False, history_activity_version=None):
         with self._lock, self.repo.transaction():
             cid, buyer = info.get('conversation_id'), info.get('buyer_id')
             if (not isinstance(cid, str) or not cid or not isinstance(buyer, str) or not buyer
@@ -773,6 +850,12 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                     message_changes.append(msg)
                     if old is None:
                         new_messages.append(msg)
+                        if history:
+                            version = history_activity_version
+                            if version is None:
+                                version = self.repo.get('message_activity', cid, {}).get('version', 0)
+                            self.repo.put('history_only_message', key, {'conversation_id': cid, 'message_id': msg['message_id'],
+                                                                         'activity_version': version})
                     semantic_edit = False
                     if old is not None:
                         if old.get('text') != msg['text'] or old.get('role') != msg['role']:
@@ -789,7 +872,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                                 self.repo.put('message_image', key, cached)
                     self.repo.put('message', key, msg, history=True)
                     changed = True
-                    if msg['role'] == 'buyer' and (semantic_edit or old is None and (conversation['last_timestamp'] is None
+                    if msg['role'] == 'buyer' and (semantic_edit or not history and old is None and (conversation['last_timestamp'] is None
                                                   or stamp is None or stamp >= conversation['last_timestamp'])):
                         new_buyer = True
             # Every raw version above is validated and retained in history, but
@@ -810,16 +893,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                     conversation['last_message'] = ordered[-1]['text']
                     conversation['last_timestamp'] = ordered[-1]['timestamp_ms']
                 if new_buyer:
-                    conversation['last_buyer_at'] = now_ms()
-                    case = self._require('case', conversation['case_id'])
-                    case.update(revision=case['revision'] + 1, updated_at=now_ms())
-                    case['missing'] = missing_fields_for_case(case['facts'], self.settings, case)
-                    latest_buyer = self._latest_buyer(cid)
-                    if latest_buyer and self._stop_requested(latest_buyer['text']):
-                        case['state'] = 'closed'
-                    elif not conversation['human_owned'] and case['state'] not in ('closed', 'waiting_quote'):
-                        case['state'] = 'clarifying'
-                    self.repo.put('case', case['case_id'], case, history=True)
+                    self._record_new_buyer_activity(conversation)
                 if edited_ids or image_edited_ids:
                     for affected in self.repo.list('case', conversation_id=cid):
                         requirements = affected.get('requirements') or {}
@@ -1059,18 +1133,38 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
         self._changed()
         return self.get_snapshot()
 
+    def _load_scope(self):
+        saved = self.repo.get('reception_scope', 'international')
+        if not isinstance(saved, dict):
+            return
+        mode = saved.get('mode')
+        ids = saved.get('conversation_ids')
+        # Legacy incoming covered every conversation, with the start boundary
+        # applied separately. Keep that scope while requiring fresh authorization.
+        if mode == 'incoming' and isinstance(ids, list) and all(isinstance(cid, str) for cid in ids):
+            self._scope = {'mode': 'all', 'conversation_ids': [], 'max_auto_replies': None}
+            self.repo.put('reception_scope', 'international', copy.deepcopy(self._scope))
+            return
+        if mode not in ('all', 'selected') or not isinstance(ids, list) or any(not isinstance(cid, str) for cid in ids):
+            self._scope = {'mode': 'selected', 'conversation_ids': [], 'max_auto_replies': None}
+        else:
+            self._scope = {'mode': mode, 'conversation_ids': list(dict.fromkeys(ids)), 'max_auto_replies': None}
+
     def set_scope(self, mode, conversation_ids, max_auto_replies=None):
-        if (mode not in ('selected', 'all', 'incoming') or not isinstance(conversation_ids, list)
+        if (mode not in ('selected', 'all') or not isinstance(conversation_ids, list)
                 or any(not isinstance(v, str) for v in conversation_ids)
                 or (max_auto_replies is not None and (type(max_auto_replies) is not int or max_auto_replies < 1))):
             raise ServiceError('invalid_scope', '接待范围无效')
         with self._lock:
+            if not self.account_verified:
+                raise ServiceError('identity_blocked', '请先连接当前商家')
             if any(not self.repo.get('conversation', cid) for cid in conversation_ids):
                 raise ServiceError('invalid_scope', '范围包含未知客户')
         self._pause()
         with self._lock:
-            self._scope = {'mode': mode, 'conversation_ids': list(dict.fromkeys(conversation_ids)) if mode != 'incoming' else [],
+            self._scope = {'mode': mode, 'conversation_ids': list(dict.fromkeys(conversation_ids)),
                            'max_auto_replies': None}
+            self.repo.put('reception_scope', 'international', copy.deepcopy(self._scope))
             self._reset_authorization_start()
         return self.get_snapshot()
 
@@ -1121,18 +1215,14 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
             if self.mode == 'live':
                 if not self.account_verified or self.checks['messages']['status'] != 'passed':
                     raise ServiceError('connection_required', '请先完成只读连接检查')
-                if not manual_only and self.checks['ai']['status'] != 'passed':
-                    raise ServiceError('checks_required', '开启真实自动接待前请完成 AI 检查；每条发送仍单独执行原生预检')
-                if not manual_only:
-                    self._freeze_reception_model()
             scope = None if manual_only else self._authorized_scope
             if not manual_only and scope is None:
                 ids = (self._scope['conversation_ids'] if self._scope['mode'] == 'selected' else
                        [c['conversation_id'] for c in self.repo.list('conversation')] if self._scope['mode'] == 'all' else [])
                 scope = {**copy.deepcopy(self._scope), 'conversation_ids': list(ids), 'seller_id': self.seller_id,
                          'started_at_ms': now_ms()}
-            if auto_send and scope['mode'] != 'incoming' and not scope['conversation_ids']:
-                raise ServiceError('scope_required', '自动发送需要明确且非空的客户范围')
+            if not manual_only and scope['mode'] == 'selected' and not scope['conversation_ids']:
+                raise ServiceError('scope_required', '请选择需要自动接待的客户')
             # Starting or changing a mode revokes queued work and native confirmations.
             # revoke() is local and immediate; no network is held under this lock.
             if (not self._running or self._manual_only != manual_only or self._auto_send != auto_send):
@@ -1326,8 +1416,10 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                     self._store_registration(current, result)
                 receipt = {k: current.get(k) for k in ('operation_id', 'kind', 'case_id', 'case_revision', 'status', 'message')}
             else:
-                batch_basis_current = bool(current.get('batch_id') and current.get('purpose') != 'chat'
-                    and self._reply_batch_basis_current(self._require('reply_batch', current['batch_id']), excluding=operation_id))
+                batch = (self._require('reply_batch', current['batch_id'])
+                         if current.get('batch_id') and current.get('purpose') != 'chat' else None)
+                batch_basis_current = bool(batch and self._reply_batch_receipt_basis_current(
+                    batch, current, result, self._reply_batch_operation_snapshot(batch, current), check_sync=False))
                 status = result.get('status')
                 message_id = result.get('message_id')
                 if (status not in ('accepted', 'rejected') or status == 'accepted' and
@@ -1431,7 +1523,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
         if kind == 'send_chat':
             return self._enqueue_chat(params)  # Existing exact requests remain readable.
         self._executor_health.require()
-        if read_reason is not None and (kind != 'sync_messages' or read_reason not in ('activity', 'history', 'audit', 'selection')):
+        if read_reason is not None and (kind != 'sync_messages' or read_reason not in ('activity', 'history', 'audit', 'selection', 'backfill')):
             raise ServiceError('invalid_params', '读取任务来源无效')
         if kind == 'continuity_send' and automatic:
             return self._queue_continuity_plan(params)
@@ -1451,8 +1543,6 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
             raise ServiceError('invalid_params', '任务参数不完整或含未知字段')
         if 'supplement_followup' in params and (not automatic or params['supplement_followup'] is not True):
             raise ServiceError('invalid_params', '业务补充续答只能由自动调度发起')
-        if kind == 'check_ai':
-            self._pause()
         with self._lock, self.repo.transaction():
             if self._manual_only and kind in ('generate_draft', 'automatic_send', 'run_outbox'):
                 raise ServiceError('manual_only', '人工接待仅同步消息及逐条确认发送，请切换模式后使用自动处理')
@@ -1468,7 +1558,13 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                     operation = self._require('outbox', params['operation_id'])
                 self._receipt_owner(operation, registration=registration)
                 cid = operation.get('conversation_id')
-                case_id = operation['case_id'] if operation.get('purpose') != 'chat' else None
+                case_id = operation.get('case_id') if operation.get('purpose') != 'chat' else None
+                existing = next((j for j in self.repo.list('job')
+                                 if j.get('kind') == 'reconcile_operation'
+                                 and j.get('operation_id') == params['operation_id']
+                                 and j.get('status') in ('queued', 'running')), None)
+                if existing:
+                    return {'job_id': existing['job_id']}
             if case_id:
                 case = self._require('case', case_id)
                 cid = case['conversation_id']
@@ -1512,6 +1608,8 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
             job = {'job_id': new_id('job'), 'kind': kind, 'conversation_id': cid, 'case_id': case_id,
                    'status': 'queued', 'stage': 'queued', 'message': '等待后台执行', 'created_at': now_ms(),
                    'started_at': None, 'completed_at': None, 'automatic': automatic}
+            if kind == 'reconcile_operation':
+                job['operation_id'] = params['operation_id']
             if kind == 'automatic_send':
                 job['draft_id'] = params['draft_id']
                 job['source_message_id'] = target_draft['source_message_id']
@@ -1625,8 +1723,8 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                 self._job_update(job_id, status='running', stage=kind, started_at=stamp, message='后台处理中',
                                  diagnostics={'queue_wait_ms': max(0, stamp - current_job['created_at'])})
             if (automatic and (epoch != self._epoch or not self._running)
-                    or kind in ('generate_draft', 'check_ai', 'run_outbox')
-                    and (epoch != self._epoch or self._manual_only and (kind != 'check_ai' or self._running))):
+                    or kind in ('generate_draft', 'run_outbox')
+                    and (epoch != self._epoch or self._manual_only)):
                 raise ServiceError('cancelled', '接待权限已撤销')
             result = getattr(self, '_task_' + kind)(params, job_id, epoch,
                                                    self.integrations if facade is None else facade)
@@ -1907,7 +2005,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                         retry_state, _, retry_at = send_retry_decision(self.repo, self.seller_id, cid, supplement['source_message_id'], 'supplement', supplement['issue_ids'])
                         existing_drafts = self.repo.list('draft', case_id=case['case_id'])
                         ready = (retry_state == 'ready' or retry_state == 'waiting' and retry_at <= now_ms())
-                        if (source and self.account_verified and (self.mode == 'demo' or self.checks['ai']['status'] == 'passed')
+                        if (source and self.account_verified
                                 and not conversation.get('human_owned') and case['state'] not in ('human_owned', 'closed')
                                 and self._in_scope(cid) and not self._conversation_unresolved(cid)
                                 and work.get('due_at', 0) <= now_ms() and ready
@@ -1971,13 +2069,16 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                         for o in operations)) or not self.account_verified or not case or case['seller_id'] != self.seller_id
                 or case['buyer_id'] != conversation['buyer_id'] or case['conversation_id'] != conversation_id):
             return None
-        source = self._latest_buyer(conversation_id)
-        if (not source or source['seller_id'] != self.seller_id or source['buyer_id'] != case['buyer_id']
+        source, undated_buyer = self.repo.automatic_source_facts(conversation_id)
+        if source:
+            source = self._photo_projection(source)
+        if (not source or self.repo.get('history_only_message', encoded([conversation_id, source['message_id']]))
+                or source['seller_id'] != self.seller_id or source['buyer_id'] != case['buyer_id']
                 or source['conversation_id'] != conversation_id or type(source.get('timestamp_ms')) is not int):
             return None
         # An undated buyer message cannot be ordered safely, including relative to
         # a dated message. Keep that conversation available for explicit review.
-        if any(m['role'] == 'buyer' and m['timestamp_ms'] is None for m in self._messages(conversation_id)):
+        if undated_buyer:
             return None
         if self.mode == 'live' or self._scope['mode'] == 'incoming':
             if self._started_at_ms is None or source['timestamp_ms'] <= self._started_at_ms:
@@ -2026,7 +2127,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
             return False
         if scope['mode'] == 'incoming':
             return self._automatic_source(conversation_id, excluding=excluding, allow_pending_sync=allow_pending_sync) is not None
-        return conversation_id in scope['conversation_ids']
+        return scope['mode'] == 'all' or conversation_id in scope['conversation_ids']
 
     def _set_check(self, name, job_id, status, message, simulated=False):
         with self._lock:
@@ -2205,6 +2306,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                 latest = gap.get('latest_ms') if gap else None
             changed = False
             completed = False
+            native_messages = {}
             for _ in range(SYNC_PAGE_LIMIT):
                 if self._stop.is_set():
                     raise ServiceError('cancelled', '服务已关闭')
@@ -2219,7 +2321,12 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                 with self._lock, self.repo.transaction():
                     self._require_current_read(token)
                     # Revisions on the overlap page still go through normal ingest.
-                    changed |= self._ingest(info, messages, has_more=more, next_cursor=next_cursor, full=True)
+                    changed |= self._ingest(info, messages, has_more=more, next_cursor=next_cursor, full=True,
+                                            history=job.get('sync_reason') == 'backfill')
+                    native_messages.update((message['message_id'], message) for message in messages)
+                    # A later, independently observed activity can identify a body
+                    # first encountered by history. A timestamp alone is not proof.
+                    self._promote_history_activity(cid, messages, target_version, target_message_id, target_text_hash)
                     if more and overlap:
                         current = self.repo.get('coverage', cid)
                         complete = original['status'] == 'complete'
@@ -2235,9 +2342,16 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                     if completed:
                         unread.finish_sync(self.repo, cid)
                     if completed and self.mode == 'live':
+                        live_head = (cursor is None and job.get('sync_reason') != 'backfill'
+                                     and not target_message_id
+                                     and self._weak_history_head(cid, messages, target_version))
                         completed = self._complete_message_sync(cid, target, target_version, latest, job_id, token,
                                                                 target_message_id, target_text_hash,
-                                                                activity_clock=target_clock, changed=changed)
+                                                                activity_clock=target_clock, changed=changed and not live_head,
+                                                                read_messages=list(native_messages.values()))
+                        if completed and live_head:
+                            self._promote_history_activity(cid, messages, target_version, target_message_id, target_text_hash,
+                                                           confirmed_live_head=True)
                 self._changed(cid)
                 self._yield_to_ready_work()
                 if not more or overlap or not boundary_ids:
@@ -2286,7 +2400,16 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
             cursor = self.repo.get('coverage', cid, coverage())['next_cursor']
             from_head = cursor is None
             target_activity = self.repo.get('message_activity', cid, {})
+            history_version = target_activity.get('version', 0)
+            task = self.repo.get('message_sync_task', cid, {})
+            watermark = self.repo.get('message_watermark', cid, {})
+            pending_live = (self._running and self._started_at_ms is not None
+                            and max(task.get('last_activity_observed_at', 0), target_activity.get('observed_at', 0)) >= self._started_at_ms
+                            and self._message_sync_pending(cid))
+            if pending_live:
+                history_version = watermark.get('activity_version', 0)
         pages, latest_read, changed = 0, None, False
+        head_messages = []
         while not self._stop.is_set():
             with self._executor_health.phase(job_id, 'message_read_ms'):
                 page = facade.read_message_page(self.seller_id, conversation['buyer_id'], cid, before_ms=cursor, count=100)
@@ -2297,7 +2420,13 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                 latest_read = max(stamps + ([latest_read] if latest_read is not None else []))
             with self._lock, self.repo.transaction():
                 self._require_current_read(token)
-                changed |= self._ingest(conversation, messages, has_more=more, next_cursor=next_cursor, full=True, history=cursor is not None)
+                changed |= self._ingest(conversation, messages, has_more=more, next_cursor=next_cursor, full=True, history=True,
+                                        history_activity_version=history_version)
+                if pages == 0:
+                    head_messages = messages
+                if pending_live:
+                    self._promote_history_activity(cid, messages, target_activity.get('version', 0),
+                                                   target_activity.get('latest_message_id'), target_activity.get('latest_text_sha256'))
                 if not more:
                     self.repo.put('sync_gap', cid, {})
             pages += 1
@@ -2312,13 +2441,17 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                         if target_activity and not self._messages(cid):
                             self._defer_message_sync(cid, target_activity['latest_timestamp'], target_activity['version'], 'empty_history')
                             return {'_job_status': 'deferred', 'message': '当前暂无可读正文，已保留读取状态'}
-                        if from_head and target_activity:
+                        if from_head and target_activity and (not pending_live or target_activity.get('latest_message_id')):
                             self._complete_message_sync(cid, target_activity['latest_timestamp'], target_activity['version'],
                                 latest_read, job_id, token, target_activity.get('latest_message_id'),
                                 target_activity.get('latest_text_sha256'), activity_clock=target_activity.get('activity_clock', 'message'),
-                                changed=changed)
+                                changed=changed, read_messages=head_messages)
                         if activity and self._message_sync_pending(cid):
-                            self._enqueue('sync_messages', {'conversation_id': cid}, read_reason='selection')
+                            # A newer monitor observation remains live work; only the
+                            # completion of the original backfill inherits its intent.
+                            reason = ('backfill' if not pending_live and activity.get('version') == target_activity.get('version')
+                                      else 'activity')
+                            self._enqueue('sync_messages', {'conversation_id': cid}, read_reason=reason)
                 return {'message': f'历史补全完成，共 {pages} 页'}
             cursor = next_cursor
             if pages >= HISTORY_PAGE_LIMIT:
@@ -2327,7 +2460,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
 
     def _task_check_ai(self, params, job_id, epoch, facade):
         self._ensure_identity(facade)
-        self._set_check('ai', job_id, 'running', '单次 AI 检查中，接待已暂停', self.mode == 'demo')
+        self._set_check('ai', job_id, 'running', '单次 AI 检查中', self.mode == 'demo')
         if self.mode == 'live':
             self._freeze_reception_model()
             self._set_check('ai', job_id, 'passed', '当前接待模型所需文字和结构能力已检查', False)
@@ -2453,7 +2586,7 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                 budget['ai_used'] += 1  # Context reflects the call when it actually starts.
             with self._job_phase(job_id, 'context_ms'):
                 context = self.get_context(case['case_id'])
-        model_snapshot = self._freeze_reception_model() if self.mode == 'live' else None
+        model_snapshot = self._freeze_reception_model(allow_unchecked=True) if self.mode == 'live' else None
         found_product, catalog_product = None, None
         attempt_tokens = {}
         from .model_attempts import AttemptLifecycle, claim, job_blocks_replay
@@ -2750,14 +2883,20 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                          'message_id': None, 'submission_started': False}
             intent = self._intent(draft, case, operation_id, epoch, automatic)
             self._reply_batch_attempt_started(draft, operation)
+            batch_snapshot = None
             if draft.get('batch_id'):
                 operation['intent'] = copy.deepcopy(intent)
+                operation['batch_send_basis'] = {
+                    'version': 1, 'operation_id': operation_id, 'batch_id': draft['batch_id'], 'part_id': draft['part_id']}
+                batch_snapshot = self._reply_batch_send_snapshot(self._require('reply_batch', draft['batch_id']))
+                # Save immutable evidence once, without duplicating all messages
+                # into every operation receipt revision or exposing them in DTOs.
+                self.repo.put('reply_batch_send_basis', operation_id,
+                              {**operation['batch_send_basis'], 'snapshot': batch_snapshot})
             self.repo.put('operation', operation_id, operation, history=True)
             draft['status'] = 'sending'
             draft['updated_at'] = now_ms()
             self.repo.put('draft', draft['draft_id'], draft, history=True)
-            batch_snapshot = (self._reply_batch_send_snapshot(self._require('reply_batch', draft['batch_id']))
-                              if draft.get('batch_id') else None)
         def evaluate_gate():
             with self._lock:
                 if self._closing:
@@ -2835,7 +2974,8 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
             status = result.get('status', 'unknown')
             if status not in ('accepted', 'rejected', 'unknown'):
                 status = 'unknown'
-            if (status == 'accepted' and (not result.get('message_id') or result.get('submission_started') is not True)
+            if (status == 'accepted' and (not isinstance(result.get('message_id'), str)
+                    or not result['message_id'].strip() or result.get('submission_started') is not True)
                     or status == 'rejected' and result.get('submission_started') is not False):
                 status = 'unknown'
             submitted = status == 'unknown' or result.get('submission_started') is True
@@ -2847,15 +2987,8 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
             failure = {'error_code': 'adapter_error', 'stage': 'adapter',
                        'diagnostics': {'code': 'adapter_error', 'stage': 'adapter'}}
         with self._lock, self.repo.transaction():
-            batch_basis_current = bool(draft.get('batch_id') and self._reply_batch_basis_current(
-                self._require('reply_batch', draft['batch_id']), excluding=operation_id, check_sync=False))
-            if draft.get('batch_id') and status == 'accepted':
-                returned_id = result.get('message_id')
-                existing_echo = (self.repo.get('message', encoded([draft['conversation_id'], returned_id]))
-                                 if isinstance(returned_id, str) else None)
-                if existing_echo or not batch_basis_current:
-                    batch_basis_current = self._reply_batch_echo_basis_current(
-                        self._require('reply_batch', draft['batch_id']), operation, result, batch_snapshot, check_sync=False)
+            batch_basis_current = bool(draft.get('batch_id') and self._reply_batch_receipt_basis_current(
+                self._require('reply_batch', draft['batch_id']), operation, result, batch_snapshot, check_sync=False))
             message = {'accepted': '平台已受理发送', 'rejected': '发送已明确拒绝',
                        'unknown': '发送结果未知，禁止自动重试'}[status]
             if status == 'rejected':
@@ -2908,8 +3041,9 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
                        'conversation_id': draft['conversation_id'], 'role': 'seller', 'text': draft['body'],
                        'timestamp_ms': (result['timestamp_ms'] if type(result.get('timestamp_ms')) is int
                                         and result['timestamp_ms'] > 0 else now_ms()), 'attachments': [], 'own': True}
-                if not draft.get('batch_id') or self.repo.get('message', encoded([draft['conversation_id'], msg['message_id']])) is None:
-                    self._ingest(conversation, [msg])
+                if (not draft.get('batch_id') or type(result.get('timestamp_ms')) is int and result['timestamp_ms'] > 0):
+                    if not draft.get('batch_id') or self.repo.get('message', encoded([draft['conversation_id'], msg['message_id']])) is None:
+                        self._ingest(conversation, [msg])
             self._reply_batch_receipt(operation, result, basis_current=batch_basis_current)
         self._changed(draft['conversation_id'], case['case_id'])
         job_message = operation['message']

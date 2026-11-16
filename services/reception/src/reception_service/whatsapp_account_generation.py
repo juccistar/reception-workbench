@@ -16,10 +16,10 @@ from .reply_messages import normalize_reply_output
 
 class AccountGenerationMixin:
     def _account_source_fingerprint(self, account, chat, segment):
-        rows = [row for row in self.repo.list('message') if row.get('account_id') == account
-                and row.get('chat_id') == chat and row.get('segment_id') == segment and not row.get('from_me')]
+        rows = [row for row in self.repo.list_owned('message', account, chat, segment) if not row.get('from_me')]
         rows.sort(key=lambda row: (row.get('timestamp_ms', 0), row.get('id', '')))
-        return self._account_key(rows)
+        supplement = self.repo.get('wa_supplement', self._account_key(account, chat, segment), {'body': '', 'revision': 0})
+        return self._account_key(rows, supplement)
 
     def _init_account_generation(self):
         self._generation_cancel = threading.Event()
@@ -98,6 +98,10 @@ class AccountGenerationMixin:
                 continue
             source_key = self._account_key(self.account, chat, row.get('pending_message_id'))
             attempts = self.repo.get('generation_attempt', source_key, {})
+            if (attempts.get('status') == 'unknown' and attempts.get('runtime_settled') is True
+                    and attempts.get('source_fingerprint') != self._account_source_fingerprint(self.account, chat, binding['segment_id'])):
+                attempts['status'] = 'failed'
+                self.repo.put('generation_attempt', source_key, attempts)
             if attempts.get('count', 0) >= 3 or attempts.get('status') in ('in_flight', 'completed', 'unknown'):
                 continue
             if max(row.get('retry_at_ms', 0), row.get('pending_ready_at_ms', 0)) > now:
@@ -149,6 +153,25 @@ class AccountGenerationMixin:
         thread.start()
         return {'accepted': True}
 
+    def _account_runtime_finished(self, job):
+        # Called by the runtime only after the task, input cleanup and budget
+        # release have finished. The account lock serializes the timeout race.
+        with self.repo.lock:
+            job['runtime_finished'] = True
+            if self._generation_closed or not job.get('cleanup_timed_out'):
+                return
+            attempt = self.repo.get('generation_attempt', job['source_key'], {})
+            if (attempt.get('status') == 'unknown' and attempt.get('owner_run_id') == self._generation_run_id
+                    and attempt.get('attempt_id') == job.get('attempt_id')):
+                attempt['runtime_settled'] = True
+                if not self._generation_current(job):
+                    attempt['status'] = 'failed'
+                self.repo.put('generation_attempt', job['source_key'], attempt)
+            if self._generation_active is job:
+                self._generation_active = None
+            self._schedule_account_replies()
+            self._changed()
+
     def _run_account_generation(self, job):
         entered = False
         try:
@@ -171,7 +194,7 @@ class AccountGenerationMixin:
             context['image_manifest'] = manifest
             context['image_transport'] = 'inline' if images else 'none'
             required = ('text', 'structure') + (('single_image', 'combined') if len(images) == 1 else ('multi_image', 'combined') if images else ())
-            snapshot = router.resolve('reception', required)
+            snapshot = router.resolve('reception', required, allow_unchecked=True)
             def begin_attempt():
                 nonlocal entered
                 with self.repo.lock:
@@ -180,11 +203,15 @@ class AccountGenerationMixin:
                     attempt = self.repo.get('generation_attempt', job['source_key'], {'count': 0})
                     if attempt.get('count', 0) >= 3:
                         raise ServiceError('retry_budget_exhausted', '本轮模型尝试次数已用完')
-                    attempt.update(count=attempt.get('count', 0) + 1, status='in_flight')
+                    job['attempt_id'] = uuid.uuid4().hex
+                    attempt.update(count=attempt.get('count', 0) + 1, status='in_flight',
+                                   owner_run_id=self._generation_run_id, attempt_id=job['attempt_id'],
+                                   source_fingerprint=job['source_fingerprint'], runtime_settled=False)
                     self.repo.put('generation_attempt', job['source_key'], attempt)
                     entered = True
             result = router.generate('reception', WHATSAPP + ('\n' + IMAGE_NATIVE if images else ''), model_json(context),
-                                     images=images, required_capabilities=required, cancel=job['cancel'], on_call_start=begin_attempt)
+                                     images=images, required_capabilities=required, cancel=job['cancel'], on_call_start=begin_attempt,
+                                     _allow_unchecked=True, _on_runtime_finished=lambda: self._account_runtime_finished(job))
             router.assert_current(snapshot)
             if result.get('model_snapshot') != asdict(snapshot):
                 raise ServiceError('source_changed', '模型配置已变化')
@@ -202,6 +229,8 @@ class AccountGenerationMixin:
             if not isinstance(answer.get('wa_summary'), str) or len(answer['wa_summary']) > 4000:
                 raise ValueError('invalid summary')
             allowed = {m['source_id'] for m in context['whatsapp_messages']}
+            if context.get('wa_supplement', {}).get('body'):
+                allowed.add(context['wa_supplement']['source_id'])
             background = context.get('international_background') or {}
             allowed.update(m.get('source_id') for m in background.get('messages', []))
             allowed.update(m.get('source_id') for m in context.get('knowledge', []) if isinstance(m, dict))
@@ -212,6 +241,9 @@ class AccountGenerationMixin:
                 raise ValueError('invalid sources')
             with self.repo.lock:
                 if not self._generation_current(job):
+                    attempt = self.repo.get('generation_attempt', job['source_key'], {'count': 0})
+                    attempt['status'] = 'failed'
+                    self.repo.put('generation_attempt', job['source_key'], attempt)
                     return
                 attempt = self.repo.get('generation_attempt', job['source_key'], {'count': 0})
                 attempt['status'] = 'completed'
@@ -236,16 +268,23 @@ class AccountGenerationMixin:
             self.emit({'event': 'whatsapp.send.requested', 'data': {'operation_id': operation_id}})
         except Exception as exc:
             with self.repo.lock:
-                attempt = self.repo.get('generation_attempt', job['source_key'], {'count': 0})
-                attempt['status'] = 'unknown' if entered else 'failed'
-                self.repo.put('generation_attempt', job['source_key'], attempt)
-                self._account_generation_error(job, exc.code if isinstance(exc, ServiceError) else 'model_invalid_response')
+                if not self._generation_closed:
+                    timed_out = isinstance(exc, ServiceError) and exc.code == 'model_cleanup_timeout'
+                    job['cleanup_timed_out'] = timed_out and not job.get('runtime_finished')
+                    attempt = self.repo.get('generation_attempt', job['source_key'], {'count': 0})
+                    obsolete_finished = not self._generation_current(job) and not job['cleanup_timed_out']
+                    attempt['status'] = 'unknown' if entered and not obsolete_finished else 'failed'
+                    if entered and job.get('runtime_finished'):
+                        attempt['runtime_settled'] = True
+                    self.repo.put('generation_attempt', job['source_key'], attempt)
+                    self._account_generation_error(job, exc.code if isinstance(exc, ServiceError) else 'model_invalid_response')
         finally:
             with self.repo.lock:
-                if self._generation_active is job:
-                    self._generation_active = None
-                self._schedule_account_replies()
-                self._changed()
+                if not self._generation_closed:
+                    if self._generation_active is job and not job.get('cleanup_timed_out'):
+                        self._generation_active = None
+                    self._schedule_account_replies()
+                    self._changed()
 
     def _account_create_part(self, batch):
         operation_id = uuid.uuid4().hex

@@ -18,6 +18,12 @@ class ReplySyncTests(unittest.TestCase):
     def setUp(self):
         fixtures.ReplyBatchServiceTests.setUp(self)
         self.service.mode = 'live'
+        # These legacy fixtures use a synthetic model, independent of user configuration.
+        for name, result in (('_freeze_reception_model', {'purpose': 'reception'}),
+                             ('_assert_reception_model', None), ('_verify_model_result', None)):
+            stub = patch.object(self.service, name, return_value=result)
+            stub.start()
+            self.addCleanup(stub.stop)
         self.service._started_at_ms = 0
         self.service._source_baseline = {}
         for name in ('messages', 'ai', 'send_preview'):
@@ -68,6 +74,299 @@ class ReplySyncTests(unittest.TestCase):
                 'stage': 'send', 'diagnostics': {'code': code, 'stage': 'send', **denied.diagnostics('after_token')}}
         self.service.integrations.send = send
         return calls
+
+    def test_complete_history_incremental_display_change_keeps_three_part_batch(self):
+        cid = self.owner['conversation_id']
+        self.service._ingest(self.owner, [], full=True, has_more=False)
+        batch = self.generate(3)
+        ingest = self.service._ingest
+        def ingest_with_full_refresh(info, messages, **kwargs):
+            changed = ingest(info, messages, **kwargs)
+            ingest(info, [], full=True, has_more=False)
+            return changed
+        # Model a completed full refresh before the accepted echo freezes its new basis.
+        with patch.object(self.service, '_ingest', side_effect=ingest_with_full_refresh):
+            self.tick()
+        first = self.batch(batch)
+        self.assertEqual(first['parts'][0]['status'], 'accepted')
+        self.assertTrue(first['parts'][0]['message_id'])
+        before = self.service.repo.get('coverage', cid)
+        self.assertEqual((before['status'], before['message']), ('complete', '历史读取完成'))
+        self.assertFalse(self.service._ingest(self.owner, []))
+        after = self.service.repo.get('coverage', cid)
+        self.assertEqual({k: v for k, v in before.items() if k not in ('message', 'updated_at')},
+                         {k: v for k, v in after.items() if k not in ('message', 'updated_at')})
+        self.assertEqual(after['message'], '已读取部分消息')
+        self.tick()
+        self.tick()
+        final = self.batch(batch)
+        self.assertEqual(final['status'], 'accepted', final)
+        self.assertEqual([part['status'] for part in final['parts']], ['accepted'] * 3)
+        self.assertEqual(len({part['message_id'] for part in final['parts']}), 3)
+        self.tick()
+        self.assertEqual(len(self.service.repo.list('operation', conversation_id=cid)), 3)
+
+    def test_echo_before_receipt_with_complete_history_keeps_three_parts(self):
+        self.service._ingest(self.owner, [], full=True, has_more=False)
+        original = self.service.integrations.send
+        calls = []
+        def send(intent, authorization):
+            calls.append(intent['part_index'])
+            result = original(intent, authorization)
+            if intent['part_index'] == 0:
+                self.service._ingest(self.owner, [{
+                    'message_id': result['message_id'], 'seller_id': self.service.seller_id,
+                    'buyer_id': self.owner['buyer_id'], 'conversation_id': self.owner['conversation_id'],
+                    'role': 'seller', 'text': intent['reply'], 'timestamp_ms': result['timestamp_ms'],
+                    'attachments': [], 'own': True}])
+                self.service._ingest(self.owner, [], full=True, has_more=False)
+            return result
+        self.service.integrations.send = send
+        batch = self.generate(3)
+        for _ in range(3):
+            self.tick()
+        self.assertEqual(self.batch(batch)['status'], 'accepted', self.batch(batch))
+        self.assertEqual(calls, [0, 1, 2])
+
+    def test_echo_before_receipt_with_changed_body_or_attachment_stops_tail(self):
+        for change in ('body', 'attachment'):
+            with self.subTest(change=change):
+                if change != 'body':
+                    self.doCleanups()
+                    self.setUp()
+                original = self.service.integrations.send
+                def send(intent, authorization):
+                    result = original(intent, authorization)
+                    if intent['part_index'] == 0:
+                        self.service._ingest(self.owner, [{
+                            'message_id': result['message_id'], 'seller_id': self.service.seller_id,
+                            'buyer_id': self.owner['buyer_id'], 'conversation_id': self.owner['conversation_id'],
+                            'role': 'seller', 'text': 'different' if change == 'body' else intent['reply'],
+                            'timestamp_ms': result['timestamp_ms'],
+                            'attachments': [{'name': 'other.png'}] if change == 'attachment' else [], 'own': True}])
+                    return result
+                self.service.integrations.send = send
+                batch = self.generate(3)
+                self.tick()
+                self.tick()
+                self.assertEqual(self.batch(batch)['status'], 'stopped')
+                self.assertEqual(len(self.service.repo.list('operation', conversation_id=self.owner['conversation_id'])), 1)
+
+    def test_coverage_semantic_changes_stop_unsent_tail(self):
+        for key, value in (('status', 'partial'), ('next_cursor', 'older'),
+                           ('earliest_ms', 1), ('latest_ms', 2)):
+            with self.subTest(key=key):
+                if key != 'status':
+                    self.doCleanups()
+                    self.setUp()
+                self.service._ingest(self.owner, [], full=True, has_more=False)
+                batch = self.generate(3)
+                self.tick()
+                cid = self.owner['conversation_id']
+                current = self.service.repo.get('coverage', cid)
+                current[key] = value
+                self.service.repo.put('coverage', cid, current)
+                self.tick()
+                self.assertEqual(self.batch(batch)['status'], 'stopped')
+                self.tick()
+                self.assertEqual(len(self.service.repo.list('operation', conversation_id=cid)), 1)
+
+    def _unknown_first_send(self, *, early_echo=False):
+        original = self.service.integrations.send
+        calls, receipts = [], []
+        def send(intent, authorization):
+            calls.append(copy.deepcopy(intent))
+            result = original(intent, authorization)
+            if intent['part_index'] == 0:
+                receipts.append(copy.deepcopy(result))
+                if early_echo:
+                    self.service._ingest(self.owner, [{**self.owner, 'message_id': result['message_id'],
+                        'role': 'seller', 'text': intent['reply'], 'timestamp_ms': result['timestamp_ms'],
+                        'attachments': [], 'own': True}])
+                return {'status': 'unknown', 'submission_started': True, 'message_id': None}
+            return result
+        self.service.integrations.send = send
+        return calls, receipts
+
+    def test_original_receipt_self_echo_waits_then_continues_exactly_once(self):
+        calls, receipts = self._unknown_first_send(early_echo=True)
+        batch = self.generate(3)
+        self.tick()
+        operation_id = self.batch(batch)['parts'][0]['operation_ids'][0]
+        self.service.integrations.reconcile_operation = lambda _id: {'status': 'unknown'}
+        for _ in range(2):
+            self.tick()
+            self.service.reconcile_operation(operation_id)
+        waiting = self.batch(batch)
+        self.assertFalse(waiting.get('stopped', False), waiting)
+        self.assertEqual(waiting['status'], 'waiting_receipt')
+        self.assertEqual(len(calls), 1)
+        self.service.integrations.reconcile_operation = lambda _id: copy.deepcopy(receipts[0])
+        self.service.reconcile_operation(operation_id)
+        self.tick()
+        self.tick()
+        self.assertEqual(self.batch(batch)['status'], 'accepted', self.batch(batch))
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(self.service.repo.list('operation', conversation_id=self.owner['conversation_id'])), 3)
+        self.service.reconcile_operation(operation_id)
+        self.tick()
+        self.assertEqual(len(calls), 3)
+
+    def test_original_receipt_self_echo_with_changed_basis_stops_tail(self):
+        for change in ('buyer', 'body', 'attachment', 'supplement', 'case', 'authorization', 'coverage', 'legacy'):
+            with self.subTest(change=change):
+                if change != 'buyer':
+                    self.doCleanups()
+                    self.setUp()
+                calls, receipts = self._unknown_first_send(early_echo=True)
+                batch = self.generate(3)
+                self.tick()
+                cid = self.owner['conversation_id']
+                operation_id = self.batch(batch)['parts'][0]['operation_ids'][0]
+                if change == 'buyer':
+                    self.add_message('new-buyer', 'Please change the quantity.')
+                elif change in ('body', 'attachment'):
+                    from reception_service.repository import encoded
+                    key = encoded([cid, receipts[0]['message_id']])
+                    row = self.service.repo.get('message', key)
+                    if change == 'body':
+                        row['text'] = 'a different reply'
+                    else:
+                        row['attachments'] = [{'name': 'extra.png'}]
+                    self.service._ingest(self.owner, [row])
+                elif change == 'supplement':
+                    self.service.repo.put('conversation_supplement', cid,
+                        {'conversation_id': cid, 'body': 'A new business condition', 'revision': 1, 'updated_at': now_ms()})
+                elif change == 'case':
+                    case = self.service.repo.get('case', self.case_id)
+                    case['revision'] += 1
+                    self.service.repo.put('case', self.case_id, case)
+                elif change == 'authorization':
+                    self.service.set_reception(False, False)
+                elif change == 'coverage':
+                    coverage = self.service.repo.get('coverage', cid)
+                    coverage['status'] = 'complete'
+                    self.service.repo.put('coverage', cid, coverage)
+                else:
+                    operation = self.service.repo.get('operation', operation_id)
+                    operation.pop('batch_send_basis', None)
+                    self.service.repo.put('operation', operation_id, operation)
+                self.tick()
+                self.service.integrations.reconcile_operation = lambda _id: copy.deepcopy(receipts[0])
+                self.service.reconcile_operation(operation_id)
+                self.tick()
+                self.assertTrue(self.batch(batch)['stopped'], self.batch(batch))
+                self.assertEqual(len(calls), 1)
+
+    def test_original_receipt_self_echo_does_not_adopt_same_body_manual_id(self):
+        calls, receipts = self._unknown_first_send()
+        batch = self.generate(3)
+        self.tick()
+        self.add_message('manual-same-body', calls[0]['reply'], role='seller')
+        self.tick()
+        self.assertEqual(len(calls), 1)
+        operation_id = self.batch(batch)['parts'][0]['operation_ids'][0]
+        self.service.integrations.reconcile_operation = lambda _id: copy.deepcopy(receipts[0])
+        self.service.reconcile_operation(operation_id)
+        self.tick()
+        self.assertTrue(self.batch(batch)['stopped'])
+        self.assertEqual(len(calls), 1)
+
+    def test_reconciled_without_time_self_echo_waits_for_exact_platform_message(self):
+        calls, receipts = self._unknown_first_send()
+        batch = self.generate(3)
+        self.tick()
+        operation_id = self.batch(batch)['parts'][0]['operation_ids'][0]
+        receipt = {k: v for k, v in receipts[0].items() if k != 'timestamp_ms'}
+        self.service.integrations.reconcile_operation = lambda _id: copy.deepcopy(receipt)
+        self.service.reconcile_operation(operation_id)
+        self.tick()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self.batch(batch)['status'], 'waiting_sync')
+        self.service._ingest(self.owner, [{**self.owner, 'message_id': receipt['message_id'],
+            'role': 'seller', 'text': calls[0]['reply'], 'timestamp_ms': receipts[0]['timestamp_ms'],
+            'attachments': [], 'own': True}])
+        self.tick()
+        self.tick()
+        self.assertEqual(self.batch(batch)['status'], 'accepted', self.batch(batch))
+        self.assertEqual(len(calls), 3)
+
+    def test_direct_without_time_self_echo_does_not_invent_platform_timestamp(self):
+        original = self.service.integrations.send
+        calls, receipts = [], []
+        def send(intent, authorization):
+            calls.append(copy.deepcopy(intent))
+            result = original(intent, authorization)
+            if intent['part_index'] == 0:
+                receipts.append(copy.deepcopy(result))
+                result = {k: v for k, v in result.items() if k != 'timestamp_ms'}
+            return result
+        self.service.integrations.send = send
+        batch = self.generate(3)
+        self.tick()
+        from reception_service.repository import encoded
+        self.assertIsNone(self.service.repo.get('message', encoded([self.owner['conversation_id'], receipts[0]['message_id']])))
+        self.tick()
+        self.assertEqual(len(calls), 1)
+        self.service._ingest(self.owner, [{**self.owner, 'message_id': receipts[0]['message_id'],
+            'role': 'seller', 'text': calls[0]['reply'], 'timestamp_ms': receipts[0]['timestamp_ms'],
+            'attachments': [], 'own': True}])
+        self.tick()
+        self.tick()
+        self.assertEqual(self.batch(batch)['status'], 'accepted', self.batch(batch))
+        self.assertEqual(len(calls), 3)
+
+    def test_missing_time_self_echo_timeout_and_late_sync_never_resume(self):
+        calls, receipts = self._unknown_first_send()
+        batch = self.generate(3)
+        self.tick()
+        operation_id = self.batch(batch)['parts'][0]['operation_ids'][0]
+        self.service.integrations.reconcile_operation = lambda _id: {
+            k: v for k, v in receipts[0].items() if k != 'timestamp_ms'}
+        self.service.reconcile_operation(operation_id)
+        waiting = self.batch(batch)
+        waiting['parts'][1]['sync_wait_deadline_at'] = now_ms() - 1
+        self.service.repo.put('reply_batch', waiting['batch_id'], waiting)
+        self.tick()
+        self.assertTrue(self.batch(batch)['stopped'])
+        self.service._ingest(self.owner, [{**self.owner, 'message_id': receipts[0]['message_id'],
+            'role': 'seller', 'text': calls[0]['reply'], 'timestamp_ms': receipts[0]['timestamp_ms'],
+            'attachments': [], 'own': True}])
+        self.tick()
+        self.assertEqual(len(calls), 1)
+        self.assertEqual([p['status'] for p in self.batch(batch)['parts']], ['accepted', 'cancelled', 'cancelled'])
+
+    def test_unknown_self_echo_restart_keeps_receipt_and_stops_tail(self):
+        calls, receipts = self._unknown_first_send(early_echo=True)
+        batch = self.generate(3)
+        self.tick()
+        operation_id = self.batch(batch)['parts'][0]['operation_ids'][0]
+        with self.service._lock, self.service.repo.transaction():
+            self.service._recover_reply_batches()
+        self.service.integrations.reconcile_operation = lambda _id: copy.deepcopy(receipts[0])
+        self.service.reconcile_operation(operation_id)
+        self.tick()
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(self.batch(batch)['stopped'])
+        self.assertEqual(self.batch(batch)['parts'][0]['status'], 'accepted')
+
+    def test_invalid_accepted_id_self_echo_remains_unknown_without_replay(self):
+        for mid in (' ', 123):
+            with self.subTest(message_id=mid):
+                if mid != ' ':
+                    self.doCleanups()
+                    self.setUp()
+                calls = []
+                def send(intent, authorization):
+                    calls.append(copy.deepcopy(intent))
+                    return {'status': 'accepted', 'submission_started': True, 'message_id': mid}
+                self.service.integrations.send = send
+                batch = self.generate(3)
+                self.tick()
+                self.tick()
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(self.batch(batch)['parts'][0]['status'], 'unknown')
+                self.assertEqual(self.batch(batch)['status'], 'waiting_receipt')
 
     def test_token_interval_pending_waits_then_only_second_part_submits(self):
         calls = self.install_pending_rejection()

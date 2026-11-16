@@ -1,0 +1,65 @@
+.quotes-042-layout { display: grid; grid-template-columns: minmax(220px, 290px) minmax(0, 1fr); gap: 20px; height: min(72vh, 780px); min-height: 320px; }
+.quotes-042-list, .quotes-042-detail { min-height: 0; overflow-y: auto; background: #fff; border: 1px solid #dce4ef; border-radius: 10px; }
+.quotes-042-list { padding: 10px; }
+.quotes-042-list button { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; padding: 15px; border: 0; border-radius: 7px; background: transparent; color: #20324c; text-align: left; cursor: pointer; }
+.quotes-042-list button.active { background: #edf2ff; }
+.quotes-042-list small, .quotes-042-list span { color: #7286a5; }
+.quotes-042-detail { padding: 24px; }
+.quotes-042-detail > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.quotes-042-detail textarea { box-sizing: border-box; width: 100%; min-height: 120px; resize: vertical; }
+.quotes-042-save { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; }
+.policy-library .policies-layout { grid-template-columns: 150px minmax(180px, 240px) minmax(0, 1fr); gap: 14px; }
+.policy-categories { display: flex; flex-direction: column; align-self: start; gap: 4px; padding: 8px; background: white; border: 1px solid #dce4ef; border-radius: 10px; }
+.policy-categories button { border: 0; border-radius: 6px; padding: 10px; background: transparent; color: #51647f; text-align: left; cursor: pointer; }
+.policy-categories button.active { background: #edf2ff; color: #315ac3; }
+@media (max-width: 900px) { .policy-library .policies-layout { grid-template-columns: 1fr; } .policy-categories { flex-direction: row; flex-wrap: wrap; } }
+.home-042-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr); gap: 20px; }
+.home-042-grid > section { min-width: 0; background: white; border: 1px solid #dce4ef; border-radius: 10px; padding: 22px; }
+.home-042-grid h2 { font-size: 16px; margin: 0 0 16px; }
+.home-042-grid h2 small { font-size: 12px; color: #7286a5; font-weight: normal; }
+.home-042-row, .home-042-status { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 15px 0; border: 0; border-top: 1px solid #e6ebf2; background: transparent; color: #20324c; text-align: left; }
+.home-042-row { cursor: pointer; }
+.home-042-row span { display: grid; gap: 6px; min-width: 0; }
+.home-042-row small { color: #7286a5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.procurement-042-settings { margin-bottom: 20px; }
+.procurement-042-settings > summary { cursor: pointer; color: #315ac3; padding: 8px 0; }
+.procurement-042-layout { display: grid; gap: 16px; }
+.procurement-042-list { background: white; border: 1px solid #dce4ef; border-radius: 10px; overflow: auto; max-height: 48vh; }
+.procurement-042-header, .procurement-042-list button { display: grid; grid-template-columns: minmax(220px, 2fr) minmax(110px, 1fr) minmax(160px, 2fr) minmax(130px, 1fr); align-items: center; min-width: 650px; width: 100%; gap: 16px; padding: 14px 18px; text-align: left; }
+.procurement-042-header { position: sticky; top: 0; background: #f7f9fc; color: #71819b; font-size: 12px; }
+.procurement-042-list button { border: 0; border-top: 1px solid #e6ebf2; background: white; cursor: pointer; }
+.procurement-042-list button.active { background: #edf2ff; }
+.procurement-042-list small { color: #7286a5; }
+.procurement-042-item { display: flex; align-items: center; gap: 10px; }
+.procurement-042-item strong, .procurement-042-item small { display: block; }
+.product-042-layout, .supplier-042-layout { display: grid; gap: 18px; }
+.supplier-042-list { border: 1px solid #dce4ef; border-radius: 10px; background: #fff; overflow: auto; max-height: 48vh; }
+.supplier-042-header, .supplier-042-list > button { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(100px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr); align-items: center; gap: 18px; min-width: 620px; width: 100%; padding: 14px 18px; text-align: left; }
+.supplier-042-header { position: sticky; top: 0; background: #f7f9fc; color: #71819b; font-size: 12px; }
+.supplier-042-list > button { border: 0; border-top: 1px solid #e6ebf2; background: white; color: #2b3d59; cursor: pointer; }
+.supplier-042-list > button:hover, .supplier-042-list > button.active { background: #eef3ff; }
+.product-042-list { border: 1px solid #dce4ef; border-radius: 10px; background: #fff; overflow: auto; max-height: 48vh; }
+.product-042-header, .product-042-list > button { display: grid; grid-template-columns: minmax(240px, 2fr) minmax(100px, 1fr) minmax(80px, 1fr) minmax(130px, 1fr); align-items: center; gap: 18px; min-width: 620px; width: 100%; padding: 12px 18px; text-align: left; }
+.product-042-header { position: sticky; top: 0; background: #f7f9fc; color: #71819b; font-size: 12px; }
+.product-042-list > button { border: 0; border-top: 1px solid #e6ebf2; background: white; color: #2b3d59; cursor: pointer; }
+.product-042-list > button:hover, .product-042-list > button.active { background: #eef3ff; }
+.product-042-name { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.product-042-name strong, .product-042-name small { display: block; }
+.product-042-name small { margin-top: 4px; color: #71819b; }
+.product-042-thumbnail { display: inline-flex; flex: 0 0 44px; width: 44px; height: 44px; overflow: hidden; border-radius: 7px; background: #eef2f7; }
+.product-042-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+.settings-042-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 24px; align-items: start; }
+.settings-042-layout nav { display: grid; gap: 4px; }
+.settings-042-layout nav button { border: 0; border-radius: 7px; background: transparent; color: #617798; text-align: left; padding: 12px; cursor: pointer; }
+.settings-042-layout nav button.active { color: #3156cf; background: #e7edff; }
+.settings-042-content { min-width: 0; }
+.settings-042-content [hidden] { display: none !important; }
+.settings-042-diagnostics { margin-bottom: 16px; }
+@media (max-width: 700px) {
+  .quotes-042-layout { grid-template-columns: minmax(150px, 38%) minmax(0, 1fr); gap: 8px; }
+  .quotes-042-detail { padding: 12px; }
+  .home-042-grid, .procurement-042-layout { grid-template-columns: 1fr; }
+  .settings-042-layout { grid-template-columns: 1fr; }
+  .settings-042-layout nav { display: flex; overflow-x: auto; }
+  .settings-042-layout nav button { flex: 0 0 auto; }
+}

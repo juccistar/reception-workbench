@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>客户接待 · 全新前端设计稿</title>
+  <link rel="stylesheet" href="preview.css">
+  <link rel="stylesheet" href="feedback.css">
+  <link rel="stylesheet" href="navigation.css">
+  <script src="navigation.js" defer></script>
+  <script src="preview.js" defer></script>
+  <script src="feedback.js" defer></script>
+</head>
+<body>
+<svg class="icon-defs" aria-hidden="true"><defs>
+  <symbol id="i-message" viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 0 1-8.5 8H4l1.3-4.1A8 8 0 1 1 20 11.5Z"/><path d="M8 10h8M8 14h5"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 8v9l9 5 9-5V8M12 13v9M7.5 5.5l9 5"/></symbol>
+  <symbol id="i-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v3"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 5C9 3 6 3 3 4v15c3-1 6-1 9 1 3-2 6-2 9-1V4c-3-1-6-1-9 1Zm0 0v15"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="m9 3-.6 2.6-2 1.2-2.6-.7-2 3.5L3.7 12l-1.9 2.4 2 3.5 2.6-.7 2 1.2L9 21h4l.6-2.6 2-1.2 2.6.7 2-3.5-1.9-2.4 1.9-2.4-2-3.5-2.6.7-2-1.2L13 3Z"/><circle cx="11" cy="12" r="3"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16m3-11h.01m-.01 3h.01"/></symbol>
+  <symbol id="i-translate" viewBox="0 0 24 24"><path d="M3 5h11M8 3v2m-3 3c2 4 5 6 8 7M12 5c-1 5-5 9-9 11m10 5 4-11 4 11m-6.5-4h5"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 10a9 9 0 1 1 2 8M3 4v6h6m3-3v6l4 2"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18M5 6.5h14M5 17.5h14"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-double-check" viewBox="0 0 24 24"><path d="m2 12 4 4L16 6m-5 8 2 2L23 6"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3ZM20 2v4m-2-2h4"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="m21 3-7 18-4-8-8-4 19-6ZM10 13 21 3"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="m8 13 7-7a3 3 0 0 1 4 4L9 20a5 5 0 0 1-7-7L13 2m-7 9-2 2"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m3 16 6-5 4 4 3-3 5 5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8l-5-5Zm0 0v6h5M8 13h8m-8 4h6"/></symbol>
+  <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 3h7v7m0-7L11 13M10 5H4v15h15v-6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 4 12 8-12 8V4Z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 3 7v5c0 5 9 10 9 10s9-5 9-10V7l-9-4Z"/><path d="m8 12 3 3 5-5"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 9a8 8 0 0 0-14-4L3 8m0-5v5h5M4 15a8 8 0 0 0 14 4l3-3m0 5v-5h-5"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="m16 3 5 5-4 1-4 6v3l-7-7h3l6-4 1-4ZM8 16l-5 5"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 12V5a2 2 0 0 1 4 0v6-8a2 2 0 0 1 4 0v8-5a2 2 0 0 1 4 0v10a7 7 0 0 1-13 3l-4-6a2 2 0 0 1 3-2l2 1Z"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14v6Z"/></symbol>
+</defs></svg>
+
+<div class="design-toolbar">
+  <a class="design-label" href="README.md" title="查看设计说明"><span class="design-dot"></span>接待页<span class="design-caption">全新设计稿</span></a>
+  <div class="scenario-switch" role="group" aria-label="设计预览状态">
+    <button data-scenario="manual" aria-pressed="true">人工接待</button>
+    <button data-scenario="auto" aria-pressed="false">自动接待</button>
+    <button data-scenario="unknown" aria-pressed="false">发送待确认</button>
+  </div>
+  <a class="design-disclaimer" href="feedback.html">弹窗与提示方案</a>
+</div>
+
+<div class="workspace" id="workspace">
+  <nav class="app-nav" id="design-navigation" aria-label="工作台导航"></nav>
+
+  <header class="workspace-header">
+    <div class="workspace-identity"><span class="merchant-emblem">澄</span><div><div class="merchant-name">澄野生活<span class="channel-label">国际站</span></div><p>客户接待工作台</p></div></div>
+    <div class="header-actions"><span class="reception-state-label" id="reception-state-label" role="status"></span><button class="global-status" id="global-status" data-action="global"><span id="global-status-text">关闭自动接待</span></button></div>
+  </header>
+
+  <aside class="customers" id="customers" aria-label="客户列表">
+    <div class="customers-heading"><div><h1>客户接待 <span id="customer-count">8</span></h1><p>按最近沟通排序</p></div><button class="icon-button mobile-close" data-action="close-customers" aria-label="关闭客户列表"><svg><use href="#i-close"/></svg></button><button class="icon-button refresh-customers" data-action="refresh" aria-label="刷新客户列表" title="刷新客户列表"><svg><use href="#i-refresh"/></svg></button></div>
+    <label class="customer-search"><svg><use href="#i-search"/></svg><input id="customer-search" type="search" placeholder="搜索客户或聊天内容" aria-label="搜索客户或聊天内容"><span class="search-hint">⌕</span></label>
+    <div class="customer-filters" role="group" aria-label="客户筛选"><button data-filter="all" aria-pressed="true">全部</button><button data-filter="reply" aria-pressed="false">待回复 <span>3</span></button><button data-filter="quote" aria-pressed="false">待报价</button><button data-filter="human" aria-pressed="false">人工</button></div>
+    <div class="customer-list" id="customer-list"></div>
+    <div class="customers-footer"><span class="status-dot"></span>聊天已同步<span id="sync-time">刚刚</span></div>
+  </aside>
+
+  <main class="conversation" aria-label="当前客户聊天">
+    <header class="conversation-header">
+      <button class="icon-button mobile-back" data-action="customers" aria-label="打开客户列表"><svg><use href="#i-left"/></svg></button>
+      <div class="conversation-identity"><div class="customer-title"><h2 id="current-name">Alex Morgan</h2><span class="customer-mode" id="customer-mode"><svg><use href="#i-hand"/></svg>你正在接待</span></div><p id="current-meta"><span class="country-flag"></span>德国 · Hamburg<span class="meta-separator"></span>英语</p></div>
+      <div class="conversation-tools"><button class="complete-history" id="complete-history-button" data-action="complete-history" aria-label="补全当前客户历史" title="补全当前客户历史"><svg><use href="#i-refresh"/></svg><span>补全历史</span></button><button class="icon-button" id="translation-toggle" data-action="translations" aria-label="关闭中文译文" aria-pressed="true" title="中文译文"><svg><use href="#i-translate"/></svg></button><span class="tool-divider"></span><button class="icon-button panel-toggle" data-action="panel" aria-label="收起客户资料" aria-expanded="true" title="收起客户资料"><svg><use href="#i-panel"/></svg></button><button class="icon-button" data-action="customer-more" aria-label="更多客户操作" title="更多"><svg><use href="#i-more"/></svg></button></div>
+    </header>
+
+    <button class="summary-bar" data-action="summary" aria-expanded="false" id="summary-bar"><span class="summary-icon"><svg><use href="#i-book"/></svg></span><span class="summary-copy"><strong>客户摘要</strong><span id="summary-text">采购 500 只鼠尾草绿随行杯，定制 Logo；发往德国，希望先确认样品。</span></span><svg class="summary-chevron"><use href="#i-down"/></svg></button>
+    <div class="message-stream" id="message-stream" tabindex="0" aria-label="聊天记录"></div>
+    <div class="reply-activity" id="reply-activity"></div>
+    <section class="composer-region" aria-label="人工回复">
+      <div class="suggestion" id="suggestion" hidden></div>
+      <div class="composer" id="composer"><div class="composer-topline"><span class="composer-label" id="composer-label"><span class="mini-dot"></span>人工回复</span><button class="text-button resume-button" id="resume-button" data-action="ownership">恢复自动接待<svg><use href="#i-play"/></svg></button></div><textarea id="reply-input" rows="3" aria-label="回复正文" placeholder="输入回复，与 Alex 继续聊聊…"></textarea><div class="composer-bottom"><span class="compose-hint" id="compose-hint">Enter 发送，Shift + Enter 换行</span><div class="compose-actions"><button class="suggest-button" data-action="suggest" id="suggest-button"><svg><use href="#i-spark"/></svg><span>回复建议</span></button><button class="send-button" data-action="send" id="send-button" disabled><svg><use href="#i-send"/></svg>发送</button></div></div></div>
+      <div class="conversation-footer"><span><svg><use href="#i-shield"/></svg>仅对当前客户生效</span><span id="draft-status">草稿已保存</span></div>
+    </section>
+  </main>
+
+  <aside class="customer-panel" id="customer-panel" aria-label="客户资料">
+    <div class="details-resize-handle" id="details-resize-handle" role="separator" aria-label="调整客户资料宽度" aria-orientation="vertical" aria-valuemin="280" aria-valuemax="560" aria-valuenow="334" tabindex="0" title="左右拖动调整资料宽度，双击还原"></div>
+    <header class="panel-heading"><h2>客户资料</h2><button class="icon-button" data-action="panel" aria-label="关闭客户资料" title="收起客户资料"><svg><use href="#i-close"/></svg></button></header>
+    <div class="requirement-scroll">
+      <div class="requirement-section-title"><div><span class="section-title">采购需求</span><span class="badge badge-amber" id="quote-status">待报价</span></div><button class="text-button case-switch" data-action="cases" id="case-switch">本次需求<svg><use href="#i-down"/></svg></button></div>
+      <div id="requirement-content"></div>
+    </div>
+    <div class="supplement-resize-handle" id="supplement-resize-handle" role="separator" aria-label="调整业务补充高度" aria-orientation="horizontal" aria-valuemin="180" aria-valuemax="550" aria-valuenow="230" tabindex="0" title="上下拖动调整业务补充高度，双击还原"><span></span></div>
+    <section class="supplement" id="supplement" aria-label="业务补充">
+      <div class="supplement-heading"><h3>业务补充</h3><span class="saved-status" id="supplement-save"><svg><use href="#i-check"/></svg>已保存</span></div>
+      <div class="supplement-editor"><textarea id="supplement-input" aria-label="业务补充正文" placeholder="补充报价、交期或沟通约定…"></textarea><div class="supplement-attachments" id="supplement-attachments"></div><div class="supplement-bottom"><button class="text-button" data-action="attachment"><svg><use href="#i-plus"/></svg>添加附件</button><span>也可粘贴或拖入</span></div></div>
+      <p class="supplement-note">用于当前客户的接待、建议和润色</p>
+      <input type="file" id="attachment-input" multiple hidden>
+    </section>
+  </aside>
+  <button class="drawer-scrim" id="drawer-scrim" aria-label="关闭侧栏" hidden></button>
+</div>
+<div class="popover" id="popover" hidden></div>
+<dialog class="modal" id="modal" aria-labelledby="modal-title"><div class="modal-heading"><h2 id="modal-title"></h2><button class="icon-button" data-action="close-modal" aria-label="关闭弹窗"><svg><use href="#i-close"/></svg></button></div><div id="modal-body"></div><div id="modal-actions" class="modal-actions"></div></dialog>
+<div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>

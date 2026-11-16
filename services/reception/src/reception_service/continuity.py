@@ -189,7 +189,7 @@ class ContinuityMixin:
         conversation = self.repo.get('conversation', cid)
         source = self._latest_buyer(cid)
         if (not self._supplement_continuation(case) or not self.account_verified or not conversation
-                or scope.get('seller_id') != self.seller_id or cid not in scope.get('conversation_ids', [])
+                or scope.get('seller_id') != self.seller_id or scope.get('mode') != 'all' and cid not in scope.get('conversation_ids', [])
                 or not allow_pending_sync and self._message_sync_pending(cid) or self._conversation_unresolved(cid, excluding=excluding)
                 or not source or type(source.get('timestamp_ms')) is not int
                 or any(m.get('role') == 'buyer' and m.get('timestamp_ms') is None for m in self._messages(cid))):
@@ -222,7 +222,7 @@ class ContinuityMixin:
         if not scope or scope.get('seller_id') != self.seller_id:
             return False
         if scope['mode'] != 'incoming':
-            if conversation_id not in scope.get('conversation_ids', []):
+            if scope['mode'] != 'all' and conversation_id not in scope.get('conversation_ids', []):
                 return False
             # A specifically scheduled, public verification is an outgoing
             # follow-up within the frozen customer scope. It is not a new inbound.
