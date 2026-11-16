@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { ChromeWhatsAppHost } from '../../apps/desktop/src/main/whatsapp/chrome-host';
+import { CustomerPanelController } from '../../apps/desktop/src/main/whatsapp/customer-panel';
 
-const [root, output, sdkEntry] = process.argv.slice(2);
-assert(root && output && path.isAbsolute(root) && path.isAbsolute(output) && (!sdkEntry || path.isAbsolute(sdkEntry)));
+const [root, output, sdkEntry, extensionDirectory] = process.argv.slice(2);
+assert(root && output && path.isAbsolute(root) && path.isAbsolute(output) && (!sdkEntry || path.isAbsolute(sdkEntry)) && (!extensionDirectory || path.isAbsolute(extensionDirectory)));
 const sdk = createRequire(sdkEntry || path.join(root, 'artifacts/app/main/index.js'))('whatsapp-web.js');
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 function resources(ownedId: number) {
@@ -93,7 +94,18 @@ async function main() {
         throw new Error('controlled initialize rejection after first public QR');
       }
     }
+    let panel: CustomerPanelController | undefined;
     host = new ChromeWhatsAppHost({ profileDirectory: path.join(temporary, 'profile'), directory: path.join(temporary, 'business'), loadSdk: async () => ({ Client: PublicClient }),
+      ...(extensionDirectory ? { extensionDirectory,
+        onBrowserReady: async (browser: any, page: any, extensionId: string) => {
+          panel = new CustomerPanelController({ workspaceId: 'public-probe', runtimeInstanceId: mode, getStatus: () => host.getStatus(), resolveCurrentChat: () => host.resolveCurrentChat(),
+            readState: async () => ({ profile: { workspace_id: 'public-probe', label: '公共扫码验证', account_tail: '', revision: 0 }, runtime_instance_id: mode, host: host.getStatus(), state: null, merchants: [] }),
+            getContext: async () => { throw new Error('No real customer access'); }, saveBinding: async () => { throw new Error('No real account mutations'); }, takeover: async () => { throw new Error('No real account mutations'); }, reconcile: async () => { throw new Error('No real account mutations'); }, searchCustomers: async () => [],
+          });
+          await panel.attach(browser, page, extensionId); await panel.open(); row.extension_installed = true;
+        },
+        onBrowserClosed: async () => { await panel?.close(); panel = undefined; }, onOpen: async () => { await panel?.open(); },
+      } : {}),
       authorizeAccount: async () => { throw new Error('public probe never authorizes an account'); },
       onEvent: event => { if (event.type === 'account') row.statuses.push({ status: event.status, page_state: event.page_state, error_code: event.error_code, phase: event.phase }); },
     });
@@ -105,6 +117,11 @@ async function main() {
       const first = Date.now();
       const browser = client.pupBrowser, page = client.pupPage;
       row.browser_version = await browser.version();
+      if (extensionDirectory) {
+        row.native_panel_target_observed = browser.targets().some((target: any) => /^chrome-extension:\/\/[a-p]{32}\/panel\.html$/.test(target.url()));
+        row.website_binding_absent = await page.evaluate(() => typeof (window as any).__receptionCustomerPanel === 'undefined');
+        assert(row.website_binding_absent);
+      }
       row.startup_to_qr_ms = first - start;
       row.same_sdk_page = (await browser.pages()).some((candidate: any) => candidate === page);
       const cdp = await page.createCDPSession();

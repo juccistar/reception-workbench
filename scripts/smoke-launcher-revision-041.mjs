@@ -76,6 +76,8 @@ try {
   await page.evaluate(async ids => { await Promise.all(ids.map(id => window.launcher.connectWhatsAppAccount(id))); }, [a, b]);
   await until(async () => { const state = await page.evaluate(() => window.launcher.getWhatsAppAccounts()); return state.accounts.every(row => row.host.status === 'ready'); }, 60000);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  report.before_open_diagnostics = await app.evaluate(() => globalThis.chromeFixture.diagnostics());
+  await page.evaluate(async ids => { await Promise.all(ids.map(id => window.launcher.openWhatsAppAccount(id))); }, [a, b]);
   await until(async () => (await panel(a)).visible && (await panel(b)).visible, 45000);
   const infoA = await app.evaluate((_, id) => globalThis.chromeFixture.info(id), a), infoB = await app.evaluate((_, id) => globalThis.chromeFixture.info(id), b);
   assert(infoA.pid !== infoB.pid && infoA.private_pipe && infoB.private_pipe && !infoA.tcp_port && !infoB.tcp_port);
@@ -121,6 +123,6 @@ try {
   await app.evaluate(() => globalThis.quitProbe()).catch(() => {}); await exited;
   assert.equal(process.exitCode, 0); app = undefined;
   report.checks.normal_shutdown = true; report.status = 'passed';
-} catch (error) { report.error = String(error?.stack || error); process.exitCode = 1; }
+} catch (error) { report.error = String(error?.stack || error); if (app) { report.browser_diagnostics = await app.evaluate(() => globalThis.chromeFixture?.diagnostics()).catch(() => null); report.account_diagnostics = await (await app.firstWindow()).evaluate(() => window.launcher.getWhatsAppAccounts()).catch(() => null); } process.exitCode = 1; }
 finally { if (app) { await app.evaluate(() => globalThis.quitProbe()).catch(() => {}); await app.close().catch(() => {}); } await writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n', { flag: 'wx' }); }
 console.log(JSON.stringify(report));

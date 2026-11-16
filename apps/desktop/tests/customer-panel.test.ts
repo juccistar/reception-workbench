@@ -80,6 +80,16 @@ describe('private customer panel bridge', () => {
     expect(f.messages.at(-1).result).toHaveLength(25);
     await f.controller.close();
   });
+  it('waits for the extension behavior before first open and can reopen after its worker sleeps', async () => {
+    const f = fixture(); const order: string[] = [];
+    const browserSession = { send: vi.fn(async (method: string) => { if (method === 'Extensions.triggerAction') { order.push('open'); return {}; } return { targetInfos: [{ type: 'tab', targetId: 'tab' }, { type: 'page', targetId: 'page', parentId: 'tab' }] }; }), detach: vi.fn(async () => {}) };
+    const waitForTarget = vi.fn(async () => ({ worker: async () => ({ evaluate: async () => { order.push('ready'); } }) }));
+    f.controller.browser = { targets: () => [], waitForTarget, target: () => ({ createCDPSession: async () => browserSession }) };
+    f.controller.page = { createCDPSession: async () => ({ send: async () => ({ targetInfo: { targetId: 'page' } }), detach: async () => {} }) };
+    await f.controller.open(); await f.controller.open();
+    expect(order).toEqual(['ready', 'open', 'open']); expect(waitForTarget).toHaveBeenCalledOnce();
+    await f.controller.close();
+  });
   it('does not trigger an already visible extension panel', async () => {
     const f = fixture(); const create = vi.fn();
     f.controller.browser = { targets: () => [{ url: () => f.controller.panelUrl() }], target: create };

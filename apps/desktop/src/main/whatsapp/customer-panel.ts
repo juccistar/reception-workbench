@@ -54,6 +54,7 @@ export class CustomerPanelController {
   private candidates = new Set<string>();
   private error = '';
   private listening = false;
+  private panelBehaviorReady = false;
   private readonly onTarget = (target: any) => { if (target === this.target && target.url() !== this.panelUrl()) this.retirePanel(); else if (target.url() === this.panelUrl()) void this.connectPanel(target); };
   private readonly onDestroyed = (target: any) => { if (target === this.target) this.retirePanel(); };
   private readonly onDisconnected = () => { this.retirePanel(); this.browser = undefined; this.listening = false; };
@@ -71,7 +72,17 @@ export class CustomerPanelController {
   }
   async open(): Promise<void> {
     if (!this.browser || !this.page) throw new Error('浏览器未连接');
-    if (this.browser.targets().some((target: any) => target.url() === this.panelUrl())) return;
+    const existing = this.browser.targets().filter((target: any) => target.url() === this.panelUrl());
+    if (existing.length === 1) { if (!this.session || this.error) await this.connectPanel(existing[0]); return; }
+    const browser = this.browser;
+    if (!this.panelBehaviorReady) {
+      const workerTarget = await browser.waitForTarget((target: any) => target.type() === 'service_worker' && target.url() === `chrome-extension://${this.extensionId}/background.js`, { timeout: 10000 });
+      const worker = await workerTarget.worker();
+      if (!worker || browser !== this.browser) throw new Error('侧栏尚未就绪');
+      await worker.evaluate(async () => { await (globalThis as any).chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }); });
+      if (browser !== this.browser) throw new Error('浏览器已变化');
+      this.panelBehaviorReady = true;
+    }
     const browserSession = await this.browser.target().createCDPSession();
     const pageSession = await this.page.createCDPSession();
     try {
@@ -92,7 +103,7 @@ export class CustomerPanelController {
     }
     this.listening = false;
     await this.emit({ kind: 'clear' }, this.generation).catch(() => {});
-    this.retirePanel(); this.browser = undefined; this.page = undefined;
+    this.retirePanel(); this.browser = undefined; this.page = undefined; this.panelBehaviorReady = false;
   }
   private retirePanel() {
     this.generation++; clearTimeout(this.timer); this.timer = undefined;

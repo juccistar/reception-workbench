@@ -26,7 +26,8 @@
       "files": 9,
       "passed": 73,
       "final_combined_run": 71,
-      "manager_additional_cases": 2
+      "manager_additional_cases": 2,
+      "latest_customer_panel_tests": 9
     },
     "reviewed_prompts": "matched",
     "tools": {
@@ -42,7 +43,15 @@
       "report": "artifacts/verification/chrome-sidepanel-p0-041-003/report.json",
       "screenshot_viewed": true
     },
-    "window_integration": "pending",
+    "window_integration": {
+      "status": "in_progress",
+      "failed_reports": [
+        "artifacts/verification/launcher-revision-041-source-001/report.json",
+        "artifacts/verification/launcher-revision-041-source-002/report.json"
+      ],
+      "first_four_screenshots_viewed": true,
+      "extension_readiness_fix": "pending_actual_window_recheck"
+    },
     "candidate": "pending",
     "real_account": false,
     "real_model_calls": 0,

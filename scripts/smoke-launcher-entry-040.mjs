@@ -180,7 +180,7 @@ try {
     const started = Date.now(); app = await launch();
     const child = app.process();
     const page = await app.firstWindow();
-    if (expectLegacy) await page.getByRole('radio').first().waitFor({ timeout: 45000 });
+    if (expectLegacy) await (expectedVersion === '0.4.1' ? page.locator('.account-avatar.international') : page.getByRole('radio')).first().waitFor({ timeout: 45000 });
     else await page.getByText('添加第一个商家').waitFor({ timeout: 45000 });
     report.timings_ms[run] = Date.now() - started;
     // Wait for real launcher IPC, including the asynchronous KnownFolder resolver.
@@ -189,13 +189,14 @@ try {
       assert(merchants.length > 0 && merchants.every(m => expectedVersion === '0.4.1' ? Number.isSafeInteger(m.verified_at) && m.verified_at >= 0 && ['reauthorize', 'opened'].includes(m.status) : m.verified_at === 0 && m.status === 'reauthorize'), 'Expected valid read-only merchant routing entries');
       if (sellerTail) {
         assert(merchants.some(m => m.account_tail === sellerTail && m.verified_at === 0 && m.status === 'reauthorize'), 'Expected seller is missing');
-        await page.getByRole('radio', { name: new RegExp(expectedVersion === '0.4.1' ? sellerTail : `商家 ${sellerTail}`) }).first().click();
+        if (expectedVersion === '0.4.1') await page.locator('.account-card').filter({ hasText: sellerTail }).first().scrollIntoViewIfNeeded();
+        else await page.getByRole('radio', { name: new RegExp(`商家 ${sellerTail}`) }).first().click();
         report.checks[`${run}_expected_seller_visible`] = true;
       }
       report.checks[`${run}_merchant_count`] = merchants.length;
       report.checks[`${run}_merchant_status`] = expectedVersion === '0.4.1' ? [...new Set(merchants.map(m => m.status))] : 'reauthorize';
       report.checks[`${run}_verified_at`] = expectedVersion === '0.4.1' ? 'original_value_preserved' : 0;
-      assert.equal(await page.getByRole('radio').count(), merchants.length);
+      assert.equal(await (expectedVersion === '0.4.1' ? page.locator('.account-avatar.international') : page.getByRole('radio')).count(), merchants.length);
     } else assert.deepEqual(merchants, []);
     await inspect();
     report.timings_ms[`${run}_ready`] = Date.now() - started;
@@ -205,8 +206,13 @@ try {
       if (readOnlyHome) {
         await page.bringToFront();
         await page.screenshot({ path: path.join(output, '01-home.png'), animations: 'disabled' }); report.screenshots.push('01-home.png');
-        await page.getByRole('button', { name: '商家详情', exact: true }).click();
-        await page.getByRole('dialog', { name: '商家详情' }).waitFor();
+        if (expectedVersion === '0.4.1') {
+          await page.locator('.account-card').filter({ has: page.locator('.account-avatar.international') }).first().getByRole('button', { name: /^编辑/ }).click();
+          await page.getByRole('dialog', { name: '账号设置' }).waitFor();
+        } else {
+          await page.getByRole('button', { name: '商家详情', exact: true }).click();
+          await page.getByRole('dialog', { name: '商家详情' }).waitFor();
+        }
         await inspect();
         await page.screenshot({ path: path.join(output, '02-details.png'), animations: 'disabled' }); report.screenshots.push('02-details.png');
       } else {

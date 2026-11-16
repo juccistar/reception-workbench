@@ -78,7 +78,7 @@ try {
     const packet = { format: 'model-check-v1', purpose, profile: { profile_id: 'synthetic-profile', protocol, base_url: base, model: 'synthetic-model', config_revision: 1, credential_revision: 1 }, api_key: 'synthetic-api-key-only' };
     const env = {};
     for (const [key, value] of Object.entries(process.env)) if (['systemroot', 'windir', 'systemdrive', 'path', 'pathext', 'comspec', 'userprofile'].includes(key.toLowerCase())) env[key] = value;
-    Object.assign(env, { TEMP: temporary, TMP: temporary, LOCALAPPDATA: path.join(temporary, 'local'), PYTHONIOENCODING: 'utf-8' });
+    Object.assign(env, { TEMP: temporary, TMP: temporary, LOCALAPPDATA: path.join(temporary, 'local'), RECEPTION_MODEL_BUDGET_DIRECTORY: path.join(temporary, 'model-budget'), PYTHONIOENCODING: 'utf-8' });
     const child = spawn(executable, ['--model-check'], { cwd: root, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', timedOut = false;
     child.stdout.on('data', bytes => { stdout += bytes; if (stdout.length > 1024 * 1024) child.kill(); });
