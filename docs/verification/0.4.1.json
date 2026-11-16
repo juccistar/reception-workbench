@@ -2,7 +2,7 @@
   "version": "0.4.1",
   "date": "2026-11-15",
   "updated": "2026-11-16",
-  "status": "formal_revision_integrated_window_and_package_pending",
+  "status": "candidate_B_built_final_package_validation_pending",
   "formal_revision": {
     "date": "2026-11-16",
     "production_build": {
@@ -41,7 +41,7 @@
       "screenshot_viewed": true
     },
     "window_integration": {
-      "status": "in_progress",
+      "status": "passed",
       "failed_reports": [
         "artifacts/verification/launcher-revision-041-source-001/report.json",
         "artifacts/verification/launcher-revision-041-source-002/report.json",
@@ -53,14 +53,30 @@
         "artifacts/verification/launcher-revision-041-source-008/report.json"
       ],
       "first_four_screenshots_viewed": true,
-      "extension_readiness_fix": "pending_actual_window_recheck",
+      "extension_readiness_fix": "passed",
       "native_panel_current_synthetic_customer": "source_004_verified_screenshot_viewed",
       "source_005": {
         "parallel_identity_metadata_lock": "registry_lock_unavailable_on_one_account_other_account_remained_ready",
         "merchant_availability": "both_available_after_ciphertext_cache"
-      }
+      },
+      "report": "artifacts/verification/launcher-revision-041-source-009/report.json",
+      "screenshots_viewed": 9,
+      "synthetic_current_customer_association_and_late_search": "passed",
+      "independent_disconnect": "passed"
     },
-    "candidate": "pending",
+    "candidate": {
+      "status": "built_pending_final_verification",
+      "name": "B",
+      "date": "2026-11-16",
+      "source_commit": "d0204fbce9a5bbc2cf1b24a31bb2bd8cc0953e5c",
+      "output": "relase/reception-0.4.1-release-B-20261116",
+      "input_directory": "artifacts\\build\\package-input-1794807611462",
+      "installer_and_portable": true,
+      "signed_update_metadata": "ed25519",
+      "installed": false,
+      "real_data_migration": false,
+      "default_entry_unchanged": true
+    },
     "real_account": false,
     "real_model_calls": 0,
     "full_suite": false,
@@ -98,7 +114,8 @@
       },
       "real_customer_sqlite_read": false,
       "live_task_details_unavailable": true
-    }
+    },
+    "backend_total": 141
   },
   "branch": "feat/whatsapp-chrome-0.4.1",
   "base_commit": "626fe07",
@@ -106,7 +123,7 @@
   "scope_revision": {
     "date": "2026-11-16",
     "requested": "update_development_plan_after_interactive_ui_review",
-    "formal_runtime": "source_integrated_pending_new_candidate_not_in_candidate_A",
+    "formal_runtime": "implemented_isolated_real_chrome_and_production_account_service_verified",
     "targets": [
       "unified_all_international_whatsapp_account_cards",
       "independent_parallel_whatsapp_accounts",
@@ -134,7 +151,7 @@
     ],
     "operating_system_clipboard_end_to_end": false,
     "real_multi_account_runtime_verified": false,
-    "real_chrome_side_panel_verified": false,
+    "real_chrome_side_panel_verified": true,
     "side_panel_route": "fixed_extension_installed_via_owned_chrome_private_cdp_pipe_extension_context_binding",
     "new_production_build": true
   },
@@ -165,10 +182,10 @@
     "context_order": "wire_object_key_order_only_five_modes_two_protocols_equivalent",
     "message_image_injection": "current_case_or_unambiguous_no_case_source_selection_preparation_and_wire_verified",
     "same_request_source_deduplication": "five_targeted_tests_passed_no_production_change_required",
-    "unified_account_launcher_revision": "standalone_design_only_formal_ui_pending",
-    "parallel_whatsapp_account_runtime": "planned_formal_manager_and_locks_pending",
-    "customer_side_panel": "standalone_design_only_extension_and_host_integration_pending",
-    "same_user_model_budget": "planned_cross_process_broker_and_clients_pending"
+    "unified_account_launcher_revision": "implemented_window_source_009_passed",
+    "parallel_whatsapp_account_runtime": "implemented_two_real_chrome_processes_synthetic_sdk_source_009_passed",
+    "customer_side_panel": "native_extension_and_scoped_association_with_synthetic_customers_verified",
+    "same_user_model_budget": "implemented_cross_process_admission_and_cleanup_tests_passed"
   },
   "verification": {
     "accio_compact_launch_layout": {
