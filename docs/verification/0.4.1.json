@@ -2,7 +2,7 @@
   "version": "0.4.1",
   "date": "2026-11-15",
   "updated": "2026-11-16",
-  "status": "customer_panel_and_manual_ai_source_built_candidate_pending",
+  "status": "candidate_C_panel_fix_built_final_validation_pending",
   "customer_panel_followup": {
     "date": "2026-11-16",
     "status": "source_fixed_candidate_window_pending",
@@ -26,7 +26,44 @@
       "report": "artifacts/verification/041-sidepanel-fix-001/resource-targeted.log"
     },
     "failed_source_window": "artifacts/verification/launcher-revision-041-panel-fix-source-001/report.json",
-    "extension_startup_correction": "wait_for_extension_APIs_and_keep_attached_bridge_when_first_action_is_delayed"
+    "extension_startup_correction": "wait_for_extension_APIs_and_keep_attached_bridge_when_first_action_is_delayed",
+    "candidate": {
+      "status": "built_pending_final_verification",
+      "name": "C",
+      "date": "2026-11-16",
+      "source_commit": "e9aeb685ad7c5531834a6d7690c8b19fb89eccd2",
+      "output": "relase/reception-0.4.1-release-C-20261116",
+      "input_directory": "artifacts\\build\\package-input-1794813803886",
+      "installer_and_portable": true,
+      "signed_update_metadata": "ed25519",
+      "installed": false,
+      "real_data_migration": false,
+      "default_entry_unchanged": true
+    },
+    "source_window": {
+      "status": "passed",
+      "report": "artifacts/verification/launcher-revision-041-panel-fix-source-002/report.json",
+      "screenshots_viewed": 11,
+      "actual_exe_entry": false,
+      "real_account": false,
+      "checks": {
+        "three_filters": true,
+        "local_alias_keeps_verified_company": true,
+        "copy_handler_preserves_all_three_paragraphs": true,
+        "full_host_authorization_present": true,
+        "two_independent_browsers_and_native_panels": true,
+        "website_has_no_business_binding": true,
+        "customer_association_and_late_search_fence": true,
+        "verified_customer_visible_before_backend_registration": true,
+        "unready_customer_operations_disabled": true,
+        "contact_registration_recovers_without_reopening_panel": true,
+        "metadata_does_not_trigger_reception_or_merchant_selection": true,
+        "disconnect_one_keeps_other_running": true,
+        "narrow_cards_and_fixed_settings_footer": true,
+        "running_account_hides_to_tray": true,
+        "normal_shutdown": true
+      }
+    }
   },
   "formal_revision": {
     "date": "2026-11-16",
@@ -1041,7 +1078,7 @@
   },
   "manual_ai_on_demand": {
     "date": "2026-11-16",
-    "status": "implemented_window_and_candidate_pending",
+    "status": "candidate_C_built_final_validation_pending",
     "explicit_manual_suggestion_and_polish_only": true,
     "startup_check_required": false,
     "saved_passed_capability_records_required": false,
@@ -1099,7 +1136,8 @@
       "passed": 114,
       "report": "artifacts/verification/041-sidepanel-fix-001/manual-ai-ui.log"
     },
-    "real_model_calls": 0
+    "real_model_calls": 0,
+    "candidate": "C"
   },
   "followup_validation": {
     "typecheck": "passed",
