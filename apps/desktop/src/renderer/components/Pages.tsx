@@ -94,7 +94,7 @@ function QuoteSupplement({ model, conversationId }: { model: Workbench; conversa
   const [error, setError] = useState('');
   useEffect(() => { let active = true; setError(''); void model.ensureSupplement(conversationId).catch(err => { if (active) setError(errorText(err)); }); return () => { active = false; }; }, [conversationId, model.ensureSupplement]);
   const draft = model.supplementFor(conversationId);
-  return <section className="quotes-042-supplement">{error && <Feedback>{error}</Feedback>}<SupplementPanel model={model} conversationId={conversationId} /><p>保存到当前客户的业务补充，由接待结合聊天使用。</p><div className="quotes-042-save"><span>同一客户的多个事项共用业务补充</span><Button variant="primary" disabled={!draft?.dirty || !!draft.saving || !!draft.attachmentBusy} onClick={() => void model.saveSupplement(conversationId)}>保存补充</Button></div></section>;
+  return <section className="quotes-042-supplement"><h3>给接待的业务补充</h3>{error && <Feedback>{error}</Feedback>}<textarea aria-label="报价业务补充" placeholder="填写已核实的对客报价、包装、交期等信息…" disabled={!draft || model.closing} value={draft?.body ?? ''} onChange={event => model.editSupplementFor(conversationId, event.target.value)} /><p>保存到当前客户的业务补充，由接待结合聊天使用。</p>{draft?.error && <Feedback tone="red">{draft.error}{draft.conflict && <Button variant="ghost" onClick={() => model.reapplySupplement(conversationId)}>重新应用我的内容</Button>}</Feedback>}<div className="quotes-042-save"><span>{draft?.saving ? '正在保存' : draft?.dirty ? '有未保存修改' : '已保存'}</span><Button variant="primary" disabled={!draft?.dirty || !!draft.saving || !!draft.attachmentBusy} onClick={() => void model.saveSupplement(conversationId)}>保存补充</Button></div></section>;
 }
 
 export function HandoffPage({ model, onOpenProduct }: { model: Workbench; onOpenProduct?: (id: string) => void }) {

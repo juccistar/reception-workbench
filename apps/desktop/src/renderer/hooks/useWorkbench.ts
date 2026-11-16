@@ -645,7 +645,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
       const observed = jobsRef.current.find(job => job.job_id === ack.job_id);
       if (observed) reportManualFailure(observed);
     }
-    setNotice('已开始处理。');
+    if (!['generate_draft', 'generate_manual_suggestion', 'fill_history'].includes(method)) setNotice('已开始处理。');
     if (method === 'fill_history' && !jobsRef.current.some(job => job.job_id === ack.job_id)) setHistoryRequests(previous => [...previous, { job_id: ack.job_id, conversation_id: String(params.conversation_id ?? '') }]);
     if ((method === 'generate_draft' || method === 'generate_manual_suggestion') && !jobsRef.current.some(job => job.job_id === ack.job_id)) {
       const caseId = String(params.case_id ?? '');
@@ -655,7 +655,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     try { updateJobs(await invoke<Job[]>('list_jobs')); }
     catch (failure) {
       if (method !== 'generate_draft' && method !== 'generate_manual_suggestion') throw failure;
-      setNotice('生成任务已受理，状态同步暂未完成。可刷新运行记录核对原任务，请勿重复提交。');
+      setNotice('生成状态暂未同步。');
     }
     return ack;
   }), [action, invoke, updateJobs, reportManualFailure]);

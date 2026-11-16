@@ -44,6 +44,12 @@ describe('product and procurement bridge protocol', () => {
     }
   });
 
+  it('accepts supplier region through the same bridge used by the editor', () => {
+    const supplier = { name: '供应商', platform: 'other', platform_supplier_id: null, product_url: null, contact: '联系人', notes: '', client_mutation_id: 'edit-region', supplier_id: 'supplier-1', expected_revision: 1 };
+    for (const region of ['浙江 · 宁波', '', null]) expect(() => validateChatParameters('save_supplier', { ...supplier, region })).not.toThrow();
+    for (const region of [42, false, {}, 'x'.repeat(201), 'a\0b']) expect(() => validateChatParameters('save_supplier', { ...supplier, region })).toThrow();
+  });
+
   it('accepts only offer business fields with their defined types', () => {
     const params = { local_product_id: 'p', supplier_id: 's', client_mutation_id: 'm' };
     expect(() => validateChatParameters('save_product_offer', { ...params, offer_id: 'o', expected_revision: 1, data: {} })).not.toThrow();

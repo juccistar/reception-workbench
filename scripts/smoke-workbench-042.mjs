@@ -50,7 +50,7 @@ try {
   const invoke = (method, params = {}) => page.evaluate(({ method, params }) => window.reception.invoke(method, params), { method, params });
   const detail = () => invoke('get_conversation', { conversation_id: 'demo-emma' });
   const shot = async name => {
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
+    await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; window.show(); window.focus(); });
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const encoded = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage({ stayAwake: true })).toPNG().toString('base64'));
     await writeFile(path.join(output, name), Buffer.from(encoded, 'base64'));
@@ -70,6 +70,21 @@ try {
   for (const text of await messages.locator('time').allTextContents()) assert.match(text.trim(), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
   report.checks.customer_list_and_message_times = true;
   await shot('01-reception.png');
+  await page.getByRole('button', { name: '查看需求商品原图', exact: true }).click();
+  const originalImage = page.getByRole('dialog', { name: '商品图片', exact: true });
+  await originalImage.locator('.original-image-viewport img').waitFor();
+  await shot('image-original.png');
+  await originalImage.getByRole('button', { name: '复制图片', exact: true }).click();
+  await originalImage.getByText('图片已复制', { exact: true }).waitFor();
+  assert.equal(await app.evaluate(() => globalThis.__windowImageCopyCount), 1);
+  await originalImage.getByRole('button', { name: '原始尺寸', exact: true }).click();
+  await originalImage.getByRole('button', { name: '适应窗口', exact: true }).waitFor();
+  await originalImage.getByRole('button', { name: '关闭图片', exact: true }).click();
+  await page.getByRole('button', { name: '附件格式与限制', exact: true }).click();
+  await page.getByText(/图片、PDF、UTF-8 文本；最多 10 个/).waitFor();
+  await shot('attachment-limits.png');
+  await page.getByRole('button', { name: '附件格式与限制', exact: true }).click();
+  report.checks.original_image_and_attachment_popover = true;
   const snapshot = await invoke('get_snapshot');
   assert.equal(snapshot.app.mode, 'live'); assert.equal(snapshot.checks.ai.status, 'not_checked');
   const start = page.getByRole('button', { name: '开启自动接待', exact: true });
@@ -178,6 +193,7 @@ try {
   const quoteList = page.getByRole('region', { name: '待报价事项' });
   const quoteDetail = page.getByRole('region', { name: '事项详情' });
   await until(async () => await quoteList.getByRole('button').count() >= 28, 'Multiple quote cases were not projected');
+  await quoteDetail.locator('.quotes-042-more > summary').click();
   assert(await quoteList.evaluate(node => node.scrollHeight > node.clientHeight));
   assert(await quoteDetail.evaluate(node => node.scrollHeight > node.clientHeight));
   await quoteList.evaluate(node => { node.scrollTop = 240; });
@@ -193,6 +209,9 @@ try {
   assert.equal((await detail()).supplement.body, quoteBody);
   assert.equal(await nav('待我报价').getAttribute('aria-current'), 'page');
   await shot('10-quotes-independent-scroll.png'); report.checks.quote_scroll_and_shared_supplement_saved_switch = true;
+  await quoteList.getByRole('button').first().click();
+  await quoteDetail.locator('.quotes-042-more').evaluate(node => { node.open = false; });
+  await quoteList.evaluate(node => { node.scrollTop = 0; }); await quoteDetail.evaluate(node => { node.scrollTop = 0; });
   for (const name of ['开始', '待我报价', '产品库', '供应商', '采购中心', '客户资料', '资料与政策', '连接与设置', '运行记录']) {
     await nav(name).click();
     await until(async () => await nav(name).getAttribute('aria-current') === 'page', `Navigation failed: ${name}`);
@@ -223,6 +242,18 @@ try {
       await supplierDialog.getByRole('button', { name: '关闭供应商详情', exact: true }).click();
       report.checks.populated_supplier_and_real_save = true;
     }
+    if (name === '采购中心') {
+      await page.getByRole('button', { name: '找货设置', exact: true }).click();
+      const procurementSettings = page.getByRole('dialog', { name: '自动找货', exact: true });
+      await procurementSettings.waitFor(); await shot('procurement-settings.png');
+      await procurementSettings.getByRole('button', { name: '取消', exact: true }).click();
+    }
+    if (name === '客户资料') {
+      await page.getByRole('button', { name: /查看资料/ }).first().click();
+      const customerDialog = page.getByRole('dialog', { name: '客户资料', exact: true });
+      await customerDialog.waitFor(); await shot('customer-detail.png');
+      await customerDialog.getByRole('button', { name: '关闭客户资料', exact: true }).click();
+    }
     if (name === '资料与政策') {
       const save = page.getByRole('button', { name: /保存资料/ }).first();
       await save.scrollIntoViewIfNeeded();
@@ -234,6 +265,42 @@ try {
         await settings.getByRole('button', { name: section, exact: true }).click();
         assert.match(await settings.getByRole('button', { name: section, exact: true }).getAttribute('class'), /active/);
         await shot(`settings-${['自动接待', '图片与上下文', '平台连接', '数据与备份', '飞书登记', '界面布局', '版本与更新'].indexOf(section) + 1}.png`);
+        if (section === '自动接待') {
+          const scope = page.getByRole('combobox', { name: '自动接待范围', exact: true });
+          const originalScope = await scope.inputValue();
+          await scope.selectOption('selected');
+          await page.getByRole('textbox', { name: '搜索接待客户', exact: true }).waitFor();
+          await shot('reception-selected-customers.png');
+          await scope.selectOption(originalScope);
+        }
+        if (section === '平台连接') {
+          await page.getByText('连接详情', { exact: true }).click();
+          await shot('connection-details.png');
+          await page.getByText('连接详情', { exact: true }).click();
+        }
+        if (section === '飞书登记') {
+          const form = page.locator('.feishu-form');
+          await form.getByRole('checkbox', { name: '启用飞书登记', exact: true }).check();
+          await form.getByLabel('应用 ID', { exact: true }).fill('cli_synthetic');
+          await form.getByLabel('应用密钥', { exact: true }).fill('synthetic-window-secret');
+          await form.getByLabel('多维表格链接', { exact: true }).fill('https://example.feishu.cn/base/baseSynthetic?table=tblSynthetic');
+          await form.getByRole('button', { name: '保存设置', exact: true }).click();
+          const authorize = form.getByRole('button', { name: '授权本次写入', exact: true });
+          await until(() => authorize.isEnabled(), 'Synthetic Feishu configuration did not finish saving');
+          await authorize.click();
+          const confirmation = page.getByRole('dialog', { name: '授权本次飞书登记', exact: true });
+          await confirmation.waitFor(); await shot('feishu-write-authorization.png');
+          await confirmation.getByRole('button', { name: '取消', exact: true }).click();
+          report.checks.feishu_authorization_cancelled_without_external_request = true;
+        }
+        if (section === '数据与备份') {
+          for (const [button, title, file] of [['创建备份', '创建完整备份', 'storage-backup.png'], ['恢复备份', '恢复完整备份', 'storage-restore.png'], ['更换位置', '更换数据文件夹', 'storage-location.png']]) {
+            await page.getByRole('button', { name: button, exact: true }).click();
+            const confirmation = page.getByRole('dialog', { name: title, exact: true });
+            await confirmation.waitFor(); await shot(file);
+            await confirmation.getByRole('button', { name: '取消', exact: true }).click();
+          }
+        }
       }
       assert.equal(await settings.getByRole('button', { name: '聊天翻译', exact: true }).count(), 0);
       report.checks.seven_settings_sections = true;
@@ -299,7 +366,14 @@ try {
 } catch (error) {
   report.error = String(error?.stack || error); process.exitCode = 1;
   if (temp) report.backend_failure = await readFile(path.join(temp, 'backend-failure.txt'), 'utf8').catch(() => null);
-  if (app) try { const page = app.windows()[0]; if (page) { await page.screenshot({ path: path.join(output, 'failure.png') }); report.screenshots.push('failure.png'); } } catch { /* Preserve the original failure. */ }
+  if (app) try {
+    report.rpc_trace = await app.evaluate(() => globalThis.__windowRpcDiagnostics?.() ?? []);
+    const page = app.windows()[0];
+    if (page) {
+      report.visible_notices = await page.locator('.global-notice, [role="alert"]').allTextContents();
+      await page.screenshot({ path: path.join(output, 'failure.png') }); report.screenshots.push('failure.png');
+    }
+  } catch { /* Preserve the original failure. */ }
 } finally {
   if (app) await app.close().catch(() => {});
   if (temp) await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {});

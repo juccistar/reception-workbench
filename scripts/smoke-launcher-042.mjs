@@ -63,6 +63,7 @@ try {
   };
   const panel = id => app.evaluate((_, id) => globalThis.chromeFixture.panel(id), id);
   const interact = (id, action, value) => app.evaluate((_, p) => globalThis.chromeFixture.interact(p.id, p.action, p.value), { id, action, value });
+  const supplement = id => app.evaluate((_, id) => globalThis.chromeFixture.supplement(id), id);
   await page.getByText('还没有账号', { exact: true }).waitFor();
   await shot('01-empty-home.png');
   const seed = await app.evaluate(() => globalThis.seedAccounts());
@@ -113,14 +114,18 @@ try {
   report.checks.two_independent_browsers_and_native_panels = true;
   report.checks.website_has_no_business_binding = true;
   await until(async () => (await panel(a)).merchants.some(row => row.id === seed.merchants[0].id && !row.disabled));
+  await interact(a, 'change-merchant');
   await interact(a, 'merchant', seed.merchants[0].id);
+  await interact(a, 'save');
+  await until(async () => (await page.evaluate(id => window.launcher.getWhatsAppAccount(id), a)).state.bindings.some(row => row.chat_id === '10000001@c.us' && row.merchant_id === seed.merchants[0].id));
+  await until(async () => !(await supplement(a)).disabled);
+  await interact(a, 'change-customer');
   await interact(a, 'query', '合成');
-  await until(async () => (await panel(a)).results.includes('合成国际站客户'));
-  await interact(a, 'result'); await interact(a, 'save');
+  await until(async () => (await panel(a)).results.some(text => text.includes('合成国际站客户')));
+  await interact(a, 'result');
   await until(async () => { const value = await page.evaluate(id => window.launcher.getWhatsAppAccount(id), a); return value.state.bindings.some(row => row.chat_id === '10000001@c.us' && row.conversation_id === 'synthetic-customer'); });
   await until(async () => (await panel(a)).requirements.includes('合成收纳盒'));
   await app.evaluate((_, p) => globalThis.chromeFixture.screenshot(p.id, p.file), { id: a, file: path.join(output, '07-associated-customer.png') }); report.screenshots.push('07-associated-customer.png');
-  const supplement = id => app.evaluate((_, id) => globalThis.chromeFixture.supplement(id), id);
   const supplementShot = async (id, name) => { await app.evaluate((_, p) => globalThis.chromeFixture.supplementScreenshot(p.id, p.file), { id, file: path.join(output, name) }); report.screenshots.push(name); };
   const note = '合成客户甲：请使用蓝色包装，交期两周。';
   await until(async () => !(await supplement(a)).disabled);
@@ -129,6 +134,7 @@ try {
   await until(async () => (await supplement(a)).status === '已保存');
   await supplementShot(a, '12-supplement-saved.png');
   await until(async () => (await panel(b)).merchants.some(row => row.id === seed.merchants[0].id && !row.disabled));
+  await interact(b, 'change-merchant');
   await interact(b, 'merchant', seed.merchants[0].id);
   await interact(b, 'save');
   await until(async () => (await panel(b)).selected_merchant === seed.merchants[0].id && !(await supplement(b)).disabled);
@@ -142,8 +148,9 @@ try {
   await supplementShot(a, '14-supplement-restored.png');
   report.checks.native_supplement_saved_and_reloaded_from_account_service = true;
   report.checks.supplement_isolated_by_account_and_chat = true;
+  await interact(a, 'change-customer');
   await interact(a, 'query', '迟到');
-  await pause(400);
+  await until(async () => (await app.evaluate(() => globalThis.panelDiagnostics())).some(row => row.workspace_id === a && row.query === '迟到'));
   await app.evaluate((_, id) => globalThis.chromeFixture.selectChat(id, '10000002@c.us'), a);
   await until(async () => (await panel(a)).name === '合成客户乙');
   await pause(1000);
@@ -185,7 +192,7 @@ try {
   await page.getByRole('button', { name: '取消', exact: true }).click();
   report.checks.narrow_cards_and_fixed_settings_footer = true;
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
-  assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false);
+  await until(async () => !(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())));
   report.checks.running_account_hides_to_tray = true;
   const process = app.process(), exited = new Promise(resolve => process.once('exit', resolve));
   await app.evaluate(() => globalThis.quitProbe()).catch(() => {}); await exited;

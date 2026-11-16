@@ -33,6 +33,8 @@ afterEach(() => { Reflect.deleteProperty(window, 'reception'); });
 it('selects and clears a current case offer with the projected revision and sets a separate product default', async () => {
   const invoke = setup(); const changed = vi.fn();
   const view = render(<ProductsPage initialProductId="p1" caseSelection={{ case_id: 'case1', revision: 7, customer_name: 'Emma', product_name: '棉帽', local_product_id: 'p1', offer_id: null }} onCaseChanged={changed} />);
+  fireEvent.click(await screen.findByText('更多商品操作'));
+  fireEvent.click(await screen.findByText('方案资料和操作'));
   fireEvent.click(await screen.findByRole('button', { name: '选用于当前事项' }));
   expect(screen.getByText('当前客户：Emma · 棉帽')).toBeInTheDocument();
   fireEvent.click(screen.getByText('查看商品资料和完整规格'));
@@ -117,6 +119,7 @@ it('retains the offer form when a real save error occurs', async () => {
   const invoke = setup(); const original = invoke.getMockImplementation()!;
   invoke.mockImplementation(async (method: string, params: unknown = {}) => { if (method === 'save_product_offer') throw new Error('供货方案已变化，请刷新'); return original(method, params); });
   render(<ProductsPage initialProductId="p1" />);
+  fireEvent.click(await screen.findByText('更多商品操作'));
   fireEvent.click(await screen.findByRole('button', { name: '新增供货方案' }));
   fireEvent.change(screen.getByLabelText('规格', { exact: true }), { target: { value: '手工录入规格' } });
   fireEvent.click(screen.getByRole('button', { name: '保存供货方案' }));
@@ -193,7 +196,9 @@ it('retains the complete long specification in expandable product details', asyn
   expect(details).not.toHaveAttribute('open');
   fireEvent.click(summary);
   expect(within(details).getByText(specification)).toBeVisible();
-  expect(screen.getByRole('heading', { name: '供货方案' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: '供货方案 1' })).toBeVisible();
+  expect(screen.getByText('参考进价 / 件')).toBeVisible();
+  expect(screen.getByRole('button', { name: '设为默认' })).toBeVisible();
   expect(screen.getByRole('heading', { name: '关联客户' })).toBeVisible();
   expect(screen.getByText('暂无关联客户')).toBeVisible();
 });

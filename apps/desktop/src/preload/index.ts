@@ -27,6 +27,7 @@ const bridge: ReceptionBridge = {
   getImageOriginal: (reference, requestId) => ipcRenderer.invoke('reception:image:original', reference, requestId),
   cancelImageOriginal: requestId => ipcRenderer.invoke('reception:image:cancel', requestId),
   showImageMenu: reference => ipcRenderer.invoke('reception:image:menu', reference),
+  copyImageOriginal: reference => ipcRenderer.invoke('reception:image:copy', reference),
   openProductLink: reference => ipcRenderer.invoke('reception:product:open', reference),
   copyProductText: reference => ipcRenderer.invoke('reception:product:copy-text', reference),
   invoke: (method, params = {}) => {

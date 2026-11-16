@@ -31,7 +31,7 @@ class RequirementMediaTests(unittest.TestCase):
     def setUp(self):
         self.repo = Repository(None, 's')
         self.owner = dict(seller_id='s', buyer_id='b', conversation_id='c')
-        self.case = dict(self.owner, case_id='case', facts={}, revision=1)
+        self.case = dict(self.owner, case_id='case', facts={}, revision=1, state='collecting')
         self.repo.put('case', 'case', self.case)
         self.repo.put('conversation', 'c', dict(self.owner, case_id='case'))
 
@@ -170,13 +170,11 @@ class RequirementMediaTests(unittest.TestCase):
                    'case': {'summary': 'derived summary', 'facts': {'product': {'value': 'red bags', 'candidates': [{'value': json.dumps(card), 'sku': 'AB1'}]}}},
                    'message_semantics': {'m': [{'type': 'product_card', 'fields': card}]}}
         result = project_model_payload(context)
-        data = json.dumps(result)
-        for forbidden in ('secret catalogue', 'img.test', 'AB1', 'derived summary'):
-            self.assertNotIn(forbidden, data)
-        self.assertIn('https://www.alibaba.com/product/x', result['message_view'][1]['text'])
-        self.assertNotIn('https://', json.dumps(result['facts']))
-        self.assertIn('20 red size L', data)
-        self.assertEqual(result['facts']['product']['value'], 'red bags')
+        self.assertEqual(result['message_view'][0]['text'], json.dumps(card))
+        self.assertEqual(result['message_view'][1]['text'], context['message_view'][1]['text'])
+        self.assertNotIn('facts', result)
+        self.assertNotIn('derived summary', json.dumps(result))
+        self.assertNotIn('skuImages', json.dumps(result['message_semantics']))
 
     def test_native_cards_and_candidate_metadata_cannot_bypass_projection(self):
         card = {'cardType': 'product', 'fields': {'title': 'CATALOG_SECRET', 'sku': 'SKU_PRIVATE',
@@ -194,15 +192,14 @@ class RequirementMediaTests(unittest.TestCase):
         context = shared_context(self.repo, self.owner, case, task_mode='automatic')
         context['case'] = case
         result = project_model_payload(context)
-        serialized = json.dumps(result, ensure_ascii=False)
-        for forbidden in ('CATALOG_SECRET', 'SKU_PRIVATE', 'ZX123', 'img.alicdn.com/secret'):
-            self.assertNotIn(forbidden, serialized)
-        buyer_view = next(row for row in result['message_view'] if row['message_id'] == 'buyer')
-        self.assertIn('https://www.alibaba.com/product/x', buyer_view['text'])
-        self.assertNotIn('https://', json.dumps(result['facts']))
-        self.assertIn('20 red size L', serialized)
-        self.assertEqual(result['facts']['product']['value'], 'red bags')
-        self.assertEqual(result['requirement_items'][0]['value'], '20 red bags')
+        views = {row['message_id']: row['text'] for row in result['message_view']}
+        self.assertEqual(views['buyer'], buyer['text'])
+        for number in range(2):
+            original = self.repo.get('message', encoded(['c', 'native-' + str(number)]))
+            self.assertEqual(views[original['message_id']], original['text'])
+        self.assertNotIn('facts', result)
+        self.assertNotIn('requirement_items', result)
+        self.assertNotIn('CATALOG_SECRET', json.dumps(result.get('case_catalog', [])))
 
     def test_fingerprint_ignores_display_only_raw_fields(self):
         base = {'message_view': [{'message_id': 'a', 'role': 'buyer', 'text': 'hello'}],
@@ -233,114 +230,100 @@ class RequirementMediaTests(unittest.TestCase):
         self.assertNotIn('cdn.example', json.dumps(result))
         self.assertTrue(all(not x['is_product_source'] for x in result['items']))
 
-    def media_service(self):
-        service = MediaService(self.repo)
-        self.addCleanup(service._stop_requirement_media)
-        card = self.message('card', text='product', attachments=[{'kind': 'native-content', 'content': {
-            'cardType': 'product', 'fields': {'imageUrl': 'https://img.alicdn.com/p.jpg'}}}])
-        self.repo.put('message', encoded(['c', 'card']), card)
-        item = next(x for x in service.get_requirement_media('case')['items'] if x['kind'] == 'product_image')
-        return service, card, item
+    def photo_fixture(self):
+        # Exercise the production chat-image queue through isolated synthetic support.
+        from test_message_photos import MessagePhotoTests
+        fixture = MessagePhotoTests(methodName="test_duplicate_requests_share_job_and_late_result_is_stale")
+        fixture.setUp()
+        self.addCleanup(fixture.tearDown)
+        return fixture
 
     def test_late_source_change_finishes_stale_without_writing_asset(self):
-        service, card, item = self.media_service()
-        started, release = threading.Event(), threading.Event()
-        asset = {'sha256': 'a' * 64, 'preview_data_url': 'data:image/png;base64,AA==', 'original_b64': 'AA=='}
-        def fetch(url):
+        fixture = self.photo_fixture()
+        service = fixture.service
+        started = threading.Event()
+        asset = service.integrations._synthetic_photo_asset()
+        def load(message):
             started.set()
-            release.wait(3)
-            return asset
-        with patch('reception_service.requirement_media.fetch_image', side_effect=fetch):
-            ack = service.load_requirement_media('case', item['media_id'], 'stale-request')
+            fixture.release.wait(3)
+            return copy.deepcopy(asset)
+        with patch.object(service.integrations, "load_photo", side_effect=load):
+            ack = service.call("load_message_image", fixture.params)
+            self.assertEqual(ack, service.call("load_message_image", fixture.params))
             self.assertTrue(started.wait(3))
-            card['text'] = 'updated'
-            self.repo.put('message', encoded(['c', 'card']), card)
-            release.set()
-            self.assertTrue(service.finished.wait(3))
-        job = self.repo.get('job', ack['job_id'])
-        cache = self.repo.get('requirement_media_cache', encoded(['case', item['media_id']]))
-        self.assertEqual((job['status'], job['stage']), ('stale', 'stale'))
-        self.assertIsNotNone(job['completed_at'])
-        self.assertEqual(cache['status'], 'failed')
-        self.assertNotIn('sha256', cache)
-        self.assertIsNone(self.repo.get('image_asset', asset['sha256']))
+            fixture.ingest(text="changed source")
+            fixture.release.set()
+            self.assertEqual(fixture.wait(ack)["status"], "stale")
+        self.assertIsNone(service.repo.get("image_asset", asset["sha256"]))
 
-    def test_late_epoch_or_closing_change_finishes_cancelled(self):
-        for transition in ('epoch', 'closing'):
+    def test_late_read_generation_or_closing_change_finishes_cancelled(self):
+        for transition in ("read_generation", "closing"):
             with self.subTest(transition=transition):
-                service, card, item = self.media_service()
-                started, release = threading.Event(), threading.Event()
-                asset = {'sha256': transition * 10, 'preview_data_url': 'data:image/png;base64,AA=='}
-                def fetch(url):
+                fixture = self.photo_fixture()
+                service = fixture.service
+                started = threading.Event()
+                asset = service.integrations._synthetic_photo_asset()
+                def load(message):
                     started.set()
-                    release.wait(3)
-                    return asset
-                with patch('reception_service.requirement_media.fetch_image', side_effect=fetch):
-                    ack = service.load_requirement_media('case', item['media_id'], 'cancel-' + transition)
+                    fixture.release.wait(3)
+                    return copy.deepcopy(asset)
+                with patch.object(service.integrations, "load_photo", side_effect=load):
+                    ack = service.call("load_message_image", fixture.params)
                     self.assertTrue(started.wait(3))
                     with service._lock:
-                        if transition == 'epoch':
-                            service._epoch += 1
+                        if transition == "read_generation":
+                            service._monitor_generation += 1
                         else:
                             service._closing = True
-                    release.set()
-                    self.assertTrue(service.finished.wait(3))
-                job = self.repo.get('job', ack['job_id'])
-                cache = self.repo.get('requirement_media_cache', encoded(['case', item['media_id']]))
-                self.assertEqual((job['status'], job['stage']), ('cancelled', 'cancelled'))
-                self.assertIsNotNone(job['completed_at'])
-                self.assertEqual(cache['status'], 'failed')
-                self.assertNotIn('sha256', cache)
-                self.assertIsNone(self.repo.get('image_asset', asset['sha256']))
-                service._stop_requirement_media()
+                    fixture.release.set()
+                    self.assertEqual(fixture.wait(ack)["status"], "cancelled")
+                self.assertIsNone(service.repo.get("image_asset", asset["sha256"]))
 
     def test_shutdown_finishes_queued_jobs_without_starting_downloads(self):
-        service, card, item = self.media_service()
-        both_started, release = threading.Event(), threading.Event()
+        fixture = self.photo_fixture()
+        service = fixture.service
+        messages = [fixture.message] + [fixture.ingest(mid="extra-" + str(i)) for i in range(4)]
+        started = threading.Event()
         lock, calls = threading.Lock(), []
-        def fetch(url):
+        def load(message):
             with lock:
-                calls.append(url)
+                calls.append(message["message_id"])
                 if len(calls) == 2:
-                    both_started.set()
-            release.wait(3)
-            return {'sha256': 'c' * 64, 'preview_data_url': 'data:image/png;base64,AA=='}
-        with patch('reception_service.requirement_media.fetch_image', side_effect=fetch):
-            jobs = [service.load_requirement_media('case', item['media_id'], 'queued-' + str(i)) for i in range(3)]
-            self.assertTrue(both_started.wait(3))
+                    started.set()
+            fixture.release.wait(3)
+            return service.integrations._synthetic_photo_asset()
+        with patch.object(service.integrations, "load_photo", side_effect=load):
+            jobs = [service.call("load_message_image", fixture.parameters(row)) for row in messages[:4]]
+            self.assertTrue(started.wait(3))
+            from reception_service.errors import ServiceError
+            with self.assertRaises(ServiceError) as full:
+                service._enqueue_photo(fixture.parameters(messages[4]))
+            self.assertEqual(full.exception.code, "image_queue_full")
+            with service._lock:
+                service._closing = True
             stopped = threading.Thread(target=service._stop_requirement_media)
             stopped.start()
-            deadline = time.monotonic() + 3
-            while not service._requirement_media_stopped and time.monotonic() < deadline:
-                threading.Event().wait(.005)
-            self.assertTrue(service._requirement_media_stopped)
-            release.set()
+            fixture.release.set()
             stopped.join(3)
             self.assertFalse(stopped.is_alive())
         self.assertEqual(len(calls), 2)
-        self.assertEqual([self.repo.get('job', ack['job_id'])['status'] for ack in jobs], ['cancelled'] * 3)
-        self.assertEqual(self.repo.get('requirement_media_cache', encoded(['case', item['media_id']]))['status'], 'failed')
-        self.assertIsNone(self.repo.get('image_asset', 'c' * 64))
-        self.assertEqual(service._requirement_media_active, set())
+        self.assertEqual([fixture.wait(job)["status"] for job in jobs], ["cancelled"] * 4)
+        self.assertFalse(service.repo.list("image_asset"))
 
     def test_submit_failure_rolls_back_job_request_and_cache_and_releases_slot(self):
-        service, card, item = self.media_service()
-        with patch.object(service._requirement_media_pool, 'submit', side_effect=RuntimeError('synthetic failure')):
+        fixture = self.photo_fixture()
+        service = fixture.service
+        params = fixture.params
+        before_jobs = service.repo.list("job")
+        with patch.object(service._requirement_media_pool, "submit", side_effect=RuntimeError("synthetic failure")):
             with self.assertRaises(RuntimeError):
-                service.load_requirement_media('case', item['media_id'], 'submit-request')
-        self.assertIsNone(self.repo.get('requirement_media_request', 'submit-request'))
-        self.assertIsNone(self.repo.get('requirement_media_cache', encoded(['case', item['media_id']])))
-        self.assertEqual(self.repo.list('job'), [])
-        self.assertEqual(service._requirement_media_active, set())
-        acquired = [service._requirement_media_slots.acquire(blocking=False) for _ in range(4)]
-        self.assertEqual(acquired, [True] * 4)
-        for _ in acquired:
-            service._requirement_media_slots.release()
-        asset = {'sha256': 'b' * 64, 'preview_data_url': 'data:image/png;base64,AA==', 'original_b64': 'AA=='}
-        with patch('reception_service.requirement_media.fetch_image', return_value=asset):
-            ack = service.load_requirement_media('case', item['media_id'], 'submit-request')
-            self.assertTrue(service.finished.wait(3))
-        self.assertEqual(self.repo.get('job', ack['job_id'])['status'], 'succeeded')
+                service._enqueue_photo(params)
+        self.assertEqual(service.repo.list("job"), before_jobs)
+        self.assertIsNone(service.repo.get("message_image", encoded([params["conversation_id"], params["message_id"]])))
+        # The bounded queue remains available after transaction rollback.
+        ack = service.call("load_message_image", params)
+        self.assertEqual(fixture.wait(ack)["status"], "succeeded")
+        self.assertEqual(service.call("get_message_image", params)["status"], "ready")
 
     def test_cover_source_revision_and_restart(self):
         class Service(RequirementMediaMixin):
@@ -364,43 +347,24 @@ class RequirementMediaTests(unittest.TestCase):
         updated = service.set_product_image_source('case', 'photo', photo['source_version'], False, covered['revision'], 'source')
         self.assertEqual(service.invalidated, ['c'])
         self.assertFalse(updated['items'][0]['is_product_source'])
-        card = self.message('card', text='product', attachments=[{'kind': 'native-content', 'content': {
-            'cardType': 'product', 'fields': {'imageUrl': 'https://img.alicdn.com/p.jpg'}}}])
-        self.repo.put('message', json.dumps(['c', 'card'], separators=(',', ':')), card)
-        product = next(x for x in service.get_requirement_media('case')['items'] if x['kind'] == 'product_image')
-        started, release = threading.Event(), threading.Event()
-        def fetch(url):
-            started.set()
-            release.wait(3)
-            return {'sha256': 'a' * 64, 'preview_data_url': 'data:image/png;base64,AA==', 'original_b64': 'AA=='}
-        with patch('reception_service.requirement_media.fetch_image', side_effect=fetch):
-            ack = service.load_requirement_media('case', product['media_id'], 'load')
-            self.assertTrue(started.wait(3))
-            self.assertEqual(ack, service.load_requirement_media('case', product['media_id'], 'load'))
-            card['text'] = 'changed'
-            self.repo.put('message', json.dumps(['c', 'card'], separators=(',', ':')), card)
-            release.set()
-            service._stop_requirement_media()
-        self.assertIsNone(self.repo.get('image_asset', 'a' * 64))
-        self.assertEqual(service.invalidated, ['c'])
+        card = self.message("card", text="product", attachments=[{"kind": "native-content", "content": {
+            "cardType": "product", "fields": {"imageUrl": "https://img.alicdn.com/p.jpg"}}}])
+        self.repo.put("message", encoded(["c", "card"]), card)
+        self.assertEqual([row["kind"] for row in service.get_requirement_media("case")["items"]], ["customer_image"])
+        from reception_service.errors import ServiceError
+        with self.assertRaises(ServiceError) as error:
+            service.load_requirement_media("case", "legacy-product-image", "load")
+        self.assertEqual(error.exception.code, "image_unavailable")
+        service._stop_requirement_media()
         restarted = Service(self.repo)
-        reloaded = restarted.get_requirement_media('case')
-        self.assertEqual(reloaded['cover_id'], updated['cover_id'])
-        self.assertFalse(next(x for x in reloaded['items'] if x['kind'] == 'customer_image')['is_product_source'])
-        product = next(x for x in reloaded['items'] if x['kind'] == 'product_image')
-        completed = threading.Event()
-        restarted._changed = lambda *args: completed.set() if self.repo.get('image_asset', 'b' * 64) else None
-        asset = {'sha256': 'b' * 64, 'preview_data_url': 'data:image/png;base64,AA==', 'original_b64': 'AA=='}
-        fingerprint = semantic_fingerprint(shared_context(self.repo, self.owner, self.case, task_mode='automatic'))
-        with patch('reception_service.requirement_media.fetch_image', return_value=asset):
-            restarted.load_requirement_media('case', product['media_id'], 'load2')
-            self.assertTrue(completed.wait(3))
-        self.assertEqual(fingerprint, semantic_fingerprint(shared_context(self.repo, self.owner, self.case, task_mode='automatic')))
-        self.assertEqual(restarted.invalidated, [])
-        restarted._stop_requirement_media()
-        again = Service(self.repo)
-        self.assertTrue(any(x.get('data_url') == asset['preview_data_url'] for x in again.get_requirement_media('case')['items']))
-        again._stop_requirement_media()
+        try:
+            reloaded = restarted.get_requirement_media("case")
+            self.assertEqual(reloaded["cover_id"], updated["cover_id"])
+            self.assertFalse(reloaded["items"][0]["is_product_source"])
+            self.assertEqual(restarted.invalidated, [])
+            self.assertNotIn("img.alicdn.com", json.dumps(reloaded))
+        finally:
+            restarted._stop_requirement_media()
 
 
 if __name__ == '__main__':

@@ -5,7 +5,7 @@ export function validateChatParameters(method: ApiMethod, params: Record<string,
   const productFields: Partial<Record<ApiMethod, { required: string[]; optional?: string[] }>> = {
     list_products: { required: [] }, get_product: { required: ['local_product_id'] }, get_product_main_image: { required: ['local_product_id'] },
     list_suppliers: { required: [] }, get_supplier: { required: ['supplier_id'] },
-    save_supplier: { required: ['name', 'platform', 'platform_supplier_id', 'product_url', 'contact', 'notes', 'client_mutation_id'], optional: ['supplier_id', 'expected_revision'] },
+    save_supplier: { required: ['name', 'platform', 'platform_supplier_id', 'product_url', 'contact', 'notes', 'client_mutation_id'], optional: ['supplier_id', 'expected_revision', 'region'] },
     save_product_offer: { required: ['local_product_id', 'supplier_id', 'data', 'client_mutation_id'], optional: ['offer_id', 'expected_revision'] },
     select_supplier_offer: { required: ['case_id', 'offer_id', 'expected_case_revision', 'client_mutation_id'] },
     bind_requirement_product: { required: ['case_id', 'local_product_id', 'expected_case_revision', 'client_mutation_id'] },
@@ -33,6 +33,7 @@ export function validateChatParameters(method: ApiMethod, params: Record<string,
     if (method === 'save_supplier') {
       if (!id(params.name) || !id(params.platform) || !text(params.contact) || !text(params.notes)) fail();
       for (const key of ['platform_supplier_id', 'product_url']) if (params[key] !== null && !text(params[key])) fail();
+      if (Object.hasOwn(params, 'region') && params.region !== null && (typeof params.region !== 'string' || params.region.length > 200 || params.region.includes('\0'))) fail();
     }
     if (method === 'save_product_offer') {
       const data = params.data;

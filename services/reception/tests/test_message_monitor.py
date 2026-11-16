@@ -4,9 +4,11 @@ from __future__ import annotations
 import copy
 import hashlib
 from pathlib import Path
+import sys
 import tempfile
 import threading
 import time
+import traceback
 import unittest
 from unittest.mock import patch
 
@@ -394,17 +396,29 @@ class MessageMonitorTests(unittest.TestCase):
         self.facade.summary_calls.clear()
 
     def wait_job(self, ack):
+        job = self.service.repo.get('job', ack['job_id'], {})
+        # Initial seller activation creates a durable SQLite database. A disk
+        # commit has no four-second contract. Allow this setup up to 60s while
+        # retaining its terminal status assertion and the timeout diagnostics.
+        timeout = 60 if job.get('kind') == 'check_connection' else 4
         self.until(lambda: self.service.repo.get('job', ack['job_id'], {}).get('status')
-                   not in (None, 'queued', 'running'))
+                   not in (None, 'queued', 'running'), timeout=timeout)
         return self.service.repo.get('job', ack['job_id'])
 
-    def until(self, predicate):
-        deadline = time.monotonic() + 4
+    def until(self, predicate, *, timeout=4):
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if predicate():
                 return
             threading.Event().wait(0.005)
-        self.fail('synthetic task did not finish')
+        frames = sys._current_frames()
+        threads = '\n'.join(
+            f'{thread.name}:\n{"".join(traceback.format_stack(frames[thread.ident]))}'
+            for thread in threading.enumerate()
+            if thread.name.startswith('reception-') and thread.ident in frames
+        )
+        self.fail(f'synthetic task did not finish; jobs={self.service.list_jobs(include_background=True)!r}; '
+                  f'health={self.service.get_executor_health()!r}\n{threads}')
 
     def idle(self):
         self.until(lambda: not any(j['status'] in ('queued', 'running') for j in self.service.list_jobs(include_background=True)))
@@ -1002,14 +1016,28 @@ class MessageMonitorTests(unittest.TestCase):
             self.message(stamp=start + 1, mid='fresh', text='I am interested in ceramic mugs.'),
             self.message(stamp=start + 3, mid='new-buyer-source', text='I need 200 ceramic mugs.')]
         self.facade.summaries[None] = self.facade.summary_page([self.info(stamp=start + 3)])
-        self.tick()
-        self.idle()
-        with patch('reception_service.service.now_ms', return_value=start + 2000):
+        # Simulate a slow read: the merge window starts when the buyer message
+        # is ingested, not when reception was enabled.
+        with patch('reception_service.service.now_ms', return_value=start + 5000):
+            self.tick()
+            self.idle()
+        ingested_at = self.service.repo.get('conversation', 'customer-a')['last_buyer_at']
+        self.assertEqual(ingested_at, start + 5000)
+        schedule_at = ingested_at + self.service.settings['merge_seconds'] * 1000 + 1
+        with patch('reception_service.service.now_ms', return_value=schedule_at):
             self.schedule(self.service)
         self.idle()
         fresh_jobs = [row for row in self.service.repo.list('job')
                       if row.get('kind') == 'generate_draft' and row.get('source_message_id') == 'new-buyer-source']
-        self.assertEqual(len(fresh_jobs), 1)
+        self.assertEqual(len(fresh_jobs), 1, {
+            'jobs': self.service.list_jobs(include_background=True),
+            'sync_task': self.service.repo.get('message_sync_task', 'customer-a'),
+            'activity': self.service.repo.get('message_activity', 'customer-a'),
+            'watermark': self.service.repo.get('message_watermark', 'customer-a'),
+            'conversation': self.service.repo.get('conversation', 'customer-a'),
+            'source': self.service._automatic_source('customer-a'),
+            'settings': self.service.settings,
+        })
         self.assertEqual(fresh_jobs[0]['status'], 'succeeded', fresh_jobs[0])
         self.assertEqual(self.facade.generate_calls, 2)
 

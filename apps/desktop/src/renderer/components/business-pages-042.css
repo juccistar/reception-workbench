@@ -107,6 +107,11 @@
 .home-042-row { padding:16px 24px; border-top:0; border-bottom:1px solid #edf0f5; font-size:12px; }
 .home-042-statuses { padding:12px 24px 24px; }
 .home-042-status { padding:16px 0; font-size:12px; }
+.home-042-status:first-child { border-top:0; padding-top:0; }
+.home-042-row > .business-042-link { display:inline-flex; flex:none; }
+.home-042-reading { min-height:0; }
+.home-042-row strong { font-size:12px; font-weight:500; }
+.home-042-row small { font-size:10px; }
 .home-042-statuses > button { margin-top:20px; }
 .home-042-reading { padding:18px 24px; }
 .quotes-042 { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; }
@@ -136,6 +141,11 @@
 .quotes-042-supply { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:17px 0; border-top:1px solid #e8edf4; border-bottom:1px solid #e8edf4; color:#8a9bb2; font-size:11px; }
 .quotes-042-supply small { display:block; margin-top:6px; }
 .quotes-042-supplement { padding-top:25px; }
+.quotes-042-supplement > h3 { margin:0 0 14px; font-size:13px; }
+.quotes-042-supplement > textarea { display:block; width:100%; min-height:120px; margin:0 0 10px; border:1px solid #dfe5ef; border-radius:7px; font-size:13px; line-height:1.85; resize:vertical; }
+.quotes-042-save { margin-top:22px; }
+.quotes-042-product > div:last-child { min-width:0; }
+.quotes-042-product > div:last-child p { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; overflow-wrap:anywhere; }
 .quotes-042-supplement .supplement-heading h2 { font-size:13px; }
 .quotes-042-supplement > p, .quotes-042-save > span { color:#8a9bb2; font-size:11px; line-height:1.8; }
 @media (max-width:650px) {

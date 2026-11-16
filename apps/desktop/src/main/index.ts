@@ -434,6 +434,18 @@ function installIPC() {
     if (!imageRequestId(id)) throw new Error('原图请求无效。');
     imageRequests.get(id)?.abort();
   });
+  const copyOriginal = async (reference: unknown) => {
+    mediaReady(); validateReference(reference);
+    const controller = new AbortController(); imageCopies.add(controller);
+    try {
+      await readOriginal(call, reference, mediaReady, true, controller.signal, async image => {
+        mediaReady();
+        await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(image.bytes)], { type: 'image/png' }) })]);
+      });
+    } finally { imageCopies.delete(controller); }
+    return 'copied' as const;
+  };
+  ipcMain.handle('reception:image:copy', async (event, reference: unknown) => { validSender(event); await copyOriginal(reference); });
   ipcMain.handle('reception:image:menu', async (event, reference: unknown) => {
     validSender(event); mediaReady(); validateReference(reference);
     const target = window!;
@@ -442,16 +454,7 @@ function installIPC() {
       const menu = Menu.buildFromTemplate([{ label: '复制图片', click: () => { chosen = true; } }]);
       menu.popup({ window: target, callback: () => resolve(chosen) });
     });
-    if (!selected) return 'cancelled';
-    mediaReady();
-    const controller = new AbortController(); imageCopies.add(controller);
-    try {
-      await readOriginal(call, reference, mediaReady, true, controller.signal, async image => {
-        mediaReady();
-        await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(image.bytes)], { type: 'image/png' }) })]);
-      });
-    } finally { imageCopies.delete(controller); }
-    return 'copied';
+    return selected ? copyOriginal(reference) : 'cancelled';
   });
   ipcMain.handle('reception:product:open', async (event, reference: unknown) => {
     validSender(event); mediaReady();

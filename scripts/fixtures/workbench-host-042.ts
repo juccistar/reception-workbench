@@ -56,11 +56,15 @@ async function start() {
     (globalThis as any).__blockWindowAi = (enabled: boolean) => client!.invoke('_fixture_ai_block', { enabled });
     (globalThis as any).__windowAiBlockState = () => client!.invoke('_fixture_ai_block_state');
   }
+  const rpcTrace: { method: string; started_at: number; completed_at?: number; status?: string; error?: string }[] = [];
+  (globalThis as any).__windowRpcDiagnostics = () => rpcTrace.slice(-60);
   client.on('event', event => { if (!win.isDestroyed()) win.webContents.send('reception:event', event); });
   bind('reception:invoke', (method: unknown, params: unknown) => {
     if (closing || typeof method !== 'string' || !api.has(method) || !params || typeof params !== 'object' || Array.isArray(params)) throw new Error('fixture RPC rejected');
     validateChatParameters(method as any, params as Record<string, unknown>);
-    return client!.invoke(method, params as Record<string, unknown>);
+    const row = { method, started_at: Date.now() } as typeof rpcTrace[number];
+    rpcTrace.push(row); if (rpcTrace.length > 120) rpcTrace.shift();
+    return client!.invoke(method, params as Record<string, unknown>).then(value => { row.completed_at = Date.now(); row.status = 'succeeded'; return value; }, error => { row.completed_at = Date.now(); row.status = 'failed'; row.error = String(error?.message ?? 'RPC failed').slice(0, 400); throw error; });
   });
   const ready = () => { if (closing || win.isDestroyed()) throw new Error('窗口正在退出'); };
   const invokeMedia = <T>(method: string, params: Record<string, unknown>) => client!.invoke(method, params) as Promise<T>;
@@ -85,6 +89,12 @@ async function start() {
     if (!selected) return 'cancelled';
     await readOriginal(invokeMedia, reference, ready, true);
     return 'copied'; // Synthetic host deliberately does not write the system clipboard.
+  });
+  bind('reception:image:copy', async reference => {
+    ready(); validateReference(reference);
+    await readOriginal(invokeMedia, reference, ready, true);
+    // The isolated host exercises the full PNG preparation without changing the clipboard.
+    (globalThis as any).__windowImageCopyCount = ((globalThis as any).__windowImageCopyCount ?? 0) + 1;
   });
   const exitHost = createExitDialogHost<BrowserWindow, Electron.WebFrameMain, Electron.IpcMainInvokeEvent>({
     currentFrame: target => target.isDestroyed() ? null : target.webContents.mainFrame,

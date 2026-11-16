@@ -78,7 +78,11 @@
 .pp042-supplier-name { margin: 0; font-size: 20px; line-height: 1.7; overflow-wrap: anywhere; }
 .pp042-supplier-meta { display: flex; gap: 12px; align-items: center; margin: 13px 0 23px; color: #8190a8; font-size: 12px; }
 .pp042-offer-top { display: flex; justify-content: space-between; gap: 16px; }
-.pp042-offer-cost { flex: none; color: #263955; font-weight: 600; text-align: right; }
+.pp042-offer-top > div:first-child { min-width: 0; }
+.pp042-offer-bottom { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 12px; border-top: 1px solid #edf0f5; }
+.pp042-default-offer { border-color: #a9baf3 !important; }
+.pp042-offer-bottom button { padding: 7px 12px; font-size: 12px; }
+.pp042-offer-cost { flex: 0 1 40%; min-width: 0; color: #263955; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
 .pp042-offer-cost small { display: block; margin-top: 5px; color: #94a0b2; font-size: 11px; font-weight: normal; }
 .pp042-form label { display: block; margin: 0 0 18px; color: #536580; font-size: 12px; }
 .pp042-form input, .pp042-form select, .pp042-form textarea { display: block; box-sizing: border-box; width: 100%; margin-top: 8px; padding: 10px 12px; border: 1px solid #dce5f1; border-radius: 6px; background: white; color: #263955; font: inherit; }

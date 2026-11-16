@@ -13,6 +13,14 @@
     "status": "passed", "screenshots_viewed": 14,
     "coverage": "isolated_real_chrome_synthetic_accounts_and_network"
   },
+  "models_window": {
+    "report": "artifacts/verification/launcher-models-042-isolation-008/report.json",
+    "status": "passed", "screenshots_viewed": 9,
+    "coverage": "production_launcher_and_model_store_with_temporary_knownfolder_and_synthetic_encryption",
+    "model_checks": 0, "real_credentials_accessed": false,
+    "covered": ["empty and configured models", "add and edit API", "cancel capability fee confirmation", "cancel delete", "cancel and accept route save impact", "continue editing after unsaved close"],
+    "prior_failures_preserved": ["isolation-006 launch timeout", "isolation-007 stopped after a Key label mismatch and unsaved close cleanup wait"]
+  },
   "backend_prior_failures": [
     "replica-final-001: async model cleanup 2-second join assertion; unchanged single-file rerun passed",
     "replica-final-002: connection preparation timed out before message-monitor assertion; single-file rerun passed 65 tests after adding timeout diagnostics, cause not established"
@@ -28,15 +36,34 @@
     "real_user_cleanup_executed": false
   },
   "integration_checks": {
-    "desktop_types": "artifacts/verification/042-replica-integration-typecheck-007.log",
+    "desktop_types": "artifacts/verification/042-replica-integration-typecheck-009.log",
     "feishu_configuration": { "log": "artifacts/verification/042-feishu-configuration-002.log", "tests": 3, "status": "passed" },
     "feishu_host": { "log": "artifacts/verification/042-feishu-host-001.log", "tests": 4, "status": "passed" },
     "workbench_regression_before_selector_updates": { "log": "artifacts/verification/042-replica-ui-integration-001.log", "tests": 126, "failed": 42, "status": "failed" },
     "latest_workbench_and_host": { "log": "artifacts/verification/042-replica-ui-integration-004.log", "files": 4, "tests": 137, "status": "passed" },
-    "latest_page_layout_and_behavior": { "log": "artifacts/verification/042-replica-ui-integration-007.log", "files": 3, "tests": 151, "status": "passed", "overlaps_previous_runs": true },
+    "latest_page_layout_and_behavior": { "log": "artifacts/verification/042-replica-ui-integration-008.log", "files": 4, "tests": 155, "status": "passed", "overlaps_previous_runs": true },
     "full_suite": false
   },
-  "pending": ["rebuilt source window and reference comparison", "diagnose recurring monitor preparation and model cleanup timing failures in replica-final-003", "final candidate packaging and resource verification"],
+  "backend_current": {
+    "aggregate_report": "artifacts/verification/backend-042-replica-final-004/report.json",
+    "aggregate_status": "failed", "aggregate_tests": 229,
+    "passed_files": 15, "passed_tests": 225,
+    "failed_file": "test_model_runtime_040.py",
+    "failure": "purpose-slot fixture expected startup in 2 seconds; connection and previous cleanup cases passed",
+    "corrected_file_rerun": { "log": "artifacts/verification/042-model-runtime-final-001.log", "tests": 4, "status": "passed" },
+    "changes": "test scheduling uses controlled events and budgets; production runtime unchanged",
+    "timing_root_cause_limit": "Earlier COMMIT sampling and wait timeouts do not establish the underlying machine delay or link it to the window failure"
+  },
+  "requirement_media_legacy_fixture": { "previous_failure_log": "artifacts/verification/042-requirement-media-0311-001.log", "updated_to_current_chat_image_queue": true, "tests": 16, "status": "passed" },
+  "supplier_window_contract_fix": "region now passes the shared preload/main allowlist with backend-matching type and size validation",
+  "image_dialog": {
+    "title_and_footer_follow_design": true,
+    "direct_copy_uses_existing_controlled_full_png_preparation": true,
+    "renderer_regression": { "log": "artifacts/verification/042-image-dialog-001.log", "tests": 3, "status": "passed" },
+    "legacy_host_fixture": { "log": "artifacts/verification/042-image-copy-host-001.log", "status": "bootstrap_failed_no_test_executed", "production_defect_established": false },
+    "real_system_clipboard_end_to_end": false
+  },
+  "pending": ["rebuilt source window and reference comparison", "final candidate packaging and resource verification"],
   "release": { "candidate_built": false, "uploaded": false, "published": false },
   "boundaries": { "installed": false, "real_data_migration": false, "real_customer_sends": false, "paid_models": false, "real_feishu_requests": false, "private_source_pushed": false }
 }

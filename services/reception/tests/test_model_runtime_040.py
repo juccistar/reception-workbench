@@ -18,16 +18,27 @@ class ModelRuntimeTest(unittest.TestCase):
                                 return_value=Path(budget.name) / 'model-budget'))
 
     def test_cancel_waits_for_async_cleanup(self):
-        runtime = ModelRuntime()
+        cleanup_started, allow_cleanup, cleaned = threading.Event(), threading.Event(), threading.Event()
+        budget_released = threading.Event()
+        class Budget:
+            def __init__(self, directory=None):
+                pass
+            async def acquire(self, purpose, heavy):
+                return object()
+            def release(self, token):
+                budget_released.set()
+        runtime = ModelRuntime(budget_factory=Budget)
         self.addCleanup(runtime.close)
         cancel = threading.Event()
-        started, cleaned = threading.Event(), threading.Event()
+        started = threading.Event()
         async def operation():
             try:
                 started.set()
                 await asyncio.Event().wait()
             finally:
-                await asyncio.sleep(0.05)
+                cleanup_started.set()
+                while not allow_cleanup.is_set():
+                    await asyncio.sleep(0.01)
                 cleaned.set()
         result = []
         def call():
@@ -37,11 +48,18 @@ class ModelRuntimeTest(unittest.TestCase):
                 result.append(exc.code)
         thread = threading.Thread(target=call)
         thread.start()
-        self.assertTrue(started.wait(2))
-        cancel.set()
-        thread.join(2)
+        try:
+            self.assertTrue(started.wait(2))
+            cancel.set()
+            self.assertTrue(cleanup_started.wait(2))
+            self.assertTrue(thread.is_alive())
+            self.assertFalse(budget_released.is_set())
+        finally:
+            allow_cleanup.set()
+        thread.join(3)
         self.assertFalse(thread.is_alive())
         self.assertTrue(cleaned.is_set())
+        self.assertTrue(budget_released.is_set())
         self.assertEqual(result, ['model_cancelled'])
 
     def test_cancel_keeps_slot_until_blocking_callback_finishes(self):
@@ -124,26 +142,64 @@ class ModelRuntimeTest(unittest.TestCase):
         self.assertEqual(order, ['acquire', 'inputs', 'budget_release', 'finished'])
 
     def test_each_purpose_has_one_slot(self):
-        runtime = ModelRuntime()
+        second_admitted = threading.Event()
+        class Budget:
+            def __init__(self, directory=None):
+                self.reception_count = 0
+            async def acquire(self, purpose, heavy):
+                if purpose == 'reception':
+                    self.reception_count += 1
+                    if self.reception_count == 2:
+                        second_admitted.set()
+                return object()
+            def release(self, token):
+                pass
+        runtime = ModelRuntime(budget_factory=Budget)
         self.addCleanup(runtime.close)
         first_started, release, second_started = threading.Event(), threading.Event(), threading.Event()
+        translation_started = threading.Event()
+        errors = []
         async def first():
             first_started.set()
             while not release.is_set():
                 await asyncio.sleep(0.01)
         async def second():
             second_started.set()
-        a = threading.Thread(target=lambda: runtime.run('reception', first))
-        b = threading.Thread(target=lambda: runtime.run('reception', second))
-        a.start()
-        self.assertTrue(first_started.wait(2))
-        b.start()
-        self.assertFalse(second_started.wait(0.1))
-        release.set()
-        a.join(2)
-        b.join(2)
+        async def translation():
+            translation_started.set()
+        def run(purpose, operation):
+            try:
+                runtime.run(purpose, operation)
+            except BaseException as error:
+                errors.append(error)
+        threads = [threading.Thread(target=run, args=('reception', first)),
+                   threading.Thread(target=run, args=('reception', second)),
+                   threading.Thread(target=run, args=('translation', translation))]
+        started_threads = []
+        try:
+            threads[0].start()
+            started_threads.append(threads[0])
+            self.assertTrue(first_started.wait(2), errors)
+            threads[1].start()
+            started_threads.append(threads[1])
+            self.assertTrue(second_admitted.wait(2), errors)
+            threads[2].start()
+            started_threads.append(threads[2])
+            self.assertTrue(translation_started.wait(2), errors)
+            self.assertFalse(second_started.is_set(), 'same-purpose operation entered the occupied slot')
+        finally:
+            release.set()
+            for thread in started_threads:
+                thread.join(3)
+            if any(thread.is_alive() for thread in started_threads):
+                try:
+                    runtime.close()
+                finally:
+                    for thread in started_threads:
+                        thread.join(3)
+        self.assertFalse(any(thread.is_alive() for thread in started_threads))
+        self.assertEqual(errors, [])
         self.assertTrue(second_started.is_set())
-        self.assertFalse(a.is_alive() or b.is_alive())
 
 
 if __name__ == '__main__':
