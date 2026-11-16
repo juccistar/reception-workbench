@@ -2,14 +2,14 @@
   "version": "0.4.1",
   "date": "2026-11-15",
   "updated": "2026-11-16",
-  "status": "candidate_B_built_final_package_validation_pending",
+  "status": "candidate_B_packaged_and_isolated_checks_passed_publication_blocked_authentication",
   "formal_revision": {
     "date": "2026-11-16",
     "production_build": {
       "status": "passed",
       "command": "node scripts/build.mjs",
       "date": "2026-11-16",
-      "window_validation": "pending"
+      "window_validation": "passed_source_009_and_candidate_B_resources"
     },
     "typecheck": "passed",
     "backend_tests": {
@@ -65,7 +65,7 @@
       "independent_disconnect": "passed"
     },
     "candidate": {
-      "status": "built_pending_final_verification",
+      "status": "package_and_isolated_window_checks_passed",
       "name": "B",
       "date": "2026-11-16",
       "source_commit": "d0204fbce9a5bbc2cf1b24a31bb2bd8cc0953e5c",
@@ -75,7 +75,12 @@
       "signed_update_metadata": "ed25519",
       "installed": false,
       "real_data_migration": false,
-      "default_entry_unchanged": true
+      "default_entry_unchanged": true,
+      "build_commit": "58baaa2",
+      "immediate_local_commit": true,
+      "published": false,
+      "private_source_pushed": false,
+      "application_version": "0.4.1"
     },
     "real_account": false,
     "real_model_calls": 0,
@@ -115,7 +120,148 @@
       "real_customer_sqlite_read": false,
       "live_task_details_unavailable": true
     },
-    "backend_total": 141
+    "backend_total": 141,
+    "candidate_package": {
+      "status": "passed",
+      "report": "artifacts/verification/041-revision-001/candidate-integrity.json",
+      "integrity": {
+        "files": 179,
+        "customer_databases": 0,
+        "development_directories": 0
+      },
+      "application": {
+        "asar_entries": 16,
+        "compiled_inputs_match": true
+      },
+      "python_source": {
+        "files": 112,
+        "manifest": "artifacts\\build\\package-input-1794807611462\\source-manifest.json"
+      },
+      "sdk": {
+        "files": 3377,
+        "manifest_sha256": "6871ac31a25b9381e5032244a9aed7e7d636940865070c7d8e36c2657ca3702b"
+      },
+      "extension": {
+        "files": 5,
+        "manifest_sha256": "c42c820c3883748e09baf8790ba3852be53b3674e4a52e620d060b15b321a63a"
+      },
+      "update": {
+        "fixed_ed25519_signature": true,
+        "windows_authenticode": "NotSigned",
+        "installer_sha256": "704ad531ada4a32ca202bb5e259307133642eb573da46547edaf3071da5ca013",
+        "installer_bytes": 145025957
+      },
+      "zip": {
+        "entries": 180,
+        "verified_files": 179,
+        "sha256": "1c324265c5f38fc84b687ede2d1980527d6a1d8b51c106ab8f6edcf036ce3d7d",
+        "bytes": 188870658
+      },
+      "installer_resources": {
+        "status": "passed",
+        "report": "artifacts/verification/041-revision-001/installer-resources.json",
+        "identical_resource_files": 99,
+        "installer_only_resources": [
+          "app-update.yml",
+          "elevate.exe",
+          "update-policy.json"
+        ],
+        "nsis_elevate_matches_builder_cache": true,
+        "nsis_elevate_sha256": "9b1fbf0c11c520ae714af8aa9af12cfd48503eedecd7398d8992ee94d1b4dc37",
+        "application_backend_sdk_and_extension_identical": true,
+        "no_links": true
+      },
+      "windows_executable_properties": {
+        "report": "artifacts/verification/041-revision-001/windows-pe-metadata.json",
+        "installer_authenticode": "NotSigned",
+        "desktop_authenticode": "NotSigned",
+        "product_version": "45.2.3",
+        "file_version": "45.2.3",
+        "original_filename": "electron.exe",
+        "gui_launched": false,
+        "pe_version_role": "Electron_runtime_properties_application_version_is_in_app_asar"
+      }
+    },
+    "candidate_frozen_account": {
+      "status": "passed",
+      "report": "artifacts/verification/whatsapp-account-exe-041-candidate-b-001/report.json",
+      "frozen_backend": true,
+      "synthetic_private_rpc": true,
+      "actual_browser": false,
+      "real_account_authenticated": false,
+      "offline_cli_roundtrip": true,
+      "original_unknown_survives_restore": true,
+      "restored_reception_disabled": true,
+      "writeback_unavailable": true,
+      "normal_process_exit": true
+    },
+    "candidate_frozen_models": {
+      "status": "passed",
+      "report": "artifacts/verification/packaged-models-041-candidate-b-001/report.json",
+      "frozen_backend": true,
+      "protocols": 2,
+      "local_http_requests": 18,
+      "image_attachments": 14,
+      "real_model_calls": 0,
+      "merchant_database_opened": false
+    },
+    "candidate_window": {
+      "status": "passed",
+      "report": "artifacts/verification/launcher-revision-041-candidate-b-002/report.json",
+      "production_launcher_host": true,
+      "candidate_renderer_preload_frozen_backend_sdk_and_extension": true,
+      "synthetic_sdk_and_customers": true,
+      "real_system_chrome": true,
+      "known_folder_isolated": true,
+      "actual_release_exe_entry": false,
+      "screenshots_viewed": 9,
+      "checks": {
+        "three_filters": true,
+        "local_alias_keeps_verified_company": true,
+        "copy_handler_preserves_all_three_paragraphs": true,
+        "full_host_authorization_present": true,
+        "two_independent_browsers_and_native_panels": true,
+        "website_has_no_business_binding": true,
+        "customer_association_and_late_search_fence": true,
+        "disconnect_one_keeps_other_running": true,
+        "narrow_cards_and_fixed_settings_footer": true,
+        "running_account_hides_to_tray": true,
+        "normal_shutdown": true
+      },
+      "native_clipboard_end_to_end": false,
+      "real_account": false,
+      "model_calls": 0,
+      "customer_sends": 0
+    },
+    "candidate_actual_exe_entry": {
+      "status": "not_run",
+      "reason": "preserve_existing_user_session_and_single_instance_namespace",
+      "existing_user_windows_closed_or_operated_for_verification": false,
+      "isolated_candidate_resources_do_not_replace_actual_entry_verification": true
+    },
+    "candidate_validation_corrections": [
+      {
+        "report": "artifacts/verification/041-revision-001/candidate-integrity-initial-failed.json",
+        "issue": "ASAR SDK path separators required Windows normalization in independent verifier",
+        "product_changed": false
+      },
+      {
+        "report": "artifacts/verification/041-revision-001/installer-resources-initial-failed.json",
+        "issue": "independent installer comparison omitted standard NSIS elevate helper; helper now hash-matched to builder cache",
+        "product_changed": false
+      },
+      {
+        "report": "artifacts/verification/041-revision-001/publication-preflight-initial-failed.json",
+        "issue": "independent preflight initially treated JSON-formatted YAML as plain YAML; corrected to actual JSON format",
+        "product_changed": false
+      },
+      {
+        "report": "artifacts/verification/launcher-revision-041-candidate-b-001/report.json",
+        "issue": "UnknownVizError before compositor first frame; driver now waits for visible frames and uses stayAwake capture",
+        "product_changed": false
+      }
+    ],
+    "contract_synchronized": "docs/IMPLEMENTATION_CONTRACT.md"
   },
   "branch": "feat/whatsapp-chrome-0.4.1",
   "base_commit": "626fe07",
@@ -123,7 +269,7 @@
   "scope_revision": {
     "date": "2026-11-16",
     "requested": "update_development_plan_after_interactive_ui_review",
-    "formal_runtime": "implemented_isolated_real_chrome_and_production_account_service_verified",
+    "formal_runtime": "implemented_source_009_and_candidate_B_isolated_real_chrome_frozen_backend_verified",
     "targets": [
       "unified_all_international_whatsapp_account_cards",
       "independent_parallel_whatsapp_accounts",
@@ -153,7 +299,10 @@
     "real_multi_account_runtime_verified": false,
     "real_chrome_side_panel_verified": true,
     "side_panel_route": "fixed_extension_installed_via_owned_chrome_private_cdp_pipe_extension_context_binding",
-    "new_production_build": true
+    "new_production_build": true,
+    "new_candidate": "B",
+    "synthetic_parallel_runtime_verified": true,
+    "actual_authenticated_current_customer_identification_verified": false
   },
   "authorization": {
     "development": true,
@@ -189,7 +338,7 @@
   },
   "verification": {
     "accio_compact_launch_layout": {
-      "status": "source_fix_in_shared_worktree_pending_new_candidate",
+      "status": "source_fix_packaged_in_candidate_B_not_installed",
       "files": [
         "scripts/connect-live.mjs",
         "scripts/tests/connect-live.test.mjs"
@@ -206,9 +355,9 @@
         "new_cases": 5
       },
       "this_session_reviewed_source_diff_and_report": true,
-      "this_session_reran_tests": false,
+      "this_session_reran_tests": true,
       "installed_files_changed": false,
-      "new_build_or_installation": false,
+      "new_build_or_installation": true,
       "real_authorized_launch_verified": false,
       "temporary_mapping_entry_is_release_default": false,
       "temporary_entry_actual_launch": {
@@ -221,7 +370,14 @@
         "source_fix_packaged_or_installed": false,
         "repaired_normal_entry_real_launch_verified": false,
         "real_model_or_customer_send_receive_verified": false
-      }
+      },
+      "this_session_targeted_tests": {
+        "passed": 24,
+        "full_suite": false
+      },
+      "new_build": "candidate_B",
+      "new_installation": false,
+      "candidate_B_contains_fix": true
     },
     "chrome_public_qr": {
       "report": "artifacts/verification/chrome-041-p1-run-20261115b/report.json",
@@ -783,17 +939,64 @@
     "draft_created": false,
     "assets_uploaded": false,
     "blockers": [
-      "updated_ui_parallel_accounts_and_side_panel_scope_not_implemented",
-      "github_cli_not_authenticated",
-      "official_github_device_authorization_endpoint_connection_timeout"
+      "github_cli_not_authenticated"
     ],
     "known_limitations": [
-      "prior_intermittent_public_qr_sdk_timeout_root_cause_unconfirmed_latest_source_007_passed",
+      "prior_intermittent_sdk_initialization_timeout_root_cause_unconfirmed",
       "windows_installer_unsigned",
-      "real_account_paid_model_quality_and_actual_cache_rate_unverified"
+      "candidate_B_actual_release_exe_gui_entry_not_run",
+      "real_logged_in_current_customer_identification_and_account_messaging_unverified",
+      "paid_model_quality_and_actual_cache_rate_unverified",
+      "reported_live_message_image_specific_failure_cause_not_obtained"
     ],
     "explicit_publish_requested": "2026-11-16",
     "publication_attempt": {
+      "date": "2026-11-16",
+      "candidate": "B",
+      "status": "blocked_authentication",
+      "preflight_status": "passed",
+      "preflight_report": "artifacts/verification/041-revision-001/publication-preflight.json",
+      "verified_assets": [
+        {
+          "name": "ReceptionWorkbench-Setup-0.4.1.exe",
+          "path": "relase\\reception-0.4.1-release-B-20261116\\release-feed\\ReceptionWorkbench-Setup-0.4.1.exe",
+          "bytes": 145025957,
+          "sha256": "704ad531ada4a32ca202bb5e259307133642eb573da46547edaf3071da5ca013",
+          "sha512": "VTdBCtHGv8YWG4xLy76K50a/zjkMKF6c0cZHX2cXuaJ60fG0KSkhuIG02yJ7vsbKl1zXwnA7zafqvR6jsP+zXw=="
+        },
+        {
+          "name": "ReceptionWorkbench-Setup-0.4.1.exe.blockmap",
+          "path": "relase\\reception-0.4.1-release-B-20261116\\release-feed\\ReceptionWorkbench-Setup-0.4.1.exe.blockmap",
+          "bytes": 150818,
+          "sha256": "16e0bdb76524705d6be0201049d448011ebbcd20790deef6a653d895553a43ed",
+          "sha512": "gE07NcdQc6gdMLGjPnAq9ByL+zAUjdf9SYDm8i+0hzTYn5RWRWHHDERPBeJIK3A/DCONcQu+GMRYpp0ZkvlDow=="
+        },
+        {
+          "name": "latest.yml",
+          "path": "relase\\reception-0.4.1-release-B-20261116\\release-feed\\latest.yml",
+          "bytes": 722,
+          "sha256": "d445364a345a67828f35247431b30cac0c3384b17d745df7952fb79792141ad6",
+          "sha512": "gdyyJH++bm22kWHwDrA7uLg7uoc9CpDPd4xwPtFXu0RZqsCx3c0Ojb/L/y9CjmvMEtWD2oZr+cx8SlbOMc6U3g=="
+        },
+        {
+          "name": "ReceptionWorkbench-0.4.1.zip",
+          "path": "relase\\reception-0.4.1-release-B-20261116\\ReceptionWorkbench-0.4.1.zip",
+          "bytes": 188870658,
+          "sha256": "1c324265c5f38fc84b687ede2d1980527d6a1d8b51c106ab8f6edcf036ce3d7d",
+          "sha512": "8HhKOE8jiWEUekg+AwBUfs/Zk29xJp9D/dPYC7uq/5lARGTlDd2XdxxuN5u1Hf3D57T+ZIkQchmWTn+8yLyLcQ=="
+        }
+      ],
+      "public_release_notes": "artifacts/verification/041-revision-001/public-release-notes.md",
+      "current_cli_authenticated": false,
+      "official_device_authorization_retried_this_stage": false,
+      "draft_created": false,
+      "assets_uploaded": false,
+      "published": false
+    },
+    "installed": false,
+    "real_data_migrated": false,
+    "candidate": "B",
+    "previous_publication_attempt_A": {
       "status": "blocked_authentication",
       "report": "artifacts/verification/publication-041-20261116-attempt-001.json",
       "preflight_report": "artifacts/verification/publication-041-20261116-preflight-001/report.json",
@@ -804,9 +1007,10 @@
       "authorization_endpoint": "https://github.com/login/device/code",
       "authorization_result": "connection_timeout",
       "public_latest_observed": "v0.3.21",
-      "anonymous_public_api_read": true
+      "anonymous_public_api_read": true,
+      "candidate": "A",
+      "historical": true
     },
-    "installed": false,
-    "real_data_migrated": false
+    "private_source_pushed": false
   }
 }

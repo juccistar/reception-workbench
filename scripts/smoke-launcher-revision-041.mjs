@@ -38,7 +38,27 @@ let app;
 try {
   app = await electron.launch({ executablePath: path.join(root, 'node_modules/electron/dist/electron.exe'), args: [fixture], cwd: root, env, timeout: 90000 });
   const page = await app.firstWindow();
-  const shot = async name => { const encoded = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64')); await writeFile(path.join(output, name), Buffer.from(encoded, 'base64')); report.screenshots.push(name); };
+  const shot = async name => {
+    // DOM readiness can precede the first compositor frame in a packaged-resource window.
+    await app.evaluate(({ BrowserWindow }) => { const window = BrowserWindow.getAllWindows()[0]; if (window.isMinimized()) window.restore(); window.show(); });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    let encoded;
+    await until(async () => {
+      try {
+        encoded = await app.evaluate(async ({ BrowserWindow }) => {
+          const image = await BrowserWindow.getAllWindows()[0].webContents.capturePage({ stayAwake: true });
+          if (image.isEmpty()) throw new Error('Launcher frame is empty');
+          return image.toPNG().toString('base64');
+        });
+        return true;
+      } catch (error) {
+        if (!/UnknownVizError|Launcher frame is empty/.test(String(error))) throw error;
+        return false;
+      }
+    }, 10000);
+    await writeFile(path.join(output, name), Buffer.from(encoded, 'base64'));
+    report.screenshots.push(name);
+  };
   const panel = id => app.evaluate((_, id) => globalThis.chromeFixture.panel(id), id);
   const interact = (id, action, value) => app.evaluate((_, p) => globalThis.chromeFixture.interact(p.id, p.action, p.value), { id, action, value });
   await page.getByText('还没有账号', { exact: true }).waitFor();
