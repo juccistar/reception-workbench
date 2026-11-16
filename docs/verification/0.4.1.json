@@ -47,15 +47,31 @@
       "status": "in_progress",
       "failed_reports": [
         "artifacts/verification/launcher-revision-041-source-001/report.json",
-        "artifacts/verification/launcher-revision-041-source-002/report.json"
+        "artifacts/verification/launcher-revision-041-source-002/report.json",
+        "artifacts/verification/launcher-revision-041-source-003/report.json",
+        "artifacts/verification/launcher-revision-041-source-004/report.json"
       ],
       "first_four_screenshots_viewed": true,
-      "extension_readiness_fix": "pending_actual_window_recheck"
+      "extension_readiness_fix": "pending_actual_window_recheck",
+      "native_panel_current_synthetic_customer": "source_004_verified_screenshot_viewed"
     },
     "candidate": "pending",
     "real_account": false,
     "real_model_calls": 0,
-    "full_suite": false
+    "full_suite": false,
+    "metadata_decryption": {
+      "ciphertext_bound_cache": true,
+      "fresh_file_and_live_handshake_preserved": true,
+      "targeted_tests": 17
+    },
+    "chrome_public_extension": {
+      "report": "artifacts/verification/chrome-host-041-revision-001/report.json",
+      "status": "passed",
+      "scenarios": 2,
+      "minimum_observation_ms": 65000,
+      "screenshots_viewed": 2,
+      "real_account": false
+    }
   },
   "branch": "feat/whatsapp-chrome-0.4.1",
   "base_commit": "626fe07",

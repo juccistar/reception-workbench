@@ -1,6 +1,7 @@
 /** Isolated GUI fixture: real Chrome and native extension, synthetic SDK and no network. */
 import { EventEmitter } from 'node:events';
 import { createHash } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { ChromeWhatsAppHost as ProductionHost } from '../../apps/desktop/src/main/whatsapp/chrome-host';
 export { resolveGoogleChrome } from '../../apps/desktop/src/main/whatsapp/chrome-host';
@@ -30,7 +31,12 @@ class ControlledClient extends EventEmitter {
     };
     this.pupPage = (await this.pupBrowser.pages())[0];
     await this.pupPage.setRequestInterception(true);
-    this.pupPage.on('request', (request: any) => void request.respond({ status: 200, contentType: 'text/html', body: '<!doctype html><meta charset="utf-8"><title>隔离聊天验证</title><style>body{font:16px sans-serif;background:#eef2f1;padding:50px;color:#34433d}article{background:white;border-radius:12px;padding:28px;max-width:650px}</style><article><h1>合成客户甲</h1><p>这是隔离验证页面，不连接 WhatsApp，也不发送消息。</p></article>' }));
+    this.pupPage.on('request', (request: any) => {
+      const url = new URL(request.url());
+      if (!['http:', 'https:'].includes(url.protocol)) { void request.continue(); return; }
+      if (url.hostname !== 'web.whatsapp.com') { void request.abort(); return; }
+      void request.respond({ status: 200, contentType: 'text/html', body: '<!doctype html><meta charset="utf-8"><title>隔离聊天验证</title><style>body{font:16px sans-serif;background:#eef2f1;padding:50px;color:#34433d}article{background:white;border-radius:12px;padding:28px;max-width:650px}</style><article><h1>合成客户甲</h1><p>这是隔离验证页面，不连接 WhatsApp，也不发送消息。</p></article>' });
+    });
     await this.pupPage.goto('https://web.whatsapp.com/', { waitUntil: 'domcontentloaded' });
     await this.pupPage.evaluate(() => {
       const rows = [{ id: { _serialized: '10000001@c.us' }, name: '合成客户甲' }, { id: { _serialized: '10000002@c.us' }, name: '合成客户乙' }];
@@ -67,7 +73,21 @@ const clientFor = (workspace: string) => {
 const panelFor = async (workspace: string) => {
   const target = clientFor(workspace).pupBrowser.targets().find((target: any) => /^chrome-extension:\/\/[a-p]{32}\/panel\.html$/.test(target.url()));
   if (!target) throw new Error('Native panel target missing');
-  return target.asPage();
+  return {
+    async evaluate(fn: (...args: any[]) => any, value?: unknown) {
+      const session = await target.createCDPSession();
+      try {
+        const result = await session.send('Runtime.evaluate', { expression: `(${String(fn)})(${JSON.stringify(value)})`, returnByValue: true, awaitPromise: true });
+        if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
+        return result.result.value;
+      } finally { await session.detach(); }
+    },
+    async screenshot({ path: file }: { path: string }) {
+      const session = await target.createCDPSession();
+      try { const result = await session.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }); await writeFile(file, Buffer.from(result.data, 'base64')); }
+      finally { await session.detach(); }
+    },
+  };
 };
 (globalThis as any).chromeFixture = {
   diagnostics() { return [...clients].map(([id, client]) => ({ workspace: id, ...diagnostics.get(id), targets: client.pupBrowser?.targets().map((target: any) => ({ type: target.type(), url: target.url() })) })); },

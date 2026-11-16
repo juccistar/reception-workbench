@@ -4,6 +4,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { resolveModelSettingsDirectory } from './model-settings-store';
 import { createWindowsUserEncryption } from './windows-user-encryption';
+import { createMetadataDecrypter } from './metadata-decryption';
 import type { CredentialEncryption } from './translation-credentials';
 
 export interface ActivationBinding { seller_id: string; record_id: string; data_root: string }
@@ -50,13 +51,14 @@ function message(socket: net.Socket, timeout: number): Promise<string> {
 
 export function createLauncherActivation(options: LauncherActivationOptions) {
   const { directory, encryption } = options;
+  const decryptMetadata = createMetadataDecrypter(encryption);
   const timeout = options.timeoutMs ?? 3000;
   if (!Number.isInteger(timeout) || timeout < 10 || timeout > 10000) throw new Error('launcher_activation_invalid_timeout');
   async function readRecord(file: string, binding: ActivationBinding): Promise<Stored> {
     const stat = await lstat(file); if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size < 1 || stat.size > LIMIT) throw new Error('invalid');
     const f = await open(file, 'r'); let bytes: Buffer;
     try { const st = await f.stat(); if (!st.isFile() || st.nlink !== 1 || st.size < 1 || st.size > LIMIT || st.ino !== stat.ino || st.dev !== stat.dev) throw new Error('invalid'); bytes = Buffer.alloc(st.size); const read = await f.read(bytes, 0, bytes.length, 0); if (read.bytesRead !== bytes.length) throw new Error('invalid'); } finally { await f.close(); }
-    const record: Stored = JSON.parse(await encryption.decryptString(bytes));
+    const record: Stored = JSON.parse(await decryptMetadata(bytes));
     if (!record || record.version !== 1 || JSON.stringify(bindingOf(record.binding)) !== JSON.stringify(binding) || !/^[a-f0-9]{32}$/.test(record.instance) || !/^[a-f0-9]{64}$/.test(record.key) || record.endpoint !== endpointFor(directory, record.instance) || path.basename(file) !== `${bindingHash(binding)}-${record.instance}.bin`) throw new Error('invalid');
     return record;
   }

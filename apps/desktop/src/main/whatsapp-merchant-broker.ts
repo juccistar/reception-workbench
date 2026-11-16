@@ -7,6 +7,7 @@ import type { ActivationBinding } from './launcher-activation';
 import type { CredentialEncryption } from './translation-credentials';
 import { resolveModelSettingsDirectory } from './model-settings-store';
 import { createWindowsUserEncryption } from './windows-user-encryption';
+import { createMetadataDecrypter } from './metadata-decryption';
 
 type Exported = Pick<WhatsAppMerchantContext, 'seller_id' | 'data_root' | 'conversation_id' | 'revision' | 'context'>;
 export type WhatsAppCustomerSearchRequest = { request_id: string; account_id: string; chat_id: string; merchant_id: string; binding_revision: number; query: string; limit: number };
@@ -72,12 +73,13 @@ function exported(value: Exported, binding: ActivationBinding, req: WhatsAppCont
 }
 
 export function createWhatsAppMerchantBroker({ directory, encryption, timeoutMs = 3000 }: Options) {
+  const decryptMetadata = createMetadataDecrypter(encryption);
   if (!Number.isInteger(timeoutMs) || timeoutMs < 10 || timeoutMs > 10000) throw new Error('wa_broker_timeout');
   async function readRecord(file: string, binding: ActivationBinding): Promise<Stored> {
     const stat = await lstat(file); if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size < 1 || stat.size > RECORD_LIMIT) throw new Error('wa_broker_record');
     const f = await open(file, 'r'); let bytes: Buffer;
     try { const st = await f.stat(); if (!st.isFile() || st.nlink !== 1 || st.size !== stat.size || st.ino !== stat.ino || st.dev !== stat.dev) throw new Error('wa_broker_record'); bytes = Buffer.alloc(st.size); if ((await f.read(bytes, 0, bytes.length, 0)).bytesRead !== bytes.length) throw new Error('wa_broker_record'); } finally { await f.close(); }
-    const v: Stored = JSON.parse(await encryption.decryptString(bytes));
+    const v: Stored = JSON.parse(await decryptMetadata(bytes));
     if (!v || v.version !== 1 || JSON.stringify(bindingOf(v.binding)) !== JSON.stringify(binding) || !/^[a-f0-9]{32}$/.test(v.instance) || !/^[a-f0-9]{64}$/.test(v.key) || v.endpoint !== endpointFor(directory, v.instance) || path.basename(file) !== `${bindingHash(binding)}-${v.instance}.bin`) throw new Error('wa_broker_record');
     return v;
   }
