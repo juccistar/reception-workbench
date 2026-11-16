@@ -48,6 +48,7 @@
 .pp042-footer { flex: none; display: flex; justify-content: flex-end; gap: 10px; padding: 16px 28px; border-top: 1px solid #e8edf4; background: #fff; }
 .pp042-summary { display: flex; align-items: center; gap: 18px; padding-bottom: 20px; border-bottom: 1px solid #edf0f5; }
 .pp042-summary .product-042-thumbnail { display: block; width: 96px; height: 96px; flex: none; border: 1px solid #e2e8e5; border-radius: 8px; overflow: hidden; background: #eef2ef; }
+.pp042-product-summary .product-042-thumbnail { width: 180px; height: 160px; }
 .pp042-summary .product-042-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
 .pp042-summary h2 { margin: 8px 0; font-size: 19px; }
 .pp042-summary p { color: #8190a8; margin: 4px 0; }
@@ -76,6 +77,11 @@
 .pp042-product-details summary { cursor: pointer; color: #5579ca; }
 .pp042-full-spec { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pp042-list-footer { display: flex; justify-content: space-between; padding: 15px 20px; border-top: 1px solid #edf0f5; color: #94a0b2; font-size: 11px; }
+.pp042-page-note { margin: 22px 0 0; padding: 14px; border: 1px solid #dce5f1; border-radius: 6px; color: #8190a8; font-size: 11px; }
+.pp042-cost-note { margin: 30px 0 0; color: #94a0b2; font-size: 11px; text-align: center; }
+.pp042-search { position: relative; }
+.pp042-search svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #94a0b2; pointer-events: none; }
+.pp042-page .pp042-search input { padding-left: 38px; }
 .pp042-muted { color: #94a0b2; font-size: 11px; }
 .pp042-supplier-name { margin: 0; font-size: 20px; line-height: 1.7; overflow-wrap: anywhere; }
 .pp042-supplier-meta { display: flex; gap: 12px; align-items: center; margin: 13px 0 23px; color: #8190a8; font-size: 12px; }

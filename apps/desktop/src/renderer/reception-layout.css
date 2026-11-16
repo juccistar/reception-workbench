@@ -1,5 +1,5 @@
 /* Shared rail, merchant header and reception follow the confirmed 0.4.2 design. */
-:root{font-family:"Segoe UI","Microsoft YaHei UI","DengXian",sans-serif;--green:#3458db;--green-dark:#294ac6;--green-light:#eef2ff;--text:#1d2b42;--muted:#788497;--border:#e8edf3}
+:root{font-family:"Segoe UI","Microsoft YaHei UI","DengXian",sans-serif;--green:#3458db;--green-dark:#294ac6;--green-light:#eef2ff;--text:#1d2b42;--muted:#788497;--border:#e8edf3;color:var(--text)}
 .source-link{color:#627fbc}
 .badge-green{background:#ebf4ef;color:#54816d}.badge-amber{background:#fbf2e1;color:#a17939}
 button:focus-visible,a:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline-color:#3458db}

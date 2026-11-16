@@ -3,16 +3,20 @@
   "date": "2026-11-17",
   "status": "final_layout_corrections_before_rebuilt_window_review",
   "last_source_window": {
-    "report": "artifacts/verification/workbench-042-replica-source-007/report.json",
+    "report": "artifacts/verification/workbench-042-replica-source-008/report.json",
     "status": "passed",
-    "screenshots": 48,
-    "design_review": "15 business/settings screenshots compared with 14 reference screenshots; selected-customer list and update card required further corrections"
+    "checks": 24,
+    "screenshots": 49,
+    "design_review": "Independent review viewed 12 business/dialog images and 11 references. Parent reviewed selected scope, fixed customer footer, settings and reception feedback. Additional fixed notes, product image geometry and header context required correction."
   },
   "final_layout_corrections": [
     "Selected-customer scope uses a searchable vertical list with its own 264px maximum scroll height",
     "Updates uses the common white settings card; media resource units sit below their fields",
     "Customer detail waits for loaded data and uses a current-product summary, collapsed history and fixed action footer",
-    "Supplier primary action, procurement status badges, drawer borders and source-link colors follow the reference"
+    "Supplier primary action, procurement status badges, drawer borders and source-link colors follow the reference",
+    "Product-detail image region, supplier table footer, cost and procurement notes follow the reference; the additional procurement attention filter is removed",
+    "Shared header shows page context and the approved business-page icon; activity filters show the current date",
+    "Scope labels, customer search icon, settings typography and media heading spacing follow the source design rules"
   ],
   "corrections": [
     "Base stylesheet loads before page styles; shared page width, spacing and background follow the approved reference",
@@ -48,8 +52,8 @@
     "real_user_cleanup_executed": false
   },
   "integration_checks": {
-    "desktop_types": "artifacts/verification/042-replica-integration-typecheck-010.log",
-    "final_customer_and_settings_changes": { "log": "artifacts/verification/042-page-review-final-001.log", "files": 2, "tests": 23, "status": "passed", "overlaps_previous_runs": true },
+    "desktop_types": "artifacts/verification/042-replica-integration-typecheck-011.log",
+    "final_customer_and_settings_changes": { "log": "artifacts/verification/042-page-review-final-002.log", "files": 2, "tests": 23, "status": "passed", "overlaps_previous_runs": true },
     "feishu_configuration": { "log": "artifacts/verification/042-feishu-configuration-002.log", "tests": 3, "status": "passed" },
     "feishu_host": { "log": "artifacts/verification/042-feishu-host-001.log", "tests": 4, "status": "passed" },
     "workbench_regression_before_selector_updates": { "log": "artifacts/verification/042-replica-ui-integration-001.log", "tests": 126, "failed": 42, "status": "failed" },

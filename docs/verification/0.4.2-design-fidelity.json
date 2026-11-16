@@ -2,7 +2,14 @@
   "version": "0.4.2",
   "date": "2026-11-17",
   "status": "final_corrections_await_rebuilt_window_comparison",
-  "last_built_snapshot": "53b9638",
+  "last_built_snapshot": "ad6b6c0",
+  "last_visual_correction_round": {
+    "source_window": "artifacts/verification/workbench-042-replica-source-008/report.json",
+    "workflow_status": "passed_24_checks_49_screenshots",
+    "independent_business_dialog_images_viewed": 12,
+    "reference_images_viewed": 11,
+    "implemented_pending_rebuild": ["product-detail image region", "supplier, product-cost and procurement notes", "business-page header context and icon", "activity date label", "scope field label and search icon", "settings heading and row geometry"]
+  },
   "design": "docs/design/reception-redesign/",
   "historical_review": {
     "date": "2026-11-16",
