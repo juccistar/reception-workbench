@@ -17,7 +17,7 @@ def create_window_service(*args, **kwargs):
     service.set_scope('selected', ['demo-emma'])
     original_call = service.call
     direct_ai = os.environ.get('HARNESS_MANUAL_AI_DIRECT') == '1'
-    ai_state = {'fail': False, 'checks': 0, 'generation_attempts': 0, 'block': False}
+    ai_state = {'fail': False, 'checks': 0, 'generation_attempts': 0, 'block': False, 'cancel_observed': False}
     ai_release = threading.Event()
     ai_entered = threading.Event()
     history_release = threading.Event()
@@ -65,6 +65,8 @@ def create_window_service(*args, **kwargs):
                 ai_entered.set()
                 if not ai_release.wait(20):
                     raise ServiceError('model_network_error', '合成模型等待超时')
+                cancel = options.get('cancel_event')
+                ai_state['cancel_observed'] = bool(cancel and cancel.is_set())
                 raise ServiceError('model_network_error', '合成模型迟到失败')
             if ai_state['fail']:
                 raise ServiceError('model_network_error', '合成模型请求失败')
@@ -90,6 +92,8 @@ def create_window_service(*args, **kwargs):
                 conversation = service._require('conversation', 'demo-emma')
                 base = service._require('case', conversation['case_id'])
                 stamp = now_ms()
+                supplier = service.save_supplier('合成供货商', 'other', None, None, '隔离窗口联系信息',
+                                                 '仅用于本地界面验收的合成资料', 'window-supplier')
                 for index in range(28):
                     case = deepcopy(base)
                     case.update(case_id=f'window-quote-{index}', state='waiting_quote', revision=1,
@@ -101,6 +105,14 @@ def create_window_service(*args, **kwargs):
                     case['requirements']['quantity']['value'] = '100件'
                     case['requirements']['specifications']['value'] = '仅用于隔离窗口滚动验收的合成规格。' * 90
                     service.repo.put('case', case['case_id'], case, history=True)
+                    if index < 3:
+                        case['requirements']['product_id']['value'] = f'定制-{7600001 + index}'
+                        service._sync_requirement_product(case)
+                        binding = service.repo.get('requirement_product_binding', case['case_id'])
+                        service.save_product_offer(binding['local_product_id'], supplier['supplier_id'],
+                            {'specifications': '合成供货规格', 'moq': '100', 'unit': '件', 'unit_price': '4.20',
+                             'currency': 'CNY', 'source_type': 'page_reference', 'enabled': True, 'reply_enabled': False,
+                             'source_note': '仅用于隔离窗口的合成参考，不是供应商确认报价'}, f'window-offer-{index}')
             service._changed('demo-emma')
             return {'case_ids': [f'window-quote-{index}' for index in range(28)]}
         if method == '_fixture_history_block' and isinstance(params, dict) and set(params) == {'enabled'} and type(params['enabled']) is bool:
@@ -119,11 +131,15 @@ def create_window_service(*args, **kwargs):
                 if params['enabled']:
                     ai_entered.clear()
                     ai_release.clear()
+                    ai_state['cancel_observed'] = False
                 else:
                     ai_release.set()
                 return {'enabled': ai_state['block']}
             if method == '_fixture_ai_block_state' and not params:
-                return {'entered': ai_entered.is_set()}
+                with service._lock:
+                    jobs = [{key: job.get(key) for key in ('job_id', 'kind', 'status')}
+                            for job in service.repo.list('job') if job.get('kind') == 'manual_suggestion']
+                return {'entered': ai_entered.is_set(), 'cancel_observed': ai_state['cancel_observed'], 'jobs': jobs}
             if method == 'get_translations' and isinstance(params, dict):
                 result = original_call(method, params)
                 for item in result.get('items', []):

@@ -30,7 +30,10 @@
 .navigation-icons .nav-item.active:before{display:none}
 .navigation-icons .nav-item:hover{background:#2a3952;color:#fff}
 .navigation-icons .nav-lower{padding-top:4px}
-.navigation-icons .merchant{display:none}
+.navigation-icons .merchant{display:flex;flex-direction:column;align-items:center;gap:4px;margin-top:8px;padding:8px 0 10px;border-color:#344258;color:#c2ccdc}
+.navigation-icons .merchant-icon{width:24px;height:24px;border:0;background:#2a3952;color:#bdc9dc;border-radius:7px}
+.navigation-icons .merchant>div{display:block;width:56px;flex:none;text-align:center}
+.navigation-icons .merchant strong{font-size:10px;line-height:1.5}
 .customer-column,.customer-list{background:#f7f9fc}
 .customer-row.active{background:#e9efff}
 .customer-row.active:before{background:#3458db}

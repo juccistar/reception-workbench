@@ -87,6 +87,50 @@ class ProductLibraryTests(unittest.TestCase):
         self.assertNotIn('private-image', str(context))
         self.assertEqual(self.service.repo.get('case', a['case_id'])['requirements']['contact']['value'], 'private-a')
 
+    def test_customer_counts_deduplicate_and_validate_ownership_and_follow_binding_changes(self):
+        case = self.demand()
+        product = self.product()
+        product_id = product['local_product_id']
+        repo = self.service.repo
+        binding = repo.get('requirement_product_binding', case['case_id'])
+        with self.service._lock, repo.transaction():
+            duplicate = dict(case, case_id='case-duplicate')
+            repo.put('case', duplicate['case_id'], duplicate)
+            repo.put('requirement_product_binding', duplicate['case_id'], dict(binding, case_id=duplicate['case_id']))
+            foreign = dict(case, case_id='case-foreign', seller_id='foreign-seller')
+            repo.put('case', foreign['case_id'], foreign)
+            repo.put('requirement_product_binding', foreign['case_id'], dict(binding, case_id=foreign['case_id']))
+            invalid = dict(case, case_id='case-invalid', buyer_id='wrong-buyer')
+            repo.put('case', invalid['case_id'], invalid)
+            repo.put('requirement_product_binding', invalid['case_id'], dict(binding, case_id=invalid['case_id']))
+            repo.put('requirement_product_binding', 'missing-case', dict(binding, case_id='missing-case'))
+            foreign_binding_case = dict(case, case_id='foreign-binding')
+            repo.put('case', foreign_binding_case['case_id'], foreign_binding_case)
+            repo.put('requirement_product_binding', 'foreign-binding', dict(binding, case_id='foreign-binding', seller_id='foreign-seller'))
+            foreign_conversation = dict(repo.get('conversation', case['conversation_id']),
+                                        conversation_id='foreign-conversation', seller_id='foreign-seller', buyer_id='foreign-buyer')
+            repo.put('conversation', foreign_conversation['conversation_id'], foreign_conversation)
+            foreign_conversation_case = dict(case, case_id='foreign-conversation-case',
+                                             conversation_id='foreign-conversation', buyer_id='foreign-buyer')
+            repo.put('case', foreign_conversation_case['case_id'], foreign_conversation_case)
+            repo.put('requirement_product_binding', foreign_conversation_case['case_id'],
+                     dict(binding, case_id=foreign_conversation_case['case_id'], conversation_id='foreign-conversation'))
+        self.assertEqual(self.product()['customer_count'], 1)
+        self.assertEqual(self.service.get_product(product_id)['product']['customer_count'], 1)
+        second = self.demand('demo-sofia')
+        self.assertEqual(self.product()['customer_count'], 2)
+        with self.service._lock, repo.transaction():
+            updated = repo.get('requirement_product_binding', second['case_id'])
+            updated['local_product_id'] = 'another-product'
+            repo.put('requirement_product_binding', second['case_id'], updated)
+        self.assertEqual(self.product()['customer_count'], 1)
+        with self.service._lock, repo.transaction():
+            for case_id in (case['case_id'], duplicate['case_id']):
+                updated = repo.get('requirement_product_binding', case_id)
+                updated['local_product_id'] = 'another-product'
+                repo.put('requirement_product_binding', case_id, updated)
+        self.assertEqual(self.service.get_product(product_id)['product']['customer_count'], 0)
+
     def test_product_link_is_derived_from_id_and_ignores_model_url(self):
         case = self.demand(product_url='https://example.invalid/guessed_999.html')
         expected = 'https://www.alibaba.com/product-detail/_1600000000123.html'

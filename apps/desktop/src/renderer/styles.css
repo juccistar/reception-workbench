@@ -222,6 +222,7 @@ button{transition:background-color 120ms,color 120ms,border-color 120ms}
 .suggestion-preview{max-height:160px;overflow:auto;padding:10px;border:1px solid #e2ebe6;border-radius:8px;margin-bottom:8px;background:#fbfdfb;font-size:12px}
 .suggestion-preview p{white-space:pre-wrap;overflow-wrap:anywhere;margin-bottom:8px}
 .chat-send-receipt{font-size:11px;line-height:1.7;color:#547560;background:#f5f9f6;border-radius:6px;padding:7px 9px;margin-top:8px;max-height:120px;overflow:auto;overflow-wrap:anywhere}
+.chat-send-receipt.send-status-unknown{color:var(--amber);background:#fff9ef}
 .chat-send-receipt strong,.chat-send-receipt small{display:block;font-weight:400}
 .chat-send-receipt details{margin-top:4px}
 .chat-send-receipt summary{cursor:pointer}

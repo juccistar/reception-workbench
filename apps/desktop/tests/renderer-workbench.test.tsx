@@ -1425,7 +1425,7 @@ describe('editing safeguards and existing workspace layout', () => {
 
   it('saves selected scope without starting automation or running an AI check', async () => {
     const bridge = await openApp(); fireEvent.click(screen.getByRole('button', { name: '连接与设置', exact: true }));
-    expect(await screen.findByRole('radio', { name: '选中客户' })).toBeChecked();
+    expect(await screen.findByRole('combobox', { name: '自动接待范围' })).toHaveValue('selected');
     fireEvent.click(screen.getByRole('checkbox', { name: 'Emma' }));
     fireEvent.click(screen.getByRole('button', { name: '保存范围' }));
     await waitFor(() => expect(calls(bridge, 'set_scope')[0]?.params).toEqual({ mode: 'selected', conversation_ids: ['emma'], max_auto_replies: null }));

@@ -29,7 +29,7 @@ it('saves a searchable selection of customers without requiring an AI check', as
   const mutate = vi.fn(async () => true);
   const model = { connected: true, loading: false, busy: () => false, setFormDirty: vi.fn(), mutate, snapshot: { app: { mode: 'live' }, reception: { running: false, scope: { mode: 'all', conversation_ids: [] } }, conversations: [{ conversation_id: 'a', customer_name: 'Alice', buyer_id: '1' }, { conversation_id: 'b', customer_name: 'Bob', buyer_id: '2' }] } } as unknown as Workbench;
   render(<SettingsPage model={model} />);
-  fireEvent.click(screen.getByLabelText('选中客户'));
+  fireEvent.change(screen.getByRole('combobox', { name: '自动接待范围' }), { target: { value: 'selected' } });
   fireEvent.change(screen.getByLabelText('搜索接待客户'), { target: { value: 'Bob' } });
   fireEvent.click(screen.getByLabelText('Bob'));
   fireEvent.click(screen.getByRole('button', { name: '保存范围' }));

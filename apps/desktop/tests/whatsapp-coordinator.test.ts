@@ -194,6 +194,54 @@ describe('WhatsApp host/service coordination', () => {
     expect(host.close).toHaveBeenCalledOnce();
     expect(invoke).toHaveBeenCalledWith('_wa_media_fail', expect.objectContaining({ message_id: 'image' }));
   });
+  it('retries a failed image only after bounded backoff and deduplicates success', async () => {
+    vi.useFakeTimers();
+    try {
+      const { coordinator, host, invoke } = setup(); await coordinator.connect();
+      invoke.mockImplementation(async method => method === '_wa_media_begin' ? { transfer_id: 'transfer' } : method === '_wa_media_chunk' ? { next_offset: 1 } : {});
+      const download = vi.fn().mockRejectedValueOnce(new Error('temporary')).mockImplementation(async (_a, _e, _c, _m, consume) => {
+        async function* chunks() { yield Buffer.from('x'); }
+        await consume('image/png', 1, chunks());
+      });
+      Object.assign(host, { downloadImage: download });
+      const event = { type: 'messages' as const, account_id: intent.account_id, connection_epoch: intent.connection_epoch, messages: [{ id: 'image', chat_id: intent.chat_id, body: '', timestamp_ms: 1, from_me: false, name: '', is_group: false, is_history: false, has_image: true }] };
+      coordinator.receive(event); await vi.advanceTimersByTimeAsync(0);
+      coordinator.receive(event); await vi.advanceTimersByTimeAsync(0);
+      expect(download).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(60000);
+      coordinator.receive(event); await vi.advanceTimersByTimeAsync(0);
+      expect(download).toHaveBeenCalledTimes(2);
+      coordinator.receive(event); await vi.advanceTimersByTimeAsync(60000);
+      expect(download).toHaveBeenCalledTimes(2);
+      await coordinator.stop();
+    } finally { vi.useRealTimers(); }
+  });
+  it('revokes old image sources and ignores their late failure after a replacement succeeds', async () => {
+    const { coordinator, host, invoke } = setup(); await coordinator.connect();
+    invoke.mockImplementation(async method => method === '_wa_media_begin' ? { transfer_id: 'new' } : method === '_wa_media_chunk' ? { next_offset: 1 } : {});
+    let rejectOld!: (error: Error) => void;
+    const download = vi.fn().mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { rejectOld = reject; }))
+      .mockImplementation(async (_a, _e, _c, _m, consume) => {
+        async function* chunks() { yield Buffer.from('x'); }
+        await consume('image/png', 1, chunks());
+      });
+    Object.assign(host, { downloadImage: download });
+    const event = { type: 'messages' as const, account_id: intent.account_id, connection_epoch: intent.connection_epoch, messages: [{ id: 'image', chat_id: intent.chat_id, body: '', timestamp_ms: 1, from_me: false, name: '', is_group: false, is_history: false, has_image: true }] };
+    coordinator.receive(event);
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+    const replacement = { ...event, messages: [{ ...event.messages[0], timestamp_ms: 2 }] };
+    coordinator.receive(replacement);
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('_wa_media_finish', expect.anything()));
+    rejectOld(new Error('late'));
+    coordinator.receive(replacement);
+    await vi.waitFor(() => expect(invoke.mock.calls.filter(([method]) => method === '_wa_ingest')).toHaveLength(3));
+    expect(download).toHaveBeenCalledTimes(2);
+    host.getStatus.mockReturnValue({ status: 'ready', account_id: intent.account_id, connection_epoch: 'epoch-new' });
+    coordinator.receive({ type: 'account', status: 'ready', account_id: intent.account_id, connection_epoch: 'epoch-new' });
+    coordinator.receive({ ...replacement, connection_epoch: 'epoch-new' });
+    await vi.waitFor(() => expect(download).toHaveBeenCalledTimes(3));
+    await coordinator.stop();
+  });
   it('revokes a hanging media RPC and never sends its next chunk after stop', async () => {
     const { coordinator, host, invoke } = setup(); await coordinator.connect();
     let release!: (value: unknown) => void;

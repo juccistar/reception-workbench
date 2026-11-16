@@ -114,6 +114,35 @@ class MediaTests(unittest.TestCase):
         self.host._wa_media_fail('', *identity, 'unavailable')
         self.assertEqual(self.host.scheduled, 0)
 
+    def test_invalid_and_expired_transfers_record_failure_before_retirement(self):
+        identity = self.host.add()
+        for mode in ('chunk', 'finish', 'expired', 'sweep'):
+            tid = self.host._wa_media_begin(*identity, 'image/png')['transfer_id']
+            if mode in ('expired', 'sweep'):
+                self.host._account_media_transfers[tid]['deadline'] = 0
+            if mode == 'sweep':
+                other = self.host.add('other')
+                other_tid = self.host._wa_media_begin(*other, 'image/png')['transfer_id']
+                self.host._wa_media_fail(other_tid, *other, 'unavailable')
+            else:
+                with self.assertRaises(ServiceError):
+                    if mode == 'finish':
+                        self.host._wa_media_finish(tid, *identity, 1, 'bad')
+                    else:
+                        self.host._wa_media_chunk(tid, *identity, 1, 'YQ==')
+            status = self.host.repo.db.execute('SELECT status FROM account_media WHERE id=?', (_key(*identity),)).fetchone()[0]
+            self.assertEqual(status, 'failed', mode)
+        new_tid = self.host._wa_media_begin(*identity, 'image/png')['transfer_id']
+        self.host._account_media_expire(tid, identity)
+        with self.assertRaises(ServiceError):
+            self.host._wa_media_fail(tid, *identity, 'late')
+        self.assertEqual(self.host.repo.db.execute('SELECT status FROM account_media WHERE id=?', (_key(*identity),)).fetchone()[0], 'pending')
+        self.host._wa_media_chunk(new_tid, *identity, 0, base64.b64encode(self.data).decode())
+        self.host._wa_media_finish(new_tid, *identity, len(self.data), hashlib.sha256(self.data).hexdigest())
+        with self.assertRaises(ServiceError):
+            self.host._wa_media_fail(tid, *identity, 'late')
+        self.assertEqual(self.host.repo.db.execute('SELECT status FROM account_media WHERE id=?', (_key(*identity),)).fetchone()[0], 'ready')
+
     def test_cancel_fail_and_bounds(self):
         identities = [self.host.add(str(i)) for i in range(5)]
         tids = [self.host._wa_media_begin(*identity, 'image/png')['transfer_id'] for identity in identities[:4]]

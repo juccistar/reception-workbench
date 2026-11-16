@@ -127,11 +127,12 @@ it('retains supplier form values and displays the actual save failure', async ()
   render(<SuppliersPage />);
   fireEvent.click(screen.getByRole('button', { name: '新增供应商' }));
   fireEvent.change(screen.getByLabelText('名称'), { target: { value: '新供应商' } });
-  fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'demo' } });
+  fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'alibaba' } });
   fireEvent.click(screen.getByRole('button', { name: '保存供应商' }));
   expect(await screen.findByRole('alert')).toHaveTextContent('供应商保存失败');
   expect(screen.getByLabelText('名称')).toHaveValue('新供应商');
-  expect(screen.getByLabelText('平台')).toHaveValue('demo');
+  expect(screen.getByLabelText('平台')).toHaveValue('alibaba');
+  expect(invoke).toHaveBeenCalledWith('save_supplier', expect.objectContaining({ platform: 'alibaba' }));
 });
 
 it('filters the compact product list without inventing customer associations', async () => {
@@ -142,6 +143,27 @@ it('filters the compact product list without inventing customer associations', a
   expect(within(list).getAllByText('—').length).toBeGreaterThan(0);
   fireEvent.change(screen.getByLabelText('搜索产品'), { target: { value: '找不到' } });
   expect(within(list).getByText('没有匹配的产品')).toBeInTheDocument();
+});
+
+it('shows customer counts and readable platforms while preserving supplier enum values', async () => {
+  const invoke = setup(); const original = invoke.getMockImplementation()!;
+  invoke.mockImplementation(async (method: string, params: unknown = {}) => method === 'list_products'
+    ? { items: [{ ...product, platform: 'alibaba', customer_count: 2 }, { ...product, local_product_id: 'p2', name: '定制产品', platform: 'custom', customer_count: 0 }] }
+    : original(method, params));
+  const view = render(<ProductsPage />);
+  const list = await screen.findByRole('region', { name: '产品目录' });
+  expect(await within(list).findByText('国际站 · 123')).toBeInTheDocument();
+  expect(within(list).getByText('本地定制 · 123')).toBeInTheDocument();
+  expect(within(list).getByText('2')).toBeInTheDocument();
+  expect(within(list).getByText('0')).toBeInTheDocument();
+  view.unmount();
+  render(<SuppliersPage />);
+  fireEvent.click(screen.getByRole('button', { name: '新增供应商' }));
+  const select = screen.getByLabelText('平台');
+  expect(within(select).getByRole('option', { name: '国际站' })).toHaveValue('alibaba');
+  expect(within(select).getByRole('option', { name: '1688' })).toHaveValue('1688');
+  expect(within(select).getByRole('option', { name: 'AliExpress' })).toHaveValue('aliexpress');
+  expect(within(select).getByRole('option', { name: '其他' })).toHaveValue('other');
 });
 
 it('keeps inquiry unavailable and reconciles a selected unknown procurement task', async () => {

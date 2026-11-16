@@ -53,16 +53,23 @@ class AccountMediaMixin:
             _error()
         return row
 
+    def _account_media_terminate(self, transfer_id, identity):
+        transfer = self._account_media_transfers.get(transfer_id)
+        if not transfer or transfer['identity'] != identity:
+            return
+        try:
+            self._account_media_mark_failed(identity)
+            self._changed()
+        finally:
+            self._account_media_drop(transfer_id)
+
     def _account_media_expire(self, transfer_id, identity):
         with self.repo.lock:
-            transfer = self._account_media_transfers.get(transfer_id)
-            if transfer and transfer['identity'] == identity:
-                self._account_media_drop(transfer_id)
-                try:
-                    self._account_media_mark_failed(identity)
-                except Exception:
-                    # A closed repository or changed source cannot receive a late write.
-                    pass
+            try:
+                self._account_media_terminate(transfer_id, identity)
+            except Exception:
+                # A closed repository or changed source cannot receive a late write.
+                pass
 
     def _account_media_mark_failed(self, identity):
         account, epoch, chat, message, version = identity
@@ -79,7 +86,10 @@ class AccountMediaMixin:
                 _error('invalid_params')
             for tid, transfer in list(self._account_media_transfers.items()):
                 if transfer['deadline'] <= time.monotonic() or transfer['identity'][:2] != (self.account, self.epoch):
-                    self._account_media_drop(tid)
+                    try:
+                        self._account_media_terminate(tid, transfer['identity'])
+                    except ServiceError:
+                        pass
             if len(self._account_media_transfers) >= 4 or any(t['identity'] == identity for t in self._account_media_transfers.values()):
                 _error('transfer_unavailable')
             media_id = _key(*identity)
@@ -100,7 +110,7 @@ class AccountMediaMixin:
         if not transfer or transfer['identity'] != identity:
             _error('transfer_unavailable')
         if time.monotonic() >= transfer['deadline']:
-            self._account_media_drop(transfer_id)
+            self._account_media_terminate(transfer_id, identity)
             _error('transfer_unavailable')
         try:
             self._account_media_source(*identity)
@@ -121,7 +131,7 @@ class AccountMediaMixin:
                 transfer['data'].extend(data)
                 return {'next_offset': len(transfer['data'])}
             except (ValueError, binascii.Error):
-                self._account_media_drop(transfer_id)
+                self._account_media_terminate(transfer_id, transfer['identity'])
                 _error('invalid_media')
 
     def _wa_media_finish(self, transfer_id, account_id, connection_epoch, chat_id, message_id, source_version, size, sha256):
@@ -148,6 +158,7 @@ class AccountMediaMixin:
                         schedule()
                 return {'status': 'ready', 'media_id': media_id, 'sha256': sha256}
             except (ValueError, ImageAssetError):
+                self._account_media_terminate(transfer_id, identity)
                 _error('invalid_media')
             finally:
                 self._account_media_drop(transfer_id)
@@ -156,12 +167,20 @@ class AccountMediaMixin:
         with self.repo.lock:
             identity = (account_id, connection_epoch, chat_id, message_id, source_version)
             transfer = self._account_media_transfers.get(transfer_id)
-            if (transfer and transfer['identity'] != identity) or (transfer_id and not transfer) or (not transfer_id and any(t['identity'] == identity for t in self._account_media_transfers.values())):
+            if transfer_id and not transfer:
+                self._account_media_source(*identity)
+                active = any(t['identity'] == identity for t in self._account_media_transfers.values())
+                status = self.repo.db.execute('SELECT status FROM account_media WHERE id=?', (_key(*identity),)).fetchone()
+                if not active and status and status[0] == 'failed':
+                    return {'status': 'failed'}
+                _error('transfer_unavailable')
+            if (transfer and transfer['identity'] != identity) or (not transfer_id and any(t['identity'] == identity for t in self._account_media_transfers.values())):
                 _error('transfer_unavailable')
             if transfer:
-                self._account_media_drop(transfer_id)
-            self._account_media_mark_failed(identity)
-            self._changed()
+                self._account_media_terminate(transfer_id, identity)
+            else:
+                self._account_media_mark_failed(identity)
+                self._changed()
             return {'status': 'failed'}
 
     def _account_image_context(self, chat_id, segment_id):

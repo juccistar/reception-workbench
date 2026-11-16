@@ -140,12 +140,9 @@ export function SettingsPage({ model, bridge }: { model: Workbench; bridge?: Rec
     </div><div hidden={settingsSection !== 5}><FeishuForm model={model} /></div>
     <div hidden={settingsSection !== 6} className="form-card"><h2>界面布局</h2><p>在接待页调整资料栏宽度与高度。</p></div>
     <section hidden={settingsSection !== 0} className="form-card scope-card">
-      <div className="form-card-heading"><h2><UsersRound size={18} />自动接待授权</h2><Badge tone={!health.ready ? 'red' : reception?.running ? 'green' : 'neutral'}>{!health.ready ? health.message : reception?.running ? '自动接待中' : '自动接待已暂停'}</Badge></div>
+      <div className="form-card-heading"><h2><UsersRound size={18} />自动接待范围</h2><Badge tone={!health.ready ? 'red' : reception?.running ? 'green' : 'neutral'}>{!health.ready ? health.message : reception?.running ? '自动接待中' : '自动接待已暂停'}</Badge></div>
       <p className="form-description">按所选范围接待，人工接待中的客户除外。</p>
-      <div className="scope-options">
-        <label><input type="radio" name="scope" checked={scopeMode === 'all'} onChange={() => { setScopeMode('all'); setScopeDirty(true); scopeVersion.current++; }} />全部客户</label>
-        <label><input type="radio" name="scope" checked={scopeMode === 'selected'} onChange={() => { setScopeMode('selected'); setScopeDirty(true); scopeVersion.current++; }} />选中客户</label>
-      </div>
+      <div className="scope-options"><select aria-label="自动接待范围" value={scopeMode} onChange={event => { setScopeMode(event.target.value === 'all' ? 'all' : 'selected'); setScopeDirty(true); scopeVersion.current++; }}><option value="all">全部客户</option><option value="selected">选中客户</option></select></div>
       {scopeMode === 'selected' && <div className="scope-customers"><input aria-label="搜索接待客户" placeholder="搜索客户" value={scopeQuery} onChange={event => setScopeQuery(event.target.value)} />{model.snapshot?.conversations.filter(item => `${item.customer_name} ${item.buyer_id}`.toLowerCase().includes(scopeQuery.toLowerCase())).map(item => <label className="checkbox-label compact" key={item.conversation_id}><input type="checkbox" checked={scopeIds.includes(item.conversation_id)} onChange={event => { setScopeIds(previous => event.target.checked ? [...previous, item.conversation_id] : previous.filter(id => id !== item.conversation_id)); setScopeDirty(true); scopeVersion.current++; }} />{item.customer_name}</label>)}</div>}
       <div className="scope-save"><Button disabled={!model.connected || !scopeDirty} loading={model.busy('set_scope')} onClick={() => void saveScope()}>保存范围</Button>{scopeDirty && <Button onClick={() => { const current = model.snapshot?.reception.scope; if (current) { setScopeMode(current.mode === 'all' ? 'all' : 'selected'); setScopeIds(current.mode === 'selected' ? current.conversation_ids : []); } setScopeDirty(false); }}>放弃范围修改</Button>}</div>
     </section></div></div>

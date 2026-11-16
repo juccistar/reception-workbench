@@ -29,6 +29,8 @@ export class WhatsAppCoordinator {
   private observations: Promise<void> = Promise.resolve();
   private readonly mediaKeys = new Set<string>();
   private readonly mediaSeen = new Set<string>();
+  private readonly mediaRetries = new Map<string, { attempts: number; after: number }>();
+  private readonly mediaSources = new Map<string, { key: string; cancel: () => void }>();
   private readonly cancelMedia = new Set<() => void>();
   private readonly mediaQueue: Array<() => Promise<void>> = [];
   private mediaActive = 0;
@@ -106,17 +108,24 @@ export class WhatsAppCoordinator {
           const identity = { account_id: event.account_id, connection_epoch: event.connection_epoch, chat_id: message.chat_id, message_id: message.id,
             source_version: createHash('sha256').update(JSON.stringify([event.account_id, event.connection_epoch, message.chat_id, message.id, String(message.timestamp_ms)])).digest('hex') };
           const key = JSON.stringify(identity);
-          if (this.mediaKeys.has(key) || this.mediaSeen.has(key)) continue;
+          const source = JSON.stringify([event.account_id, event.connection_epoch, message.chat_id, message.id]);
+          const previous = this.mediaSources.get(source);
+          if (previous && previous.key !== key) previous.cancel();
+          if (this.mediaKeys.has(key) || this.mediaSeen.has(key) || (this.mediaRetries.get(key)?.after ?? 0) > Date.now()) continue;
           this.mediaKeys.add(key);
-          this.mediaSeen.add(key);
-          if (this.mediaSeen.size > 2048) this.mediaSeen.delete(this.mediaSeen.values().next().value!);
+          const backoff = () => {
+            const attempts = Math.min((this.mediaRetries.get(key)?.attempts ?? 0) + 1, 5);
+            this.mediaRetries.set(key, { attempts, after: Date.now() + Math.min(60000, 5000 * 2 ** (attempts - 1)) });
+            if (this.mediaRetries.size > 2048) this.mediaRetries.delete(this.mediaRetries.keys().next().value!);
+          };
           let transferId = '';
           let expired = false;
           const fail = () => { void this.options.invoke('_wa_media_fail', { ...identity, transfer_id: transferId, error_code: 'media_unavailable' }).catch(() => {}); };
           const deadline = Date.now() + 60_000;
           const cancel = () => { if (!expired) { expired = true; fail(); } };
           this.cancelMedia.add(cancel);
-          const timer = setTimeout(cancel, 60_000);
+          this.mediaSources.set(source, { key, cancel });
+          const timer = setTimeout(() => { if (!expired) backoff(); cancel(); }, 60_000);
           timer.unref?.();
           const check = () => {
             const status = host.getStatus();
@@ -124,6 +133,7 @@ export class WhatsAppCoordinator {
           };
           const work = async () => {
             try {
+              let finished = false;
               check();
               await host.downloadImage!(event.account_id, event.connection_epoch, message.chat_id, message.id, async (mime, size, chunks) => {
                 check();
@@ -142,11 +152,25 @@ export class WhatsAppCoordinator {
                 }
                 check();
                 await this.options.invoke('_wa_media_finish', { ...identity, transfer_id: transferId, size, sha256: hash.digest('hex') });
+                check();
+                finished = true;
+                this.mediaRetries.delete(key);
+                this.mediaSeen.add(key);
+                if (this.mediaSeen.size > 2048) this.mediaSeen.delete(this.mediaSeen.values().next().value!);
               });
-            } catch { fail(); }
-            finally { clearTimeout(timer); this.cancelMedia.delete(cancel); this.mediaKeys.delete(key); }
+              if (!finished) throw new Error('WhatsApp image transfer incomplete');
+            } catch {
+              fail();
+              if (!expired && this.mediaSources.get(source)?.cancel === cancel) {
+                backoff();
+              }
+            }
+            finally {
+              clearTimeout(timer); this.cancelMedia.delete(cancel); this.mediaKeys.delete(key);
+              if (this.mediaSources.get(source)?.cancel === cancel) this.mediaSources.delete(source);
+            }
           };
-          if (this.mediaQueue.length >= 64) { clearTimeout(timer); this.cancelMedia.delete(cancel); this.mediaKeys.delete(key); fail(); }
+          if (this.mediaQueue.length >= 64) { clearTimeout(timer); this.cancelMedia.delete(cancel); this.mediaKeys.delete(key); if (this.mediaSources.get(source)?.cancel === cancel) this.mediaSources.delete(source); backoff(); fail(); }
           else { this.mediaQueue.push(work); this.pumpMedia(); }
         }
       } else {

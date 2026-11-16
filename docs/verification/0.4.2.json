@@ -1,7 +1,7 @@
 {
   "version": "0.4.2",
   "date": "2026-11-16",
-  "status": "desktop_built_pending_window_verification",
+  "status": "final_desktop_built_pending_extended_windows",
   "baseline_commit": "f8339ad",
   "plan": "docs/0.4.2开发方案.md",
   "design": "docs/design/reception-redesign/README.md",
@@ -34,7 +34,10 @@
     "Historical ingestion separated from live observations; partial summaries and matching native head confirmations handled without opening all backfilled messages",
     "Private WhatsApp current-chat text supplement, queued view fence, bounded exact-operation receipt sweep",
     "Model cleanup completion settles obsolete generation attempts; normal close and later supplement changes preserve attempt counts",
-    "SQL reply-pending facts and exact automatic source query; existing databases do not receive cursor indexes on open"
+    "SQL reply-pending facts and exact automatic source query; existing databases do not receive cursor indexes on open",
+    "Model settings entry in AI failure feedback, explicit scope dropdown, short translation/history/unknown statuses and visible merchant identity",
+    "Product customer counts use validated distinct buyers; platform labels and supplier choices retain existing API values",
+    "WhatsApp media failures settle transfer state and permit bounded observed retries without raising resource limits"
   ],
   "tests": [
     {
@@ -107,7 +110,43 @@
     "claims_limited_to_synthetic_workloads": true,
     "final_measurement_artifact": "artifacts/verification/042-performance-final-002.json"
   },
-  "windows": [],
+  "windows": [
+    {
+      "kind": "source_workbench",
+      "status": "passed",
+      "report": "artifacts/verification/workbench-042-source-003/report.json",
+      "screenshots": 27,
+      "screenshots_visually_reviewed": 27,
+      "checks": 17,
+      "actual_window": true,
+      "actual_release_exe_entry": false,
+      "synthetic_business": true,
+      "real_ai_calls": 0,
+      "real_customer_sends": 0
+    },
+    {
+      "kind": "source_native_chrome_launcher",
+      "status": "passed",
+      "report": "artifacts/verification/launcher-revision-041-reception-042-source-001/report.json",
+      "screenshots": 11,
+      "screenshots_visually_reviewed": 11,
+      "real_system_chrome": true,
+      "synthetic_sdk_and_customers": true,
+      "actual_release_exe_entry": false
+    },
+    {
+      "kind": "source_native_panel_supplement",
+      "status": "passed",
+      "report": "artifacts/verification/launcher-supplement-042-source-supplement-001/report.json",
+      "screenshots": 14,
+      "additional_supplement_screenshots_visually_reviewed": 3,
+      "checks": 17,
+      "real_system_chrome": true,
+      "synthetic_sdk_and_customers": true,
+      "account_and_chat_isolation": true,
+      "actual_release_exe_entry": false
+    }
+  ],
   "builds": [
     {
       "kind": "desktop_source_snapshot",
@@ -116,6 +155,16 @@
       "command": "node scripts/build.mjs",
       "log": "artifacts/verification/042-desktop-build-001.log",
       "completed_at": "2026-11-16T10:45:46.050Z",
+      "immediate_local_commit": true,
+      "commit": "06d43d7"
+    },
+    {
+      "kind": "desktop_final_interface_snapshot",
+      "version": "0.4.2",
+      "status": "passed",
+      "command": "node scripts/build.mjs",
+      "log": "artifacts/verification/042-desktop-build-002.log",
+      "completed_on": "2026-11-16",
       "immediate_local_commit": true
     }
   ],

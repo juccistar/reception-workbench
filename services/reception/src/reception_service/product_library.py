@@ -114,11 +114,36 @@ class ProductLibraryMixin(ProductPresentationMixin):
         self._library_ready()
         return [r for r in self.repo.list(kind) if r.get('seller_id') == self.seller_id]
 
-    def _product_projection(self, product):
+    def _product_customer_counts(self):
+        # Join only identity fields; never load messages or customer details into products.
+        with self.repo.lock:
+            rows = self.repo.db.execute("""SELECT json_extract(b.data, '$.local_product_id'),
+                    COUNT(DISTINCT json_extract(c.data, '$.buyer_id'))
+                FROM entities b
+                JOIN entities k ON k.kind='case' AND k.id=b.id
+                JOIN entities c ON c.kind='conversation' AND c.id=json_extract(b.data, '$.conversation_id')
+                WHERE b.kind='requirement_product_binding'
+                  AND json_extract(b.data, '$.seller_id')=?
+                  AND json_extract(b.data, '$.case_id')=b.id
+                  AND json_extract(k.data, '$.case_id')=k.id
+                  AND json_extract(k.data, '$.seller_id')=?
+                  AND json_extract(c.data, '$.seller_id')=?
+                  AND json_extract(c.data, '$.conversation_id')=c.id
+                  AND json_extract(k.data, '$.conversation_id')=c.id
+                  AND json_extract(k.data, '$.buyer_id')=json_extract(c.data, '$.buyer_id')
+                  AND typeof(json_extract(c.data, '$.buyer_id'))='text'
+                  AND json_extract(c.data, '$.buyer_id')<>''
+                  AND typeof(json_extract(b.data, '$.local_product_id'))='text'
+                GROUP BY json_extract(b.data, '$.local_product_id')""",
+                (self.seller_id, self.seller_id, self.seller_id)).fetchall()
+        return dict(rows)
+
+    def _product_projection(self, product, customer_counts):
         value = copy.deepcopy(product)
         value.pop('creation_case_id', None)
         value['product_url'] = product_link(product['product_id'])
         value['product_main_image'] = project_main_image(self.repo, product)
+        value['customer_count'] = customer_counts.get(product['local_product_id'], 0)
         value['supplier_count'] = len({o['supplier_id'] for o in self._library_rows('supplier_offer')
                                        if o['local_product_id'] == product['local_product_id']})
         task = self.repo.get('procurement_task', product.get('sourcing_task_id')) if product.get('sourcing_task_id') else None
@@ -127,7 +152,9 @@ class ProductLibraryMixin(ProductPresentationMixin):
 
     def list_products(self):
         with self._lock:
-            return {'items': [self._product_projection(r) for r in self._library_rows('library_product')]}
+            products = self._library_rows('library_product')
+            counts = self._product_customer_counts()
+            return {'items': [self._product_projection(r, counts) for r in products]}
 
     def get_product(self, local_product_id):
         with self._lock:
@@ -135,7 +162,7 @@ class ProductLibraryMixin(ProductPresentationMixin):
             offers = [r for r in self._library_rows('supplier_offer') if r['local_product_id'] == local_product_id]
             suppliers = [r for r in self._library_rows('supplier') if r['supplier_id'] in {o['supplier_id'] for o in offers}]
             names = {r['supplier_id']: r['name'] for r in suppliers}
-            return {'product': self._product_projection(product),
+            return {'product': self._product_projection(product, self._product_customer_counts()),
                     'offers': [dict(r, supplier_name=names.get(r['supplier_id'], '')) for r in offers],
                     'suppliers': suppliers,
                     'tasks': [self._task_projection(t) for t in self._library_rows('procurement_task')
@@ -150,8 +177,9 @@ class ProductLibraryMixin(ProductPresentationMixin):
             supplier = self._library_entity('supplier', supplier_id)
             offers = [r for r in self._library_rows('supplier_offer') if r['supplier_id'] == supplier_id]
             ids = {o['local_product_id'] for o in offers}
+            counts = self._product_customer_counts()
             return {'supplier': supplier, 'offers': offers,
-                    'products': [self._product_projection(p) for p in self._library_rows('library_product') if p['local_product_id'] in ids]}
+                    'products': [self._product_projection(p, counts) for p in self._library_rows('library_product') if p['local_product_id'] in ids]}
 
     def _library_mutation(self, mutation_id, payload):
         mutation_id = _request_id(mutation_id)
@@ -326,7 +354,7 @@ class ProductLibraryMixin(ProductPresentationMixin):
                 raise ServiceError('ownership_mismatch', '默认供货方案不属于本产品')
             product.update(default_offer_id=offer_id, revision=product['revision'] + 1, updated_at=now_ms())
             self.repo.put('library_product', local_product_id, product, history=True)
-            result = self._save_library_mutation(mid, digest, self._product_projection(product))
+            result = self._save_library_mutation(mid, digest, self._product_projection(product, self._product_customer_counts()))
         self._changed()
         return result
 
