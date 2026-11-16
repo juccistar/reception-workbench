@@ -1,7 +1,11 @@
 {
   "version": "0.4.2",
   "observed_date": "2026-11-17",
-  "status": "synthetic_regressions_passed_candidate_pending",
+  "status": "fix_packaged_targeted_regressions_passed_real_replay_not_run",
+  "candidate_record": "docs/verification/0.4.2-candidate-A.json",
+  "package_commit": "657d4ea",
+  "candidate_source_manifest_verified": true,
+  "candidate_window_direct_suggestion_and_failure_recovery": "passed_with_synthetic_provider",
   "targeted_regressions": {
     "image_and_requirements": { "files": 5, "tests": 62, "status": "passed" },
     "safe_field_diagnostics": { "tests": 2, "status": "passed" },

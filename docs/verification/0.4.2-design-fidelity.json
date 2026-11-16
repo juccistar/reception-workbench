@@ -1,8 +1,21 @@
 {
   "version": "0.4.2",
   "date": "2026-11-17",
-  "status": "source_comparison_complete_candidate_comparison_pending",
-  "last_built_snapshot": "727c336",
+  "status": "packaged_interface_compared_independent_exe_entry_unverified",
+  "last_built_snapshot": "657d4ea",
+  "candidate_comparison": {
+    "record": "docs/verification/0.4.2-candidate-A.json",
+    "workbench_report": "artifacts/verification/workbench-042-candidate-a-001/report.json",
+    "workbench_screenshots_actually_viewed": 49,
+    "chrome_launcher_panel_report": "artifacts/verification/launcher-supplement-042-candidate-a-001/report.json",
+    "chrome_launcher_panel_screenshots_actually_viewed": 14,
+    "final_media_grid_spacing_viewed": true,
+    "customer_history_footer_and_selected_list_viewed": true,
+    "business_page_notes_and_image_geometry_viewed": true,
+    "production_code_and_resources_verified": true,
+    "independent_production_exe_home": "blocked_before_new_window",
+    "real_account_data_and_model_semantics": "not_covered"
+  },
   "rebuilt_correction_review": {
     "report": "artifacts/verification/workbench-042-replica-source-009/report.json",
     "status": "passed",
@@ -54,7 +67,7 @@
     "Customer detail: current-product summary, collapsed purchase history and fixed action footer",
     "Supplier primary button, procurement status badges, drawer inner borders and source-link colors"
   ],
-  "verification_limit": "Design acceptance uses direct screenshot/reference comparison in addition to interaction checks. Source windows use synthetic records; their content differs from the design samples. Final candidate windows and media grid correction remain to be verified. No pixel-perfect or real-account semantic validation is claimed.",
+  "verification_limit": "Design comparison includes all 49 packaged workbench screenshots and 14 packaged Chrome/launcher screenshots, in addition to source and model windows. Production code/resources are verified against the package. Window business records and network replies are synthetic and differ from the design examples. Independent production EXE home launch was blocked before a new window. No pixel-perfect or real-account semantic validation is claimed.",
   "latest_user_change": {
     "remove_chat_translation_settings_subpage": true,
     "keep_reception_translation_button": true,
@@ -69,5 +82,5 @@
     "No send-history or manual send-verification UI",
     "Original accepted/unknown ledgers and source protections remain intact"
   ],
-  "candidate_gate": "Complete design comparison and translation retirement before freezing the final candidate."
+  "candidate_gate": "Packaged interface/reference comparison and translation retirement are recorded; independent production EXE home and public release verification remain incomplete."
 }

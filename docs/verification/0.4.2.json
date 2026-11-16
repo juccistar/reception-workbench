@@ -1,7 +1,20 @@
 {
   "version": "0.4.2",
   "date": "2026-11-17",
-  "status": "source_design_and_generation_fixes_verified_candidate_building",
+  "status": "candidate_verified_with_exe_entry_limit_publication_authentication_blocked",
+  "candidate_record": "docs/verification/0.4.2-candidate-A.json",
+  "candidate": {
+    "path": "relase/reception-0.4.2-release-A-20261117",
+    "package_commit": "657d4ea",
+    "immediate_commit_after_build": true,
+    "integrity_source_signature_sdk_extension_and_frozen_checks": "passed",
+    "workbench_checks": 24,
+    "workbench_screenshots_actually_viewed": 49,
+    "chrome_checks": 17,
+    "chrome_screenshots_actually_viewed": 14,
+    "actual_exe_home": "blocked_before_new_window_existing_processes_preserved"
+  },
+  "latest_prompt_consistency": { "log": "artifacts/verification/042-candidate-A-prompts-001.log", "status": "passed" },
   "final_source_window": {
     "build_commit": "727c336",
     "report": "artifacts/verification/workbench-042-replica-source-009/report.json",
@@ -205,7 +218,10 @@
     }
   ],
   "release": {
-    "status": "awaiting_final_candidate_and_github_login",
+    "status": "candidate_built_publication_blocked_not_authenticated",
+    "candidate_commit": "657d4ea",
+    "authentication_log": "artifacts/verification/042-github-auth-status-003.log",
+    "public_latest_metadata": "artifacts/verification/042-public-latest-before-upload.json",
     "published": false,
     "public_baseline_observed": "v0.3.21",
     "authentication_status": "not_logged_in",
@@ -214,14 +230,16 @@
     "fixed_update_key_preflight": "existing key matched the published Ed25519 trust anchor; no key created or rotated"
   },
   "image_boundary_optimization": {
-    "status": "parallel_implementation_and_targeted_checks_pending_handoff",
+    "status": "implemented_targeted_and_frozen_probe_verified",
     "contract": "artifacts/verification/image-limit-update-042-001/implementation-contract.json",
     "planned_original_image_bytes": 20971520,
     "planned_supplement_files": 10,
     "planned_supplement_total_bytes": 67108864,
     "generic_rpc_budget_must_remain_unchanged": true,
     "frozen_backend_probe": "scripts/probes/account-images-042.mjs",
-    "frozen_probe_status": "prepared_syntax_checked_not_executed"
+    "frozen_probe_status": "passed",
+    "frozen_probe_report": "artifacts/verification/account-images-042-candidate-a-001/report.json",
+    "frozen_probe_limit": "Large PNG and static/animated GIF checked; no original-image private readback, exact 20 MiB boundary or JPEG/WebP frozen coverage"
   },
   "limits": {
     "full_suite_run": false,

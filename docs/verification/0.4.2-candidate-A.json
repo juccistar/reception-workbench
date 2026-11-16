@@ -1,0 +1,148 @@
+{
+  "version": "0.4.2",
+  "date": "2026-11-17",
+  "status": "candidate_checks_passed_with_exe_entry_limit_publication_blocked_by_authentication",
+  "candidate": "relase/reception-0.4.2-release-A-20261117",
+  "package_commit": "657d4ea",
+  "source_build_commit": "727c336",
+  "immediate_commit_after_packaging": true,
+  "package_log": "artifacts/verification/042-package-release-A-001.log",
+  "delivery": {
+    "installer": "relase/reception-0.4.2-release-A-20261117/ReceptionWorkbench-Setup-0.4.2.exe",
+    "installer_bytes": 145109132,
+    "installer_sha256": "489fbb9cb23519e8d81a01cfe7e21c23611343c17812d8e02acc25eb28d1aa5a",
+    "archive": "relase/reception-0.4.2-release-A-20261117/ReceptionWorkbench-0.4.2.zip",
+    "archive_bytes": 188956267,
+    "archive_sha256": "38de4eea1e649ac65124f5008814b011c992009b30a2957f2d32cf81f22b0f86",
+    "windows_code_signed": false,
+    "update_signature": "ed25519",
+    "fixed_public_key_sha256": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078"
+  },
+  "integrity": {
+    "status": "passed",
+    "distribution_files": 179,
+    "zip_entries": 180,
+    "all_zip_crcs_and_file_hashes_verified": true,
+    "python_inputs": 118,
+    "frozen_backend_files": 83,
+    "compiled_app_files": 11,
+    "external_launch_modules": 7,
+    "installer_portable_identical_resource_files": 99,
+    "sdk_files": 3377,
+    "sdk_versions": { "whatsapp-web.js": "1.34.8", "puppeteer": "24.38.0" },
+    "extension_files": 5,
+    "extension_version": "0.4.2",
+    "update_source": "https://github.com/juccistar/reception-workbench-releases/",
+    "reports": [
+      "artifacts/verification/042-candidate-A-integrity-001.json",
+      "artifacts/verification/042-candidate-A-zip-001.json",
+      "artifacts/verification/042-candidate-A-source-001.json",
+      "artifacts/verification/042-candidate-A-signature-001.json",
+      "artifacts/verification/042-candidate-A-resources-001.json",
+      "artifacts/verification/042-candidate-A-sdk-extension-001.json"
+    ]
+  },
+  "frozen_backend": {
+    "status": "passed",
+    "model_probe": {
+      "report": "artifacts/verification/packaged-models-042-candidate-a-001/report.json",
+      "protocols": ["chat-completions", "anthropic"],
+      "purposes": ["reception", "translation"],
+      "local_substitute_requests": 18,
+      "image_attachments": 14,
+      "real_provider_requests": 0
+    },
+    "account_restore": {
+      "report": "artifacts/verification/whatsapp-account-exe-041-candidate-a-042-001/report.json",
+      "original_unknown_preserved": true,
+      "restored_reception_disabled": true,
+      "normal_exit": true
+    },
+    "images": {
+      "report": "artifacts/verification/account-images-042-candidate-a-001/report.json",
+      "large_png_bytes": 7211618,
+      "large_png_and_static_gif_ready": true,
+      "returned_input_sha256_matches": true,
+      "animated_gif_rejected_as_invalid_media": true,
+      "limits": ["No private original-image readback RPC", "JPEG/WebP and exact 20 MiB boundary not covered by this frozen probe", "No real account or platform"]
+    }
+  },
+  "windows": {
+    "workbench": {
+      "report": "artifacts/verification/workbench-042-candidate-a-001/report.json",
+      "status": "passed",
+      "checks": 24,
+      "screenshots": 49,
+      "screenshots_actually_viewed": 49,
+      "renderer_errors": 0,
+      "candidate_renderer_and_preload": true,
+      "fixture_host_with_production_service_client": true,
+      "synthetic_python_business": true,
+      "actual_release_exe_entry": false,
+      "covered": ["direct start/stop", "suggestion and polish translations", "AI failure preserves input and suppresses stale errors", "source navigation", "original PNG preparation and copy fixture", "ordinary send and unknown fence", "quote scrolling and shared supplement", "all business pages and seven settings sections", "supplier explicit save", "fixed customer footer and history", "resizing and narrow layouts", "storage, Feishu and unsaved-exit dialogs"]
+    },
+    "chrome_launcher_and_panel": {
+      "report": "artifacts/verification/launcher-supplement-042-candidate-a-001/report.json",
+      "status": "passed",
+      "checks": 17,
+      "screenshots_actually_viewed": 14,
+      "real_chrome_with_isolated_profiles": true,
+      "candidate_sdk_extension_and_frozen_account_backend": true,
+      "synthetic_sdk_customers_and_locally_fulfilled_network": true,
+      "covered": ["two independent accounts", "native extension installation", "current customer and association", "late search fence", "supplement save/isolation/restoration", "pending contact recovery", "disconnect isolation", "tray and normal exit"]
+    },
+    "shared_models_source": {
+      "report": "artifacts/verification/launcher-models-042-isolation-008/report.json",
+      "status": "passed",
+      "screenshots_actually_viewed": 9,
+      "model_checks": 0,
+      "real_credentials_accessed": false
+    },
+    "actual_executable_home": {
+      "report": "artifacts/verification/launcher-entry-042-candidate-a-001/report.json",
+      "status": "blocked",
+      "phase": "first_window",
+      "new_candidate_exit_code": 0,
+      "new_window_created": false,
+      "existing_installed_processes_observed": true,
+      "cause_limit": "Existing launcher or another startup condition may have prevented a new instance; exact cause was not established.",
+      "existing_processes_terminated": false,
+      "model_file_metadata_unchanged": true,
+      "launcher_and_legacy_routing_hashes_unchanged": true,
+      "model_page_opened_by_driver": false,
+      "not_counted_as_passed": true
+    }
+  },
+  "regressions": {
+    "scope": "targeted_only",
+    "latest_ui": { "log": "artifacts/verification/042-page-review-final-002.log", "files": 2, "tests": 23, "status": "passed", "overlaps_previous_runs": true },
+    "typecheck": { "log": "artifacts/verification/042-replica-integration-typecheck-011.log", "status": "passed" },
+    "prompt_consistency": { "log": "artifacts/verification/042-candidate-A-prompts-001.log", "status": "passed" },
+    "earlier_backend_and_ui_details": "docs/verification/0.4.2-replica-integration.json",
+    "generation_failure_details": "docs/verification/0.4.2-generation-failure.json",
+    "failed_aggregate_runs_remain_recorded": true,
+    "full_suite_run": false
+  },
+  "publication": {
+    "repository": "juccistar/reception-workbench-releases",
+    "status": "blocked_not_authenticated",
+    "authentication_log": "artifacts/verification/042-github-auth-status-003.log",
+    "public_latest_observed": "v0.3.21",
+    "public_latest_metadata": "artifacts/verification/042-public-latest-before-upload.json",
+    "public_notes": "artifacts/verification/042-public-release-notes.md",
+    "draft_created": false,
+    "uploaded": false,
+    "published": false
+  },
+  "boundaries": {
+    "installer_executed": false,
+    "installed_0_4_1_replaced": false,
+    "default_entry_promoted": false,
+    "real_business_data_migrated": false,
+    "real_customer_sends": 0,
+    "paid_provider_replay": false,
+    "real_feishu_write": false,
+    "private_source_pushed": false,
+    "real_system_clipboard_end_to_end": false
+  }
+}
