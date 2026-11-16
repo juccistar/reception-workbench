@@ -66,7 +66,7 @@ class ModelInputTests(unittest.TestCase):
         self.assertEqual(router.generate.call_count, 1)
         args, kwargs = router.generate.call_args
         import json
-        manifest = json.loads(args[2])['image_manifest']
+        manifest = json.loads(args[2])['context']['image_manifest']
         self.assertEqual([(row['alias'], row['image_id']) for row in manifest],
                          [(image['alias'], image['image_id']) for image in kwargs['images']])
         self.assertEqual(args[0], 'reception')
@@ -104,7 +104,7 @@ class ModelInputTests(unittest.TestCase):
         args, kwargs = router.generate.call_args
         self.assertEqual(read_refs, [ref])
         self.assertEqual([(image['image_id'], image['role']) for image in kwargs['images']], [('supplement-image', 'seller')])
-        self.assertEqual(json.loads(args[2])['image_manifest'], [{'alias': 'p2', 'image_id': 'supplement-image',
+        self.assertEqual(json.loads(args[2])['context']['image_manifest'], [{'alias': 'p2', 'image_id': 'supplement-image',
                          'role': 'seller', 'origin': 'business_supplement', 'attachment_id': 'supplement-image'}])
         self.assertNotIn('original_b64', args[2])
 
@@ -169,7 +169,7 @@ class ModelInputTests(unittest.TestCase):
         from reception_service.integrations.reception_prompts import WHATSAPP
         facade._business_query(WHATSAPP, context, [])
         args, kwargs = router.generate.call_args
-        manifest = json.loads(args[2])['image_manifest']
+        manifest = json.loads(args[2])['context']['image_manifest']
         self.assertEqual(manifest, [{key: image[key] for key in ('alias', 'image_id', 'source_id', 'role')}
                                     for image in kwargs['images']])
         self.assertIn('wa_summary', args[1])

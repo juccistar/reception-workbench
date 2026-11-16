@@ -65,7 +65,7 @@ class ContextDeduplicationTests(unittest.TestCase):
                 request = self.native.requests[-1]
                 blocks = request['messages'][0 if protocol == 'anthropic' else 1]['content']
                 self.assertEqual(len(blocks), 2)
-                payload = json.loads(blocks[0]['text'])
+                payload = json.loads(blocks[0]['text'])['context']
                 self.assertEqual([x['message_id'] for x in payload['image_manifest']], ['image'])
                 self.assertEqual(payload['image_manifest'][0]['role'], 'buyer')
                 view = payload['message_view']

@@ -10,6 +10,7 @@ import { createLauncherRegistry } from './launcher-registry';
 import { createWindowsLauncherActivation } from './launcher-activation';
 import { createModelSettingsStore } from './model-settings-store';
 import { ModelConfigHost } from './model-config-host';
+import { modelBudgetEnvironment } from './model-budget-environment';
 import { TranslationHost } from './translation-host';
 import { TranslationActivationHost } from './translation-activation-host';
 import { importLegacyTranslation } from './legacy-model-import';
@@ -219,7 +220,7 @@ function storageProgress(stage: string, message: string) {
   if (window && !window.isDestroyed()) window.webContents.send('reception:event', { event: 'storage.progress', data: { stage, message } });
 }
 const maintenanceProgress = { onProgress: (stage: string) => storageProgress(stage, stage === 'cancel_requested' ? '已请求停止维护，正在等待数据工具实际退出，请勿关闭程序。' : '正在维护数据，请等待操作完成。') };
-function backendCommand(): MaintenanceCommand {
+async function backendCommand(): Promise<MaintenanceCommand> {
   let executable: string; let prefix: string[];
   if (app.isPackaged) { executable = path.join(process.resourcesPath, 'backend', 'reception-backend.exe'); prefix = []; }
   else {
@@ -228,7 +229,7 @@ function backendCommand(): MaintenanceCommand {
     prefix = ['-I', '-u', path.join(projectRoot, 'services/reception/run.py')];
   }
   if (!executable || !existsSync(executable)) throw new StorageError('backend_missing', '后台运行环境或组件缺失。');
-  return { executable, prefix, cwd: app.isPackaged ? process.resourcesPath : projectRoot, env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' } };
+  return { executable, prefix, cwd: app.isPackaged ? process.resourcesPath : projectRoot, env: { ...await modelBudgetEnvironment(process.env), PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' } };
 }
 async function performStorageTask(request: StorageRequest): Promise<string> {
   let captured: ReturnType<typeof readBootstrap>;
@@ -246,13 +247,13 @@ async function performStorageTask(request: StorageRequest): Promise<string> {
   await createArchiveParent(safetyParent);
   let result;
   if (request.action === 'backup') {
-    result = await runMaintenance(backendCommand(), maintenanceArguments('backup', dataRoot, { mode, target: uniqueArchive(request.target!, 'backup') }), maintenanceProgress);
+    result = await runMaintenance(await backendCommand(), maintenanceArguments('backup', dataRoot, { mode, target: uniqueArchive(request.target!, 'backup') }), maintenanceProgress);
   } else if (request.action === 'open') {
     const historyRoot = dataRoot || captured.dataRoot;
     const sameRoot = historyRoot && path.resolve(historyRoot).toLowerCase() === path.resolve(request.target!).toLowerCase();
-    result = await runMaintenance(backendCommand(), sameRoot ? maintenanceArguments('inspect', historyRoot, { mode }) : maintenanceArguments('open', historyRoot || request.target!, { mode, ...(historyRoot ? { target: request.target, backup: safetyParent } : {}) }), maintenanceProgress);
+    result = await runMaintenance(await backendCommand(), sameRoot ? maintenanceArguments('inspect', historyRoot, { mode }) : maintenanceArguments('open', historyRoot || request.target!, { mode, ...(historyRoot ? { target: request.target, backup: safetyParent } : {}) }), maintenanceProgress);
   } else {
-    result = await runMaintenance(backendCommand(), maintenanceArguments(request.action, dataRoot, { mode, target: request.target, archive: request.backup, backup: safetyParent }), maintenanceProgress);
+    result = await runMaintenance(await backendCommand(), maintenanceArguments(request.action, dataRoot, { mode, target: request.target, archive: request.backup, backup: safetyParent }), maintenanceProgress);
   }
   const nextRoot = request.action === 'backup' ? dataRoot : request.target!;
   if (path.resolve(result.data_root) !== path.resolve(nextRoot)) throw new StorageError('target_mismatch', '核验结果与选择的目录不一致，未切换。');
@@ -364,7 +365,7 @@ async function prepareUpdateInstall(version: string, installerPath: string, inst
     await stopBackendForClose(target, false);
     const parent = safetyBackupParent(bootstrapPaths.stateDir, process.env.RECEPTION_MERCHANT_REGISTRY_DIR, [dataRoot, app.isPackaged ? path.dirname(process.execPath) : projectRoot]);
     await createArchiveParent(parent);
-    const result = await runMaintenance(backendCommand(), maintenanceArguments('backup', dataRoot, { mode, target: uniqueArchive(parent, 'pre-update') }), maintenanceProgress);
+    const result = await runMaintenance(await backendCommand(), maintenanceArguments('backup', dataRoot, { mode, target: uniqueArchive(parent, 'pre-update') }), maintenanceProgress);
     if (!result.backup || path.resolve(result.data_root).toLowerCase() !== path.resolve(dataRoot).toLowerCase()) throw new Error('未收到完整备份确认。');
     writeBootstrap(bootstrapPaths.configFile, { ...captured, lastBackup: { path: result.backup, completedAt: Date.now() } }, captured);
     await gate.commit();
@@ -580,7 +581,7 @@ function installIPC() {
 }
 async function startBackend() {
   if (startupError || !dataRoot) return;
-  const runner = backendCommand();
+  const runner = await backendCommand();
   const release = await acquireStorageOperation(bootstrapPaths.stateDir);
   try {
     const refreshed = resolveDataLocation(args);
@@ -794,7 +795,10 @@ else {
             const closeContext = await broker.publishVerifiedMerchant(record, async request => {
               const { request_id: _request, ...params } = request;
               return call<Pick<WhatsAppMerchantContext, 'seller_id' | 'data_root' | 'conversation_id' | 'revision' | 'context'>>('_wa_export_merchant_context', params);
-            }, validate);
+            }, validate, async request => {
+              const { request_id: _request, ...params } = request;
+              return call<{ seller_id: string; data_root: string; candidates: Array<{ conversation_id: string; name: string; revision: string }> }>('_wa_export_customer_candidates', params);
+            });
             if (closing || storageBusy || updateTask) await closeContext(); else closeMerchantContext = closeContext;
           } else throw new Error('launcher_registration_unavailable');
         }

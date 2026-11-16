@@ -201,7 +201,8 @@ class WhatsAppAccountService(AccountMediaMixin, AccountGenerationMixin):
         return self.get_whatsapp_state()
 
     def get_whatsapp_state(self):
-        account = self.account
+        owner = self.repo.get('meta', 'account')
+        account = self.account or (owner.get('account_id') if owner else None)
         rows = [r for r in self.repo.list('conversation') if r['account_id'] == account]
         bindings = [self.repo.get('binding', _key(account, r['chat_id'])) for r in rows]
         ops = [r for r in self.repo.list('operation') if r['account_id'] == account and r['status'] in ('prepared', 'sending', 'unknown')]

@@ -69,7 +69,7 @@ FAST = frozenset({'get_snapshot', 'get_executor_health', 'get_conversation', 'ge
                   'get_whatsapp_state', 'save_whatsapp_binding', 'get_whatsapp_context', 'set_whatsapp_reception',
                   'takeover_whatsapp', 'reconcile_whatsapp_operation', '_wa_set_account', '_wa_ingest',
                   '_wa_prepare_send', '_wa_transport_result', '_wa_ack', '_wa_media_begin', '_wa_media_chunk',
-                  '_wa_media_finish', '_wa_media_fail', '_wa_export_merchant_context', '_wa_writeback_capabilities',
+                  '_wa_media_finish', '_wa_media_fail', '_wa_export_merchant_context', '_wa_export_customer_candidates', '_wa_writeback_capabilities',
                   '_wa_writeback_preview', '_wa_writeback_submit', '_configure_models', 'shutdown'})
 DEFAULT_SETTINGS = {'workctl_path': '', 'poll_seconds': 30, 'probe_seconds': 2, 'merge_seconds': 1,
                     'required_fields': ['product', 'quantity', 'specifications', 'destination'],

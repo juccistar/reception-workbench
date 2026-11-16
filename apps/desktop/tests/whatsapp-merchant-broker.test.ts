@@ -46,6 +46,33 @@ it('rejects bad MAC and replayed nonces', async () => {
   async function send(p: string) { return new Promise<string>(resolve => { const s = net.createConnection(record.endpoint); let out = ''; s.on('data', b => { out += b.toString(); }); s.on('error', () => resolve(out)); s.on('close', () => resolve(out)); s.write(JSON.stringify({ nonce, body, issued_at_ms, proof: p }) + '\n'); }); }
   expect(await send('0'.repeat(64))).toBe(''); expect(await send(proof)).not.toBe(''); expect(await send(proof)).toBe(''); expect(read).toHaveBeenCalledTimes(1);
 });
+it('searches with a verified lease and checks identity before and after reading', async () => {
+  const { broker } = await setup(); let valid = true;
+  const search = vi.fn(async () => ({ seller_id: binding.seller_id, data_root: binding.data_root, candidates: [{ conversation_id: 'c1', name: 'Alice', revision: 'a'.repeat(64) }] }));
+  const validate = vi.fn(() => { if (!valid) throw new Error('revoked'); });
+  closers.push(await broker.publishVerifiedMerchant(binding, async () => value(), validate, search));
+  const req = { request_id: 'search', account_id: 'account', chat_id: 'chat', merchant_id: binding.record_id, binding_revision: 1, query: 'Alice', limit: 25 };
+  const result = await broker.searchCustomers(binding, req);
+  expect(result.candidates[0].name).toBe('Alice'); expect(result.instance_id).toMatch(/^[a-f0-9]{32}$/); expect(validate).toHaveBeenCalledTimes(2); expect(search).toHaveBeenCalledWith(req);
+  expect((await broker.request(binding, input)).revision).toBe('a'.repeat(64));
+  await expect(broker.searchCustomers(binding, { ...req, query: 'x'.repeat(81) })).rejects.toThrow();
+  await expect(broker.searchCustomers(binding, { ...req, query: '\n' })).rejects.toThrow();
+  await expect(broker.searchCustomers(binding, { ...req, limit: 26 })).rejects.toThrow();
+  await expect(broker.searchCustomers(binding, { ...req, merchant_id: 'other' })).rejects.toThrow();
+  valid = false; await expect(broker.searchCustomers(binding, req)).rejects.toThrow();
+});
+it('rejects untrusted search response shapes and missing callback', async () => {
+  const { broker } = await setup(); const req = { request_id: 'r', account_id: 'a', chat_id: 'c', merchant_id: binding.record_id, binding_revision: 1, query: '', limit: 1 };
+  const close = await broker.publishVerifiedMerchant(binding, async () => value(), () => {}); closers.push(close);
+  await expect(broker.searchCustomers(binding, req)).rejects.toThrow(); await close();
+  let result: any = { seller_id: '999', data_root: binding.data_root, candidates: [] };
+  closers.push(await broker.publishVerifiedMerchant(binding, async () => value(), () => {}, async () => result));
+  await expect(broker.searchCustomers(binding, req)).rejects.toThrow();
+  result = { seller_id: binding.seller_id, data_root: binding.data_root, candidates: [{ conversation_id: 'c', name: 'Alice', revision: 'a'.repeat(64), secret: 'x' }] };
+  await expect(broker.searchCustomers(binding, req)).rejects.toThrow();
+  result = { seller_id: binding.seller_id, data_root: binding.data_root, candidates: Array(2).fill({ conversation_id: 'c', name: 'Alice', revision: 'a'.repeat(64) }) };
+  await expect(broker.searchCustomers(binding, req)).rejects.toThrow();
+});
 it('rejects oversized exports and mismatched response identity', async () => {
   const { broker } = await setup(); let wrong = true;
   closers.push(await broker.publishVerifiedMerchant(binding, async () => wrong ? { ...value(), seller_id: '999' } : { ...value(), context: { ...value().context, knowledge: ['x'.repeat(300000)] } }, () => {}));

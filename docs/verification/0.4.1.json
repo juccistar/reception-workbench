@@ -2,10 +2,90 @@
   "version": "0.4.1",
   "date": "2026-11-15",
   "updated": "2026-11-16",
-  "status": "candidate_A_built_release_blocked",
+  "status": "formal_revision_integrated_window_and_package_pending",
+  "formal_revision": {
+    "date": "2026-11-16",
+    "production_build": {
+      "status": "passed",
+      "command": "node scripts/build.mjs",
+      "date": "2026-11-16",
+      "window_validation": "pending"
+    },
+    "typecheck": "passed",
+    "backend_tests": {
+      "report": "artifacts/verification/041-revision-001/backend-tests.json",
+      "files": 11,
+      "passed": 88
+    },
+    "model_budget_tests": {
+      "file": "test_model_request_budget_041.py",
+      "passed": 9,
+      "cleanup_before_admission_release": true
+    },
+    "desktop_integration": {
+      "files": 9,
+      "passed": 73,
+      "final_combined_run": 71,
+      "manager_additional_cases": 2
+    },
+    "reviewed_prompts": "matched",
+    "tools": {
+      "files": [
+        "customer-panel-resources.test.mjs",
+        "connect-live.test.mjs"
+      ],
+      "passed": 26
+    },
+    "failed_test_invocation": "initial_multi_filename_backend_runner_call_rejected_by_argparse; replaced_by_file_isolated_runs",
+    "native_extension_p0": {
+      "status": "passed",
+      "report": "artifacts/verification/chrome-sidepanel-p0-041-003/report.json",
+      "screenshot_viewed": true
+    },
+    "window_integration": "pending",
+    "candidate": "pending",
+    "real_account": false,
+    "real_model_calls": 0,
+    "full_suite": false
+  },
   "branch": "feat/whatsapp-chrome-0.4.1",
   "base_commit": "626fe07",
   "plan": "docs/0.4.1开发方案.md",
+  "scope_revision": {
+    "date": "2026-11-16",
+    "requested": "update_development_plan_after_interactive_ui_review",
+    "formal_runtime": "source_integrated_pending_new_candidate_not_in_candidate_A",
+    "targets": [
+      "unified_all_international_whatsapp_account_cards",
+      "independent_parallel_whatsapp_accounts",
+      "inline_connection_failure_and_exception_status",
+      "copy_complete_host_authorization_instructions",
+      "current_customer_side_panel_and_scoped_customer_association",
+      "same_user_bounded_model_request_budget"
+    ],
+    "candidate_A_is_prior_scope_baseline": true,
+    "new_candidate_required_after_implementation": true,
+    "design": "docs/design/0.4.1-launcher/README.md",
+    "standalone_design_report": "artifacts/verification/launcher-ui-design-041-003/report.json",
+    "standalone_design_checks": "passed",
+    "side_panel_layout_report": "artifacts/verification/launcher-ui-design-041-004/report.json",
+    "side_panel_layout_checks": "passed",
+    "prototype_screenshots_generated": 13,
+    "revised_screenshots_viewed": [
+      "05-multi-account.png",
+      "06-send-confirmation.png",
+      "09-connection-timeout.png",
+      "10-narrow-timeout.png",
+      "11-chat-sidebar.png",
+      "12-associate-customer.png",
+      "13-authorization.png"
+    ],
+    "operating_system_clipboard_end_to_end": false,
+    "real_multi_account_runtime_verified": false,
+    "real_chrome_side_panel_verified": false,
+    "side_panel_route": "fixed_extension_installed_via_owned_chrome_private_cdp_pipe_extension_context_binding",
+    "new_production_build": true
+  },
   "authorization": {
     "development": true,
     "company_name_launcher_titles": true,
@@ -32,9 +112,48 @@
     "transparent_white_png": "implemented_actual_electron_window_4_screenshots_viewed_original_bytes_unchanged",
     "context_order": "wire_object_key_order_only_five_modes_two_protocols_equivalent",
     "message_image_injection": "current_case_or_unambiguous_no_case_source_selection_preparation_and_wire_verified",
-    "same_request_source_deduplication": "five_targeted_tests_passed_no_production_change_required"
+    "same_request_source_deduplication": "five_targeted_tests_passed_no_production_change_required",
+    "unified_account_launcher_revision": "standalone_design_only_formal_ui_pending",
+    "parallel_whatsapp_account_runtime": "planned_formal_manager_and_locks_pending",
+    "customer_side_panel": "standalone_design_only_extension_and_host_integration_pending",
+    "same_user_model_budget": "planned_cross_process_broker_and_clients_pending"
   },
   "verification": {
+    "accio_compact_launch_layout": {
+      "status": "source_fix_in_shared_worktree_pending_new_candidate",
+      "files": [
+        "scripts/connect-live.mjs",
+        "scripts/tests/connect-live.test.mjs"
+      ],
+      "report": "artifacts/verification/launch-workctl-20261116/compact-layout-verified.json",
+      "accepted_layout": "accounts/<current-account>/r/<generation>/p/<workctl-shim>",
+      "legacy_layout_preserved": true,
+      "same_account_and_directory_link_checks_preserved": true,
+      "shim_contents_read_or_executed": false,
+      "peer_reported_targeted_tests": {
+        "passed": 31,
+        "failed": 0,
+        "skipped": 0,
+        "new_cases": 5
+      },
+      "this_session_reviewed_source_diff_and_report": true,
+      "this_session_reran_tests": false,
+      "installed_files_changed": false,
+      "new_build_or_installation": false,
+      "real_authorized_launch_verified": false,
+      "temporary_mapping_entry_is_release_default": false,
+      "temporary_entry_actual_launch": {
+        "report": "artifacts/verification/launch-workctl-20261116/temporary-launch-observed.json",
+        "evidence_origin": "peer_session_user_executed_launch_and_process_metadata_observation",
+        "merchant_window_and_backend_started": true,
+        "window_responding": true,
+        "seller_and_original_data_root_match": true,
+        "installed_normal_entry_updated": false,
+        "source_fix_packaged_or_installed": false,
+        "repaired_normal_entry_real_launch_verified": false,
+        "real_model_or_customer_send_receive_verified": false
+      }
+    },
     "chrome_public_qr": {
       "report": "artifacts/verification/chrome-041-p1-run-20261115b/report.json",
       "chrome": "152.0.7977.65",
@@ -43,7 +162,10 @@
       "headless": false,
       "private_pipe": true,
       "same_visible_page": true,
-      "observations_ms": [65546, 65459],
+      "observations_ms": [
+        65546,
+        65459
+      ],
       "qr_refreshed_both": true,
       "owned_processes_remaining": 0,
       "authenticated": false,
@@ -54,23 +176,136 @@
       ]
     },
     "targeted_tests": [
-      {"scope": "initial_company_name_chain", "files": 4, "passed": 24, "log": "artifacts/verification/company-names-041/ui.log", "historical_stage_not_additive": true},
-      {"scope": "desktop_account_launcher_source_002", "historical_stage_not_additive": true, "files": 11, "passed": 64, "long_unicode_company_name_400": "passed", "includes": ["launcher-company-name.test.ts", "launcher-registry-legacy.test.ts", "launcher-host-trust.test.ts", "whatsapp-account-store.test.ts", "whatsapp-merchant-broker.test.ts", "chrome-host.test.ts", "whatsapp-coordinator.test.ts", "whatsapp-account-manager.test.ts", "whatsapp-accounts.test.tsx", "service-client-lifecycle.test.ts", "chat-service-client.test.ts"]},
-      {"scope": "current_account_related_backend", "pattern": "test_whatsapp_account*_041.py", "files": 7, "passed": 46, "file_isolated_processes": true, "report": "artifacts/verification/041-source-002/account-tests.json", "includes_core_and_generation_below": true},
-      {"scope": "account_core_041", "file": "test_whatsapp_account_core_041.py", "passed": 17, "included_in_account_total": true},
-      {"scope": "account_generation_041", "file": "test_whatsapp_account_generation_041.py", "passed": 10, "included_in_account_total": true, "real_model_router": true, "synthetic_provider_and_receipts": true, "image_and_text_same_call": true},
-      {"scope": "image_and_context_backend", "files": 8, "passed": 74, "file_isolated_processes": true, "report": "artifacts/verification/041-source-002/image-context-tests.json", "includes": ["test_model_context_order.py", "test_model_inputs_040.py", "test_native_image_requests_041.py", "test_reception_image_selection_041.py", "test_context_deduplication_041.py", "test_image_assets.py", "test_product_main_image_0313.py", "test_product_display_0313.py"]},
-      {"scope": "message_images_and_legacy_read_only_preview", "file": "test_message_photos.py", "passed": 17, "runner": "scripts/test-backend.mjs"},
-      {"scope": "requirement_model_wiring", "file": "test_requirement_model_040.py", "passed": 1},
-      {"scope": "final_desktop_launcher_chrome_retirement_and_bridge", "files": 15, "passed": 92, "qr_page_disconnect_before_authentication": true, "ledger_diagnostics_and_migrated_image_handle_coverage_retained": true},
-      {"scope": "release_paths_and_locked_sdk_runtime", "files": 2, "passed": 2}
+      {
+        "scope": "initial_company_name_chain",
+        "files": 4,
+        "passed": 24,
+        "log": "artifacts/verification/company-names-041/ui.log",
+        "historical_stage_not_additive": true
+      },
+      {
+        "scope": "desktop_account_launcher_source_002",
+        "historical_stage_not_additive": true,
+        "files": 11,
+        "passed": 64,
+        "long_unicode_company_name_400": "passed",
+        "includes": [
+          "launcher-company-name.test.ts",
+          "launcher-registry-legacy.test.ts",
+          "launcher-host-trust.test.ts",
+          "whatsapp-account-store.test.ts",
+          "whatsapp-merchant-broker.test.ts",
+          "chrome-host.test.ts",
+          "whatsapp-coordinator.test.ts",
+          "whatsapp-account-manager.test.ts",
+          "whatsapp-accounts.test.tsx",
+          "service-client-lifecycle.test.ts",
+          "chat-service-client.test.ts"
+        ]
+      },
+      {
+        "scope": "current_account_related_backend",
+        "pattern": "test_whatsapp_account*_041.py",
+        "files": 7,
+        "passed": 46,
+        "file_isolated_processes": true,
+        "report": "artifacts/verification/041-source-002/account-tests.json",
+        "includes_core_and_generation_below": true
+      },
+      {
+        "scope": "account_core_041",
+        "file": "test_whatsapp_account_core_041.py",
+        "passed": 17,
+        "included_in_account_total": true
+      },
+      {
+        "scope": "account_generation_041",
+        "file": "test_whatsapp_account_generation_041.py",
+        "passed": 10,
+        "included_in_account_total": true,
+        "real_model_router": true,
+        "synthetic_provider_and_receipts": true,
+        "image_and_text_same_call": true
+      },
+      {
+        "scope": "image_and_context_backend",
+        "files": 8,
+        "passed": 74,
+        "file_isolated_processes": true,
+        "report": "artifacts/verification/041-source-002/image-context-tests.json",
+        "includes": [
+          "test_model_context_order.py",
+          "test_model_inputs_040.py",
+          "test_native_image_requests_041.py",
+          "test_reception_image_selection_041.py",
+          "test_context_deduplication_041.py",
+          "test_image_assets.py",
+          "test_product_main_image_0313.py",
+          "test_product_display_0313.py"
+        ]
+      },
+      {
+        "scope": "message_images_and_legacy_read_only_preview",
+        "file": "test_message_photos.py",
+        "passed": 17,
+        "runner": "scripts/test-backend.mjs"
+      },
+      {
+        "scope": "requirement_model_wiring",
+        "file": "test_requirement_model_040.py",
+        "passed": 1
+      },
+      {
+        "scope": "final_desktop_launcher_chrome_retirement_and_bridge",
+        "files": 15,
+        "passed": 92,
+        "qr_page_disconnect_before_authentication": true,
+        "ledger_diagnostics_and_migrated_image_handle_coverage_retained": true
+      },
+      {
+        "scope": "release_paths_and_locked_sdk_runtime",
+        "files": 2,
+        "passed": 2
+      }
     ],
-    "known_test_failures_resolved": ["Initial synthetic PNG fixture was invalid; replaced with Pillow-generated PNG and image generation test passed.", "Prepared-send fixture used a buyer source from a prior binding segment; changed it to a new buyer message in the active segment and core tests passed."],
-    "typecheck": {"status": "passed", "command": "tsc --noEmit -p apps/desktop/tsconfig.json"},
-    "previous_source_build": {"status": "passed", "stage": "development_snapshot_1", "commit": "10bd464", "desktop_only": true},
-    "development_snapshot_2": {"status": "passed", "commit": "dc75c38", "date": "2026-11-16", "desktop_only": true},
-    "development_snapshot_3": {"status": "passed", "commit": "aacb3ed", "date": "2026-11-16", "desktop_only": true},
-    "source_build": {"status": "passed", "stage": "development_snapshot_4", "commit": "c585aee", "date": "2026-11-16", "command": "node scripts/build.mjs", "desktop_only": true, "output": "artifacts/app", "candidate_or_release": false, "window_verification": "passed_source_004_eight_screenshots_viewed", "immediate_local_commit": true},
+    "known_test_failures_resolved": [
+      "Initial synthetic PNG fixture was invalid; replaced with Pillow-generated PNG and image generation test passed.",
+      "Prepared-send fixture used a buyer source from a prior binding segment; changed it to a new buyer message in the active segment and core tests passed."
+    ],
+    "typecheck": {
+      "status": "passed",
+      "command": "tsc --noEmit -p apps/desktop/tsconfig.json"
+    },
+    "previous_source_build": {
+      "status": "passed",
+      "stage": "development_snapshot_1",
+      "commit": "10bd464",
+      "desktop_only": true
+    },
+    "development_snapshot_2": {
+      "status": "passed",
+      "commit": "dc75c38",
+      "date": "2026-11-16",
+      "desktop_only": true
+    },
+    "development_snapshot_3": {
+      "status": "passed",
+      "commit": "aacb3ed",
+      "date": "2026-11-16",
+      "desktop_only": true
+    },
+    "source_build": {
+      "status": "passed",
+      "stage": "development_snapshot_4",
+      "commit": "c585aee",
+      "date": "2026-11-16",
+      "command": "node scripts/build.mjs",
+      "desktop_only": true,
+      "output": "artifacts/app",
+      "candidate_or_release": false,
+      "window_verification": "passed_source_004_eight_screenshots_viewed",
+      "immediate_local_commit": true
+    },
     "transparent_png_window": {
       "status": "passed",
       "source_commit": "10bd464",
@@ -80,11 +315,19 @@
       "synthetic_merchant_and_fixture_host": true,
       "actual_release_exe": false,
       "legacy_flattened_preview_recovered": true,
-      "thumbnail_alpha": [0, 255],
+      "thumbnail_alpha": [
+        0,
+        255
+      ],
       "original_sha256": "edabbce9c46ac0883eaa7b2bcb5151a4911444595e9733c43e537725cb4b2159",
       "original_bytes_unchanged": true,
       "persisted_legacy_cache_unchanged": true,
-      "screenshots_viewed": ["01-white-transparent-thumbnail.png", "02-original-fit.png", "03-original-size.png", "04-narrow-dialog.png"],
+      "screenshots_viewed": [
+        "01-white-transparent-thumbnail.png",
+        "02-original-fit.png",
+        "03-original-size.png",
+        "04-narrow-dialog.png"
+      ],
       "normal_shutdown": true,
       "real_customer_or_model_calls": 0
     },
@@ -92,32 +335,110 @@
       "status": "failed_cleanup_api",
       "report": "artifacts/verification/chrome-host-public-041-source-002/report.json",
       "normal_and_initialize_fault_page_retained": true,
-      "observations_ms": [65340, 65266],
+      "observations_ms": [
+        65340,
+        65266
+      ],
       "qr_refreshed_both": true,
-      "screenshots_viewed": ["normal-public-qr.png", "initialize-fault-public-qr.png"],
+      "screenshots_viewed": [
+        "normal-public-qr.png",
+        "initialize-fault-public-qr.png"
+      ],
       "failure": "Puppeteer Browser/Page use off, not Node removeListener; once wrappers also require matching removable handlers",
       "correction": "use on/off and real Puppeteer EventEmitter in regression tests",
       "retest": "passed_source_003"
     },
-    "launcher_window_initial": {"status": "failed_driver_launch_timeout", "report": "artifacts/verification/launcher-041-source-002/report.json", "real_user_configuration_accessed": false, "retest": "passed_source_004"},
-    "chrome_exit_regression": {"files": 3, "passed": 31, "real_puppeteer_emitter": true, "historical_stage_not_additive": true},
-    "production_chrome_host_source_003": {"status": "passed", "source_commit": "aacb3ed", "report": "artifacts/verification/chrome-host-public-041-source-003/report.json", "chrome": "152.0.7977.65", "sdk": "1.34.8", "puppeteer": "24.38.0", "normal_and_initialize_fault": true, "observations_ms": [65267, 65247], "qr_refreshed_both": true, "same_visible_sdk_page": true, "private_pipe": true, "debugging_tcp_port": false, "owned_root_process_exited_both": true, "screenshots_viewed": ["normal-public-qr.png", "initialize-fault-public-qr.png"], "authenticated": false},
-    "launcher_window_source_003": {"status": "automated_checks_passed_visual_narrow_issues_corrected_retest_passed_source_004", "report": "artifacts/verification/launcher-041-source-003/report.json", "production_launcher_host_preload_renderer_and_account_service": true, "known_folder_isolated": true, "synthetic_merchants": true, "screenshots_viewed": 7, "no_merchant_account_creation": true, "tray_and_single_instance": true, "normal_shutdown": true, "issues": ["narrow_footer_action_clipping", "narrow_account_fieldset_horizontal_overflow"], "correction": "footer_content_height_and_fieldset_min_inline_size_back_button_flex"},
-    "merchant_broker_windows": {"status": "passed", "report": "artifacts/verification/merchant-broker-041-cross-process-001/report.json", "dpapi_current_user": true, "separate_processes": true, "synthetic_merchants": 2, "identity_root_binding_isolation_and_revision_updates": true, "publisher_close_refused": true, "real_merchant_authorization": false},
+    "launcher_window_initial": {
+      "status": "failed_driver_launch_timeout",
+      "report": "artifacts/verification/launcher-041-source-002/report.json",
+      "real_user_configuration_accessed": false,
+      "retest": "passed_source_004"
+    },
+    "chrome_exit_regression": {
+      "files": 3,
+      "passed": 31,
+      "real_puppeteer_emitter": true,
+      "historical_stage_not_additive": true
+    },
+    "production_chrome_host_source_003": {
+      "status": "passed",
+      "source_commit": "aacb3ed",
+      "report": "artifacts/verification/chrome-host-public-041-source-003/report.json",
+      "chrome": "152.0.7977.65",
+      "sdk": "1.34.8",
+      "puppeteer": "24.38.0",
+      "normal_and_initialize_fault": true,
+      "observations_ms": [
+        65267,
+        65247
+      ],
+      "qr_refreshed_both": true,
+      "same_visible_sdk_page": true,
+      "private_pipe": true,
+      "debugging_tcp_port": false,
+      "owned_root_process_exited_both": true,
+      "screenshots_viewed": [
+        "normal-public-qr.png",
+        "initialize-fault-public-qr.png"
+      ],
+      "authenticated": false
+    },
+    "launcher_window_source_003": {
+      "status": "automated_checks_passed_visual_narrow_issues_corrected_retest_passed_source_004",
+      "report": "artifacts/verification/launcher-041-source-003/report.json",
+      "production_launcher_host_preload_renderer_and_account_service": true,
+      "known_folder_isolated": true,
+      "synthetic_merchants": true,
+      "screenshots_viewed": 7,
+      "no_merchant_account_creation": true,
+      "tray_and_single_instance": true,
+      "normal_shutdown": true,
+      "issues": [
+        "narrow_footer_action_clipping",
+        "narrow_account_fieldset_horizontal_overflow"
+      ],
+      "correction": "footer_content_height_and_fieldset_min_inline_size_back_button_flex"
+    },
+    "merchant_broker_windows": {
+      "status": "passed",
+      "report": "artifacts/verification/merchant-broker-041-cross-process-001/report.json",
+      "dpapi_current_user": true,
+      "separate_processes": true,
+      "synthetic_merchants": 2,
+      "identity_root_binding_isolation_and_revision_updates": true,
+      "publisher_close_refused": true,
+      "real_merchant_authorization": false
+    },
     "context_order": {
       "status": "passed",
       "content_and_arrays_unchanged": true,
       "roles_and_image_blocks_unchanged": true,
       "semantic_fingerprint_and_limits_unchanged": true,
       "five_modes_two_protocols_before_after_pairs": 10,
-      "synthetic_automatic_common_prefix_characters": {"before": 113, "after": 18413},
-      "synthetic_automatic_common_prefix_utf8_bytes": {"before": 113, "after": 54413},
+      "synthetic_automatic_common_prefix_characters": {
+        "before": 113,
+        "after": 18413
+      },
+      "synthetic_automatic_common_prefix_utf8_bytes": {
+        "before": 113,
+        "after": 54413
+      },
       "real_api_cache_rate": "not_measured",
-      "baseline_failure_check": {"test_file": "test_requirement_media_0311.py", "current_and_head_module_same": true, "failures": 1, "errors": 7, "counted_as_passed": false, "artifacts": "artifacts/verification/context-order-baseline-041-20261116a"}
+      "baseline_failure_check": {
+        "test_file": "test_requirement_media_0311.py",
+        "current_and_head_module_same": true,
+        "failures": 1,
+        "errors": 7,
+        "counted_as_passed": false,
+        "artifacts": "artifacts/verification/context-order-baseline-041-20261116a"
+      }
     },
     "message_images": {
       "status": "passed_synthetic_selection_to_wire",
-      "confirmed_omissions": ["no_case_excluded_all_message_images", "non_product_images_requirement_references_ignored"],
+      "confirmed_omissions": [
+        "no_case_excluded_all_message_images",
+        "non_product_images_requirement_references_ignored"
+      ],
       "cached_original_preparation_and_context_use_same_selection": true,
       "no_case_current_window_sole_buyer_image": true,
       "current_case_customization_image_with_old_case_present": true,
@@ -132,31 +453,140 @@
       "identity_changed_during_collection": "late_result_rejected",
       "transparent_gallery_preview": "alpha_preserved",
       "additional_failure_stage_ui": false,
-      "public_cdn_sample": {"status": "passed", "bytes": 190830, "mime": "image/webp", "width": 1000, "height": 1000, "different_from_reported_product": true},
+      "public_cdn_sample": {
+        "status": "passed",
+        "bytes": 190830,
+        "mime": "image/webp",
+        "width": 1000,
+        "height": 1000,
+        "different_from_reported_product": true
+      },
       "reported_product_1601993586845_live_platform_response": "not_obtained"
     },
-    "offline_account_maintenance": {"status": "passed_synthetic", "strict_cli_before_service_construction": true, "real_workspace_backup_and_legacy_import": true, "source_db_and_ledger_hashes_preserved": true, "duplicate_import_idempotent": true, "restored_unknown_fence_preserved": true, "automatic_reception_after_restore": false, "chrome_profile_in_business_backup": false},
-    "verification_corrections": ["Direct invocation of legacy product main-image tests lacked explicit synthetic support; rerun with scripts/test-backend.mjs passed all 18. Both logs retained."],
-    "launcher_window_source_004": {"status": "passed", "source_commit": "c585aee", "report": "artifacts/verification/launcher-041-source-004/report.json", "screenshots_viewed": 8, "all_narrow_footer_actions_visible": true, "account_form_horizontal_overflow": false, "production_launcher_preload_renderer_and_account_service": true, "synthetic_merchants_and_isolated_known_folder": true, "tray_single_instance_and_shutdown": true},
-    "candidate": {"name": "A", "status": "package_and_entry_checks_passed_public_qr_initialization_unresolved", "source_commit": "c585aee", "build_commit": "71b478c", "output": "relase/reception-0.4.1-release-A-20261116", "installer_and_portable": true, "immediate_local_commit": true, "installed": false},
+    "offline_account_maintenance": {
+      "status": "passed_synthetic",
+      "strict_cli_before_service_construction": true,
+      "real_workspace_backup_and_legacy_import": true,
+      "source_db_and_ledger_hashes_preserved": true,
+      "duplicate_import_idempotent": true,
+      "restored_unknown_fence_preserved": true,
+      "automatic_reception_after_restore": false,
+      "chrome_profile_in_business_backup": false
+    },
+    "verification_corrections": [
+      "Direct invocation of legacy product main-image tests lacked explicit synthetic support; rerun with scripts/test-backend.mjs passed all 18. Both logs retained."
+    ],
+    "launcher_window_source_004": {
+      "status": "passed",
+      "source_commit": "c585aee",
+      "report": "artifacts/verification/launcher-041-source-004/report.json",
+      "screenshots_viewed": 8,
+      "all_narrow_footer_actions_visible": true,
+      "account_form_horizontal_overflow": false,
+      "production_launcher_preload_renderer_and_account_service": true,
+      "synthetic_merchants_and_isolated_known_folder": true,
+      "tray_single_instance_and_shutdown": true
+    },
+    "candidate": {
+      "name": "A",
+      "status": "package_and_entry_checks_passed_public_qr_initialization_unresolved",
+      "source_commit": "c585aee",
+      "build_commit": "71b478c",
+      "output": "relase/reception-0.4.1-release-A-20261116",
+      "installer_and_portable": true,
+      "immediate_local_commit": true,
+      "installed": false
+    },
     "candidate_package": {
-      "integrity": {"status": "passed", "report": "artifacts/verification/release-041-A-integrity.json", "files": 173, "asar_entries": 16, "customer_databases": 0, "development_dependencies": 0},
-      "zip": {"status": "passed", "report": "artifacts/verification/release-041-A-zip.json", "entries": 174, "verified_files": 173, "bytes": 188842478, "sha256": "d6136fa7e750f96d384f7140a3c3d61ad561247dabe46ec73bafc318b4cda1e7"},
-      "update": {"status": "passed", "report": "artifacts/verification/release-041-A-update.json", "fixed_ed25519_signature": true, "windows_authenticode": "unsigned", "installer_bytes": 145001538, "installer_sha256": "52f9cafb5265d43e3ef3777aa56932065a0da9a079e604441ce825cf0fe7f45b"},
-      "sdk_snapshot": {"status": "passed", "report": "artifacts/verification/release-041-A-sdk-snapshot.json", "files": 3377, "manifest_sha256": "6871ac31a25b9381e5032244a9aed7e7d636940865070c7d8e36c2657ca3702b"},
+      "integrity": {
+        "status": "passed",
+        "report": "artifacts/verification/release-041-A-integrity.json",
+        "files": 173,
+        "asar_entries": 16,
+        "customer_databases": 0,
+        "development_dependencies": 0
+      },
+      "zip": {
+        "status": "passed",
+        "report": "artifacts/verification/release-041-A-zip.json",
+        "entries": 174,
+        "verified_files": 173,
+        "bytes": 188842478,
+        "sha256": "d6136fa7e750f96d384f7140a3c3d61ad561247dabe46ec73bafc318b4cda1e7"
+      },
+      "update": {
+        "status": "passed",
+        "report": "artifacts/verification/release-041-A-update.json",
+        "fixed_ed25519_signature": true,
+        "windows_authenticode": "unsigned",
+        "installer_bytes": 145001538,
+        "installer_sha256": "52f9cafb5265d43e3ef3777aa56932065a0da9a079e604441ce825cf0fe7f45b"
+      },
+      "sdk_snapshot": {
+        "status": "passed",
+        "report": "artifacts/verification/release-041-A-sdk-snapshot.json",
+        "files": 3377,
+        "manifest_sha256": "6871ac31a25b9381e5032244a9aed7e7d636940865070c7d8e36c2657ca3702b"
+      },
       "source_manifest": "artifacts/build/package-input-1794765691703/source-manifest.json",
       "python_source_inputs_verified": 110
     },
-    "candidate_frozen_account": {"status": "passed", "report": "artifacts/verification/whatsapp-account-exe-041-candidate-a-001/report.json", "actual_frozen_backend": true, "synthetic_account_and_legacy_archive": true, "offline_backup_restore": true, "unknown_preserved": true, "automatic_reception_after_restore": false, "writeback_available": false, "normal_process_exit": true, "real_chrome_or_account": false},
-    "candidate_frozen_models": {"status": "passed", "report": "artifacts/verification/packaged-models-041-candidate-a-001/report.json", "protocols": 2, "local_http_requests": 18, "image_attachments": 14, "paid_or_real_model_calls": 0},
-    "candidate_workbench_window": {"status": "passed", "report": "artifacts/verification/workbench-040-041-candidate-a-001/report.json", "screenshots_viewed": 5, "candidate_renderer_and_preload": true, "production_service_client": true, "synthetic_host_and_python_integration": true, "actual_exe_entry": false, "normal_shutdown": true},
-    "candidate_transparent_png_window": {"status": "passed", "report": "artifacts/verification/transparent-images-041-candidate-a-001/report.json", "screenshots_viewed": 4, "candidate_renderer_and_preload": true, "synthetic_host_and_merchant": true, "actual_exe_entry": false, "thumbnail_alpha": [0, 255], "original_and_legacy_database_cache_unchanged": true, "normal_shutdown": true},
+    "candidate_frozen_account": {
+      "status": "passed",
+      "report": "artifacts/verification/whatsapp-account-exe-041-candidate-a-001/report.json",
+      "actual_frozen_backend": true,
+      "synthetic_account_and_legacy_archive": true,
+      "offline_backup_restore": true,
+      "unknown_preserved": true,
+      "automatic_reception_after_restore": false,
+      "writeback_available": false,
+      "normal_process_exit": true,
+      "real_chrome_or_account": false
+    },
+    "candidate_frozen_models": {
+      "status": "passed",
+      "report": "artifacts/verification/packaged-models-041-candidate-a-001/report.json",
+      "protocols": 2,
+      "local_http_requests": 18,
+      "image_attachments": 14,
+      "paid_or_real_model_calls": 0
+    },
+    "candidate_workbench_window": {
+      "status": "passed",
+      "report": "artifacts/verification/workbench-040-041-candidate-a-001/report.json",
+      "screenshots_viewed": 5,
+      "candidate_renderer_and_preload": true,
+      "production_service_client": true,
+      "synthetic_host_and_python_integration": true,
+      "actual_exe_entry": false,
+      "normal_shutdown": true
+    },
+    "candidate_transparent_png_window": {
+      "status": "passed",
+      "report": "artifacts/verification/transparent-images-041-candidate-a-001/report.json",
+      "screenshots_viewed": 4,
+      "candidate_renderer_and_preload": true,
+      "synthetic_host_and_merchant": true,
+      "actual_exe_entry": false,
+      "thumbnail_alpha": [
+        0,
+        255
+      ],
+      "original_and_legacy_database_cache_unchanged": true,
+      "normal_shutdown": true
+    },
     "candidate_actual_exe_home": {
       "status": "passed",
       "report": "artifacts/verification/launcher-entry-041-candidate-a-003/report.json",
       "actual_exe_entry_and_production_main": true,
-      "first_and_restart_merchant_count": [2, 2],
-      "screenshots_viewed": ["01-home.png", "02-details.png"],
+      "first_and_restart_merchant_count": [
+        2,
+        2
+      ],
+      "screenshots_viewed": [
+        "01-home.png",
+        "02-details.png"
+      ],
       "normal_exit_both": true,
       "routing_registry_and_legacy_storage_hashes_unchanged": true,
       "existing_model_files_lstat_metadata_unchanged": true,
@@ -164,19 +594,48 @@
       "model_page_opened": false,
       "merchant_business_opened": false,
       "native_launcher_cache_namespace": true,
-      "preflight_failures_retained": ["artifacts/verification/launcher-entry-041-candidate-a-001/report.json", "artifacts/verification/launcher-entry-041-candidate-a-002/report.json"],
+      "preflight_failures_retained": [
+        "artifacts/verification/launcher-entry-041-candidate-a-001/report.json",
+        "artifacts/verification/launcher-entry-041-candidate-a-002/report.json"
+      ],
       "timing_scope": "launch_to_window_observations_not_cold_start_benchmarks"
     },
     "production_chrome_host_followup": {
       "status": "intermittent_pre_qr_initialization_failure_unresolved",
       "runtime_snapshot_matches_candidate": true,
       "runs": [
-        {"report": "artifacts/verification/chrome-host-public-041-source-004/report.json", "status": "failed", "normal": "failed_before_qr", "initialize_fault": "passed", "passed_scenario_observation_ms": 65081, "passed_scenario_screenshot_viewed": true},
-        {"report": "artifacts/verification/chrome-host-public-041-source-005/report.json", "status": "failed", "normal": "passed", "initialize_fault": "failed_before_qr_early_initialization_error_swallowed_by_probe", "passed_scenario_observation_ms": 65503, "passed_scenario_screenshot_viewed": true},
-        {"report": "artifacts/verification/chrome-host-public-041-source-006/report.json", "status": "failed", "normal": "failed_before_qr", "initialize_fault": "passed", "normal_error": "TimeoutError: Waiting failed: 30000ms exceeded", "passed_scenario_observation_ms": 65116, "passed_scenario_screenshot_viewed": true, "cleanup_root_exited_both": true}
+        {
+          "report": "artifacts/verification/chrome-host-public-041-source-004/report.json",
+          "status": "failed",
+          "normal": "failed_before_qr",
+          "initialize_fault": "passed",
+          "passed_scenario_observation_ms": 65081,
+          "passed_scenario_screenshot_viewed": true
+        },
+        {
+          "report": "artifacts/verification/chrome-host-public-041-source-005/report.json",
+          "status": "failed",
+          "normal": "passed",
+          "initialize_fault": "failed_before_qr_early_initialization_error_swallowed_by_probe",
+          "passed_scenario_observation_ms": 65503,
+          "passed_scenario_screenshot_viewed": true
+        },
+        {
+          "report": "artifacts/verification/chrome-host-public-041-source-006/report.json",
+          "status": "failed",
+          "normal": "failed_before_qr",
+          "initialize_fault": "passed",
+          "normal_error": "TimeoutError: Waiting failed: 30000ms exceeded",
+          "passed_scenario_observation_ms": 65116,
+          "passed_scenario_screenshot_viewed": true,
+          "cleanup_root_exited_both": true
+        }
       ],
       "failure_wrapper_corrected_to_record_pre_qr_errors": true,
-      "known_wait_candidates": ["Debug.VERSION availability", "WAWebSocketModel.Socket state leaving initial states"],
+      "known_wait_candidates": [
+        "Debug.VERSION availability",
+        "WAWebSocketModel.Socket state leaving initial states"
+      ],
       "specific_wait_and_root_cause": "source_007_both_passed_without_timeout_change_prior_failure_not_reproduced_root_cause_unconfirmed",
       "successes_from_separate_failed_runs_combined_as_pass": false,
       "real_account_authenticated_or_customer_sends": false
@@ -189,21 +648,53 @@
       "probe_wait_observation_only": true,
       "sdk_wait_timeouts_unchanged_ms": 30000,
       "normal_and_initialize_fault": true,
-      "observations_ms": [65012, 65490],
-      "startup_to_qr_ms": [13366, 12870],
-      "debug_version_wait_ms": [25, 24],
-      "socket_state_wait_ms": [2866, 3137],
+      "observations_ms": [
+        65012,
+        65490
+      ],
+      "startup_to_qr_ms": [
+        13366,
+        12870
+      ],
+      "debug_version_wait_ms": [
+        25,
+        24
+      ],
+      "socket_state_wait_ms": [
+        2866,
+        3137
+      ],
       "qr_refreshed_both": true,
       "same_visible_sdk_page": true,
       "private_pipe": true,
       "debugging_tcp_port": false,
-      "screenshots_viewed": ["normal-public-qr.png", "initialize-fault-public-qr.png"],
+      "screenshots_viewed": [
+        "normal-public-qr.png",
+        "initialize-fault-public-qr.png"
+      ],
       "owned_root_process_exited_both": true,
-      "owned_processes_remaining": [0, 0],
+      "owned_processes_remaining": [
+        0,
+        0
+      ],
       "resource_snapshots": {
-        "normal": {"processes": 9, "working_set_bytes_sum": 721809408, "private_bytes_sum": 518709248, "cpu_cumulative_ms_sum": 9703.125},
-        "initialize_fault": {"processes": 9, "working_set_bytes_sum": 732999680, "private_bytes_sum": 538808320, "cpu_cumulative_ms_sum": 9390.625},
-        "limitations": ["Single unauthenticated QR-page snapshots, not idle or peak authenticated workloads.", "Working-set sums can count shared pages more than once; CPU values are cumulative, not utilization percentages.", "No prior-version benchmark or performance improvement is inferred."]
+        "normal": {
+          "processes": 9,
+          "working_set_bytes_sum": 721809408,
+          "private_bytes_sum": 518709248,
+          "cpu_cumulative_ms_sum": 9703.125
+        },
+        "initialize_fault": {
+          "processes": 9,
+          "working_set_bytes_sum": 732999680,
+          "private_bytes_sum": 538808320,
+          "cpu_cumulative_ms_sum": 9390.625
+        },
+        "limitations": [
+          "Single unauthenticated QR-page snapshots, not idle or peak authenticated workloads.",
+          "Working-set sums can count shared pages more than once; CPU values are cumulative, not utilization percentages.",
+          "No prior-version benchmark or performance improvement is inferred."
+        ]
       },
       "real_account_authenticated": false,
       "contact_reads": 0,
@@ -222,10 +713,30 @@
     "github_cli_message": "You are not logged into any GitHub hosts.",
     "draft_created": false,
     "assets_uploaded": false,
-    "blockers": ["github_cli_not_authenticated", "official_github_device_authorization_endpoint_connection_timeout"],
-    "known_limitations": ["prior_intermittent_public_qr_sdk_timeout_root_cause_unconfirmed_latest_source_007_passed", "windows_installer_unsigned", "real_account_paid_model_quality_and_actual_cache_rate_unverified"],
+    "blockers": [
+      "updated_ui_parallel_accounts_and_side_panel_scope_not_implemented",
+      "github_cli_not_authenticated",
+      "official_github_device_authorization_endpoint_connection_timeout"
+    ],
+    "known_limitations": [
+      "prior_intermittent_public_qr_sdk_timeout_root_cause_unconfirmed_latest_source_007_passed",
+      "windows_installer_unsigned",
+      "real_account_paid_model_quality_and_actual_cache_rate_unverified"
+    ],
     "explicit_publish_requested": "2026-11-16",
-    "publication_attempt": {"status": "blocked_authentication", "report": "artifacts/verification/publication-041-20261116-attempt-001.json", "preflight_report": "artifacts/verification/publication-041-20261116-preflight-001/report.json", "four_assets_hashes_and_fixed_signature": "passed", "public_release_notes": "artifacts/verification/publication-041-20261116-notes-001.md", "official_browser_login_attempted": true, "device_code_received": false, "authorization_endpoint": "https://github.com/login/device/code", "authorization_result": "connection_timeout", "public_latest_observed": "v0.3.21", "anonymous_public_api_read": true},
+    "publication_attempt": {
+      "status": "blocked_authentication",
+      "report": "artifacts/verification/publication-041-20261116-attempt-001.json",
+      "preflight_report": "artifacts/verification/publication-041-20261116-preflight-001/report.json",
+      "four_assets_hashes_and_fixed_signature": "passed",
+      "public_release_notes": "artifacts/verification/publication-041-20261116-notes-001.md",
+      "official_browser_login_attempted": true,
+      "device_code_received": false,
+      "authorization_endpoint": "https://github.com/login/device/code",
+      "authorization_result": "connection_timeout",
+      "public_latest_observed": "v0.3.21",
+      "anonymous_public_api_read": true
+    },
     "installed": false,
     "real_data_migrated": false
   }

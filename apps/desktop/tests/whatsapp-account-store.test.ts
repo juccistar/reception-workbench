@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { WhatsAppAccountStore } from '../src/main/whatsapp-account-store';
@@ -15,46 +16,66 @@ async function fixture() {
     locks.add(key);
     return async () => { locks.delete(key); };
   };
-  return { root, store: new WhatsAppAccountStore(root, lock) };
+  const ownership = path.join(root, 'shared');
+  return { root, ownership, lock, store: new WhatsAppAccountStore(path.join(root, 'a'), lock, ownership) };
 }
-it('persists bounded public metadata and uses distinct opaque short profile paths', async () => {
+it('reads old v1 metadata and applies rename with revision CAS', async () => {
   const { root, store } = await fixture();
-  const a = await store.create(' First '), b = await store.create('第二个');
-  expect(await store.selected()).toBeNull();
-  expect(await store.select(b.id)).toEqual({ ...b, selected: true });
-  expect(await store.list()).toEqual([a, { ...b, selected: true }]);
-  expect(await store.profileDirectory(a.id)).toBe(path.join(root, 'ARWBrowser', 'wa', a.id.replaceAll('-', '')));
-  expect(await store.directory(a.id)).not.toBe(await store.directory(b.id));
-  expect(JSON.parse(await readFile(path.join(root, 'ARWData', 'whatsapp', 'accounts.json'), 'utf8')).accounts).toEqual([
-    { id: a.id, label: 'First', account_tail: '' }, { id: b.id, label: '第二个', account_tail: '' }
-  ]);
+  const account = await store.create('first');
+  const file = path.join(root, 'a', 'ARWData', 'whatsapp', 'accounts.json');
+  const index = JSON.parse(await readFile(file, 'utf8'));
+  delete index.accounts[0].revision;
+  index.selected = account.id;
+  await writeFile(file, JSON.stringify(index));
+  expect((await store.list())[0].revision).toBe(0);
+  expect((await store.rename(account.id, 'renamed', 0)).revision).toBe(1);
+  await expect(store.rename(account.id, 'stale', 0)).rejects.toThrow('revision_conflict');
+  expect((await store.list())[0].label).toBe('renamed');
 });
-it('requires a known workspace and holds one consumer lock across accounts', async () => {
-  const { store } = await fixture();
-  const a = await store.create('a'), b = await store.create('b');
-  await expect(store.profileDirectory('../bad')).rejects.toThrow();
+it('holds independent workspace locks and refuses a duplicate owner across roots', async () => {
+  const { root, store, lock, ownership } = await fixture();
+  const other = new WhatsAppAccountStore(path.join(root, 'b'), lock, ownership);
+  const a = await store.create('a'), b = await store.create('b'), c = await other.create('c');
+  const releaseA = await store.acquire(a.id), releaseB = await store.acquire(b.id), releaseC = await other.acquire(c.id);
+  await store.bindAccount(a.id, '123456789:4@c.us');
+  await store.bindAccount(b.id, '222222222@c.us');
+  await expect(other.bindAccount(c.id, '123456789@c.us')).rejects.toThrow('busy');
+  await releaseA();
+  await expect(other.bindAccount(c.id, '123456789@c.us')).rejects.toThrow('原环境');
+  await releaseB(); await releaseC();
+  const again = await store.acquire(a.id);
+  await store.bindAccount(a.id, '123456789@c.us');
+  await again();
+  expect(JSON.stringify(await store.list())).not.toContain('123456789');
+});
+it('rejects a copied workspace before its backend starts in another root', async () => {
+  const { root, store, lock, ownership } = await fixture();
+  const other = new WhatsAppAccountStore(path.join(root, 'b'), lock, ownership);
+  const a = await store.create('a'); await other.create('temporary');
   const release = await store.acquire(a.id);
-  await expect(store.acquire(b.id)).rejects.toThrow('busy');
+  await store.bindAccount(a.id, '123456789@c.us');
+  const original = await readFile(path.join(root, 'a', 'ARWData', 'whatsapp', 'accounts.json'));
+  await writeFile(path.join(root, 'b', 'ARWData', 'whatsapp', 'accounts.json'), original);
+  await expect(other.acquire(a.id)).rejects.toThrow('busy');
   await release();
-  const releaseB = await store.acquire(b.id);
-  await releaseB();
+  await expect(other.acquire(a.id)).rejects.toThrow('原环境');
 });
-it('does not let a new environment bypass the original account ledger and hides its account digest', async () => {
-  const { store } = await fixture();
-  const first = await store.create('First'), second = await store.create('Second');
-  await store.bindAccount(first.id, '123456789@c.us');
-  await store.bindAccount(first.id, '123456789@c.us');
-  await expect(store.bindAccount(second.id, '123456789@c.us')).rejects.toThrow('原环境');
-  await expect(store.bindAccount(first.id, '987654321@c.us')).rejects.toThrow('原账号不同');
-  const listed = await store.list();
-  expect(listed[0].account_tail).toBe('6789');
-  expect(Object.keys(listed[0]).sort()).toEqual(['account_tail', 'id', 'label', 'selected']);
-  expect(JSON.stringify(listed)).not.toContain('123456789');
+it('freezes new identities until legacy device-digest owners are verified', async () => {
+  const { root, store } = await fixture();
+  const old = await store.create('old'), fresh = await store.create('fresh');
+  const file = path.join(root, 'a', 'ARWData', 'whatsapp', 'accounts.json');
+  const index = JSON.parse(await readFile(file, 'utf8'));
+  index.accounts[0].account_digest = createHash('sha256').update('123456789:4@c.us').digest('hex');
+  await writeFile(file, JSON.stringify(index));
+  const releaseOld = await store.acquire(old.id), releaseFresh = await store.acquire(fresh.id);
+  await expect(store.bindAccount(fresh.id, '123456789@c.us')).rejects.toThrow('旧账号身份尚未核验');
+  await store.bindAccount(old.id, '123456789:4@c.us');
+  await expect(store.bindAccount(fresh.id, '123456789@c.us')).rejects.toThrow('原环境');
+  await releaseOld(); await releaseFresh();
 });
-it('fails closed on malformed metadata', async () => {
+it('rejects malformed account metadata', async () => {
   const { root, store } = await fixture();
   await store.create('a');
-  await writeFile(path.join(root, 'ARWData', 'whatsapp', 'accounts.json'), '{broken');
+  await writeFile(path.join(root, 'a', 'ARWData', 'whatsapp', 'accounts.json'), '{broken');
   await expect(store.list()).rejects.toThrow('whatsapp_accounts_unavailable');
-  await expect(store.create('b')).rejects.toThrow('whatsapp_accounts_unavailable');
 });

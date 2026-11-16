@@ -54,6 +54,64 @@ test('known explicit cmd, ps1 and extensionless shims map by fixed layout',()=>{
   for(const name of ['workctl.cmd','workctl.ps1','workctl'])assert.equal(findWorkctl(f.env,suppliedShim(f,name)),f.workctl);
  }finally{f.cleanup();}
 });
+const compactPrefix='r/gn8/p';
+const compactExe='node_modules/@accio-ai/cli/node_modules/@accio-ai/cli-win32-x64/workctl.exe';
+test('compact current host shims resolve with a global MCP without reading their contents',()=>{
+ const f=fixture();try{
+  const executable=f.make(`accounts/account-synthetic/${compactPrefix}/${compactExe}`);
+  f.env.ACCIO_MCP_SCRIPT=f.make('Program Files (x86)/Accio/resources/accio-mcp-cli/accio-mcp.mjs');
+  for(const name of ['workctl.cmd','workctl.ps1','workctl']){
+   const shim=f.make(`accounts/account-synthetic/${compactPrefix}/${name}`,'UNTRUSTED SHIM CONTENT - MUST NEVER BE READ OR EXECUTED');
+   f.env.PHOENIX_PLUGIN_CLI_WORKCTL_PATH=shim;f.env.PATH=path.dirname(shim);
+   assert.equal(findWorkctl(f.env),executable);
+   assert.equal(findWorkctl(f.env,shim),executable);
+   const plan=launchPlan(f.root,f.env);
+   assert.equal(plan.args[plan.args.indexOf('--workctl')+1],executable);
+  }
+ }finally{f.cleanup();}
+});
+test('compact PATH shims resolve only within the bound current account',()=>{
+ const f=fixture();try{
+  const executable=f.make(`accounts/account-synthetic/${compactPrefix}/${compactExe}`);
+  const shim=f.make(`accounts/account-synthetic/${compactPrefix}/workctl.cmd`,'NOT EXECUTED');
+  f.env.PATH=path.dirname(shim);
+  utimesSync(f.workctl,new Date(1000000000000),new Date(1000000000000));
+  utimesSync(executable,new Date(2000000000000),new Date(2000000000000));
+  assert.equal(findWorkctl(f.env),executable);
+ }finally{f.cleanup();}
+});
+test('compact host layouts reject missing executables and unknown prefix shapes without fallback',()=>{
+ const f=fixture();try{
+  f.env.PHOENIX_PLUGIN_CLI_WORKCTL_PATH=f.make(`accounts/account-synthetic/${compactPrefix}/workctl.cmd`);
+  assert.throws(()=>findWorkctl(f.env),error=>error.scope_reason==='host_workctl_invalid');
+  for(const prefix of ['r/gn8/not-p','arbitrary/gn8/p']){
+   f.make(`accounts/account-synthetic/${prefix}/${compactExe}`);
+   f.env.PHOENIX_PLUGIN_CLI_WORKCTL_PATH=f.make(`accounts/account-synthetic/${prefix}/workctl.cmd`);
+   assert.throws(()=>findWorkctl(f.env),error=>error.scope_reason==='host_workctl_invalid');
+  }
+ }finally{f.cleanup();}
+});
+test('compact host and explicit tools retain current-account binding',()=>{
+ const f=fixture();try{
+  const executable=f.make(`accounts/account-synthetic/${compactPrefix}/${compactExe}`);
+  f.env.PHOENIX_PLUGIN_CLI_WORKCTL_PATH=f.make(`accounts/account-synthetic/${compactPrefix}/workctl.cmd`);
+  const foreign=f.make(`accounts/another-account/${compactPrefix}/${compactExe}`);
+  assert.throws(()=>findWorkctl(f.env,foreign),error=>error.scope_reason==='account_directory_mismatch');
+  f.env.ACCIO_MCP_SCRIPT=f.make('accounts/another-account/runtime/mcp-client.mjs');
+  for(const explicit of ['',executable])assert.throws(()=>findWorkctl(f.env,explicit),error=>error.scope_reason==='account_directory_mismatch');
+ }finally{f.cleanup();}
+});
+test('compact host directory junctions are rejected before executable selection',()=>{
+ const f=fixture();try{
+  f.make(`accounts/another-account/${compactPrefix}/${compactExe}`);
+  const target=path.dirname(f.make(`accounts/another-account/${compactPrefix}/workctl.cmd`));
+  f.make('accounts/account-synthetic/r/gn8/.keep');
+  const alias=path.join(f.root,'accounts/account-synthetic',compactPrefix);
+  symlinkSync(target,alias,process.platform==='win32'?'junction':'dir');
+  f.env.PHOENIX_PLUGIN_CLI_WORKCTL_PATH=path.join(alias,'workctl.cmd');
+  assert.throws(()=>findWorkctl(f.env),error=>error.scope_reason==='runtime_path_unsafe');
+ }finally{f.cleanup();}
+});
 test('a known PATH shim resolves without parsing or executing its contents',()=>{
  const f=fixture();try{
   const shim=suppliedShim(f);f.env.PATH=path.dirname(shim);

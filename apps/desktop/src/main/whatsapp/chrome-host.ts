@@ -21,21 +21,26 @@ export interface ChromeWhatsAppHostOptions {
   applicationVersion?: string;
   onEvent: (event: WhatsAppEvent) => void;
   authorizeAccount?: (accountId: string) => Promise<void>;
+  extensionDirectory?: string;
+  onBrowserReady?: (browser: any, page: any, extensionId: string) => Promise<void>;
+  onBrowserClosed?: () => Promise<void>;
+  onOpen?: () => Promise<void>;
   /** Test seams; production always resolves and validates the installed Chrome. */
   resolveExecutable?: () => Promise<string>;
   loadSdk?: () => Promise<Sdk>;
   shutdownGraceMs?: number;
 }
 
-async function noLinks(file: string): Promise<void> {
+async function noLinks(file: string, directory = false): Promise<void> {
   const resolved = path.resolve(file);
   let part = path.parse(resolved).root;
   for (const component of resolved.slice(part.length).split(path.sep).filter(Boolean)) {
     part = path.join(part, component);
     const entry = await lstat(part);
-    if (entry.isSymbolicLink()) throw new Error('chrome_path_invalid');
+    if (entry.isSymbolicLink() || (part !== resolved && !entry.isDirectory())) throw new Error('chrome_path_invalid');
   }
-  if (!(await lstat(resolved)).isFile()) throw new Error('chrome_path_invalid');
+  const info = await lstat(resolved);
+  if (directory ? !info.isDirectory() : !info.isFile()) throw new Error('chrome_path_invalid');
 }
 
 /** Accept only standard installed locations and Windows version metadata. */
@@ -73,6 +78,11 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
   private browserAssigned?: Promise<void>;
   private signalBrowserAssigned?: () => void;
   private browserListeners: Array<() => void> = [];
+  private panelLifecycle: Promise<void> = Promise.resolve();
+  private panelInstalledGeneration = 0;
+  private panelAttached = false;
+  private panelReady = false;
+  private panelOpenRequested = false;
   private pending = new Map<string, number>();
   private outgoing: Array<{ account: string; epoch: string; message: WhatsAppMessage }> = [];
   constructor(private readonly options: ChromeWhatsAppHostOptions) {
@@ -98,9 +108,47 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
     void wrapped.then(() => this.tasks.delete(wrapped), () => this.tasks.delete(wrapped));
     return wrapped;
   }
+  private closePanel(): Promise<void> {
+    this.panelLifecycle = this.panelLifecycle.then(async () => {
+      if (!this.panelAttached) return;
+      this.panelAttached = false; this.panelReady = false;
+      await this.options.onBrowserClosed?.();
+    }).catch(() => {});
+    return this.panelLifecycle;
+  }
+  private installPanel(client: any, generation: number): void {
+    const directory = this.options.extensionDirectory;
+    const browser = client.pupBrowser, page = client.pupPage;
+    if (!directory || !browser || !page || this.panelInstalledGeneration === generation || !this.current(generation)) return;
+    this.panelInstalledGeneration = generation;
+    void (async () => {
+      if (!path.isAbsolute(directory)) throw new Error('chrome_path_invalid');
+      await noLinks(directory, true);
+      await noLinks(path.join(directory, 'manifest.json'));
+      const manifest = await lstat(path.join(directory, 'manifest.json'));
+      if (manifest.nlink !== 1) throw new Error('chrome_path_invalid');
+      if (!this.current(generation) || this.client !== client || client.pupBrowser !== browser || client.pupPage !== page) return;
+      const extensionId = await browser.installExtension(directory);
+      if (!/^[a-p]{32}$/.test(extensionId) || !this.current(generation) || this.client !== client || client.pupBrowser !== browser || client.pupPage !== page) return;
+      this.panelLifecycle = this.panelLifecycle.then(async () => {
+        if (!this.current(generation) || this.client !== client) return;
+        this.panelAttached = true;
+        try {
+          await this.options.onBrowserReady?.(browser, page, extensionId);
+          this.panelReady = this.current(generation);
+          if (this.panelReady && this.panelOpenRequested) {
+            this.panelOpenRequested = false;
+            await this.options.onOpen?.().catch(() => {});
+          }
+        } catch { this.panelAttached = false; await this.options.onBrowserClosed?.().catch(() => {}); }
+      }).catch(() => {});
+    })().catch(() => {});
+  }
   private retire(generation: number, status: 'error' | 'disconnected', closed = false, errorCode: WhatsAppHostInfo['error_code'] = 'sdk_error'): void {
     if (!this.current(generation)) return;
     ++this.generation;
+    this.panelOpenRequested = false; this.panelReady = false;
+    void this.closePanel();
     this.outgoing = [];
     this.update(status, { account_id: '', connection_epoch: '', page_state: closed ? 'closed' : 'available', ...(status === 'error' ? { error_code: errorCode } : { error_code: undefined }) });
   }
@@ -115,8 +163,17 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
       const account = serial(client.info?.wid);
       if (!account || (typeof client.pupPage?.url === 'function' && !this.allowedPage(client.pupPage.url()))) { this.retire(generation, 'error'); return; }
       void this.track((async () => {
-        try { await this.options.authorizeAccount?.(account); }
-        catch { this.retire(generation, 'error', false, 'auth_failed'); return; }
+        try {
+          let authorizedAccount = account;
+          if (this.options.authorizeAccount && /@lid$/.test(account)) {
+            if (!/^\d+(?::\d+)?@lid$/.test(account) || typeof client.getContactLidAndPhone !== 'function') throw new Error('unverified account');
+            const mapping = await client.getContactLidAndPhone([account]);
+            if (!current()) return;
+            if (!Array.isArray(mapping) || mapping.length !== 1 || mapping[0]?.lid !== account || !/^\d+@c\.us$/.test(mapping[0]?.pn ?? '')) throw new Error('unverified account');
+            authorizedAccount = mapping[0].pn;
+          }
+          await this.options.authorizeAccount?.(authorizedAccount);
+        } catch { this.retire(generation, 'error', false, 'auth_failed'); return; }
         if (!current()) return;
         const epoch = randomUUID();
         this.update('ready', { account_id: account, connection_epoch: epoch, page_state: 'available', phase: 'ready', error_code: undefined });
@@ -159,6 +216,7 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
       browser.on('disconnected', disconnected);
       this.browserListeners.push(() => browser.off('disconnected', disconnected));
     }
+    this.installPanel(client, generation);
     if (page && !(page as any).__arwWatched) {
       (page as any).__arwWatched = true;
       const closed = () => {
@@ -195,7 +253,7 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
         if (!this.current(generation)) return;
         const browserEnv: NodeJS.ProcessEnv = {};
         for (const [key, value] of Object.entries(process.env)) if (/^(SystemRoot|WINDIR|SystemDrive|PATH|PATHEXT|ComSpec|TEMP|TMP|USERPROFILE|LOCALAPPDATA|APPDATA|ProgramFiles|ProgramFiles\(x86\)|ProgramW6432)$/i.test(key)) browserEnv[key] = value;
-        const client = this.client = new sdk.Client({ userAgent: false, puppeteer: { executablePath, headless: false, pipe: true, userDataDir: this.options.profileDirectory, defaultViewport: null, env: browserEnv }, webVersionCache: { type: 'none' } });
+        const client = this.client = new sdk.Client({ userAgent: false, puppeteer: { executablePath, headless: false, pipe: true, userDataDir: this.options.profileDirectory, defaultViewport: null, env: browserEnv, ...(this.options.extensionDirectory ? { enableExtensions: true } : {}) }, webVersionCache: { type: 'none' } });
         this.observe(client, generation);
         this.browserAssigned = new Promise(resolve => { this.signalBrowserAssigned = resolve; });
         // Observe the assignments themselves so a close cannot slip through a polling gap.
@@ -215,6 +273,38 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
     const page = this.client?.pupPage;
     if (!page || page.isClosed()) throw new Error('WhatsApp page unavailable');
     await page.bringToFront();
+    if (this.options.extensionDirectory && !this.panelReady) this.panelOpenRequested = true;
+    else await this.options.onOpen?.().catch(() => {});
+  }
+  async resolveCurrentChat(): Promise<{ chat_id: string; name?: string } | null> {
+    const generation = this.generation, account = this.status.account_id, epoch = this.status.connection_epoch;
+    const client = this.client, page = client?.pupPage;
+    if (!this.active(generation, account, epoch) || !page || typeof page.url !== 'function' || !this.allowedPage(page.url())) return null;
+    // WPPConnect wa-js getActiveChat.ts blob b1a0e6d6b927fdc6f2444eaccec265cb75ae8fc4
+    // uses ChatStore/NewsletterStore active models. Its stores.ts maps these to
+    // WAWebChatCollection and WAWebNewsletterCollection; the locked SDK uses
+    // WAWebCollections.Chat.getModelsArray() for the same chat collection.
+    const readActive = async (): Promise<string | null> => page.evaluate(() => {
+      try {
+        const chat = (window as any).require('WAWebCollections').Chat;
+        const newsletter = (window as any).require('WAWebNewsletterCollection').default;
+        if (typeof chat?.getModelsArray !== 'function' || typeof newsletter?.getModelsArray !== 'function') return null;
+        const chats = chat.getModelsArray(), channels = newsletter.getModelsArray();
+        if (!Array.isArray(chats) || !Array.isArray(channels) || channels.some((item: any) => item?.active === true)) return null;
+        const active = chats.filter((item: any) => item?.active === true);
+        if (active.length !== 1) return null;
+        return typeof active[0]?.id?._serialized === 'string' ? active[0].id._serialized : null;
+      } catch { return null; }
+    });
+    try {
+      const first = await readActive();
+      if (!this.active(generation, account, epoch) || this.client !== client || !first || !/^\d+(?::\d+)?@(c\.us|lid)$/.test(first)) return null;
+      const chat = await client.getChatById(first);
+      if (!this.active(generation, account, epoch) || this.client !== client || !chat || chat.isGroup !== false || serial(chat.id) !== first) return null;
+      const second = await readActive();
+      if (!this.active(generation, account, epoch) || this.client !== client || page.isClosed() || !this.allowedPage(page.url()) || second !== first) return null;
+      return { chat_id: first, ...(typeof chat.name === 'string' && chat.name.trim() ? { name: chat.name } : {}) };
+    } catch { return null; }
   }
   async listChats(): Promise<Array<{ chat_id: string; name: string }>> {
     const generation = this.generation, account = this.status.account_id, epoch = this.status.connection_epoch;
@@ -296,6 +386,7 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
     })());
   }
   private async release(): Promise<void> {
+    await this.closePanel();
     const client = this.client;
     if (!client) return;
     client.removeAllListeners();
@@ -320,6 +411,7 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
   async close(): Promise<void> {
     if (this.closing) return this.closing;
     this.closed = true; ++this.generation;
+    void this.closePanel();
     this.update('disconnected', { account_id: '', connection_epoch: '', page_state: 'closed' });
     this.closing = (async () => {
       let timer: ReturnType<typeof setTimeout> | undefined;

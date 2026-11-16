@@ -36,6 +36,7 @@ vi.mock('electron', () => ({
   Menu: { setApplicationMenu: vi.fn() },
 }));
 vi.mock('../src/main/model-check-host', () => ({ ModelCheckHost: class {} }));
+vi.mock('../src/main/model-budget-environment', () => ({ modelBudgetEnvironment: async (env: NodeJS.ProcessEnv) => ({ ...env, RECEPTION_MODEL_BUDGET_DIRECTORY: path.join(state.directory, 'budget') }) }));
 vi.mock('../src/main/launcher-registry', () => ({
   createLauncherRegistry: vi.fn(async () => ({ importHistorical: state.importHistorical })),
   readHistoricalMerchants: state.readHistoricalMerchants,

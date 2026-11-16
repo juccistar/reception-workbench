@@ -27,6 +27,17 @@ class AccountCoreTest(unittest.TestCase):
         return self.service._wa_ingest('account', 'epoch', [{'id': mid, 'chat_id': chat, 'body': body,
             'timestamp_ms': 1, 'is_history': history, 'is_group': False, 'from_me': outgoing}])
 
+    def test_disconnected_projection_keeps_owner_unknown(self):
+        self.ingest()
+        self.service.repo.put('operation', 'op', {'operation_id': 'op', 'account_id': 'account',
+            'connection_epoch': 'epoch', 'chat_id': 'chat', 'status': 'unknown'})
+        state = self.service._wa_set_account(None, None, 'disconnected')
+        self.assertFalse(state['connected'])
+        self.assertEqual(state['account_id'], 'account')
+        self.assertEqual(state['pending_operations'][0]['operation_id'], 'op')
+        self.assertEqual(state['legacy']['pending_count'], 1)
+        self.assertEqual(state['conversations'][0]['chat_id'], 'chat')
+
     def test_default_is_only_for_new_chats_and_unbind_stays_unbound(self):
         s = self.service
         s.save_whatsapp_default_merchant('merchant-a', 0, 'account', 'epoch')

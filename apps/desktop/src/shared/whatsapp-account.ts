@@ -6,7 +6,7 @@ export interface WhatsAppAccountProfile {
   workspace_id: string;
   label: string;
   account_tail: string;
-  selected: boolean;
+  revision: number;
 }
 export interface WhatsAppMerchantChoice {
   merchant_id: string;
@@ -16,6 +16,7 @@ export interface WhatsAppMerchantChoice {
   reason?: string;
 }
 export interface WhatsAppIdentityInput {
+  workspace_id: string;
   expected_account_id: string;
   expected_connection_epoch: string;
 }
@@ -65,13 +66,26 @@ export interface WhatsAppAccountState {
   legacy: WhatsAppLegacyStatus;
   model: { ready: boolean; status: string; message: string };
 }
+export interface WhatsAppAccountSummary extends WhatsAppAccountProfile {
+  host: WhatsAppHostInfo;
+  enabled: boolean;
+  pending_count: number;
+  runtime_status: 'idle' | 'starting' | 'running' | 'closing' | 'error';
+  runtime_instance_id: string | null;
+  error?: string;
+}
 export interface WhatsAppLauncherSnapshot {
-  profiles: WhatsAppAccountProfile[];
-  selected_workspace_id: string | null;
+  accounts: WhatsAppAccountSummary[];
+  merchants: WhatsAppMerchantChoice[];
+}
+export interface WhatsAppAccountSnapshot {
+  profile: WhatsAppAccountProfile;
   host: WhatsAppHostInfo;
   state: WhatsAppAccountState | null;
   merchants: WhatsAppMerchantChoice[];
+  runtime_instance_id: string | null;
 }
+export interface WhatsAppRenameInput { workspace_id: string; label: string; expected_revision: number }
 export interface WhatsAppBindingInput extends WhatsAppIdentityInput {
   chat_id: string;
   merchant_id: string | null;
@@ -151,19 +165,20 @@ export interface WhatsAppWritebackCapabilities {
 }
 export interface WhatsAppAccountBridge {
   getWhatsAppAccounts(): Promise<WhatsAppLauncherSnapshot>;
-  createWhatsAppAccount(label: string): Promise<WhatsAppLauncherSnapshot>;
-  selectWhatsAppAccount(workspaceId: string): Promise<WhatsAppLauncherSnapshot>;
-  connectWhatsAppAccount(): Promise<WhatsAppLauncherSnapshot>;
-  openWhatsAppAccount(): Promise<void>;
-  disconnectWhatsAppAccount(): Promise<WhatsAppLauncherSnapshot>;
-  readWhatsAppContacts(): Promise<WhatsAppLauncherSnapshot>;
-  verifyWhatsAppLegacySources(): Promise<WhatsAppLauncherSnapshot>;
-  saveWhatsAppAccountBinding(input: WhatsAppBindingInput): Promise<WhatsAppLauncherSnapshot>;
-  saveWhatsAppDefaultMerchant(input: WhatsAppDefaultInput): Promise<WhatsAppLauncherSnapshot>;
-  setWhatsAppAccountReception(input: WhatsAppReceptionInput): Promise<WhatsAppLauncherSnapshot>;
-  takeoverWhatsAppContact(input: WhatsAppTakeoverInput): Promise<WhatsAppLauncherSnapshot>;
-  reconcileWhatsAppAccountOperation(operationId: string): Promise<WhatsAppLauncherSnapshot>;
-  getWhatsAppAccountContext(chatId: string): Promise<WhatsAppContext>;
+  getWhatsAppAccount(workspaceId: string): Promise<WhatsAppAccountSnapshot>;
+  createWhatsAppAccount(label: string): Promise<WhatsAppAccountSnapshot>;
+  renameWhatsAppAccount(input: WhatsAppRenameInput): Promise<WhatsAppAccountSnapshot>;
+  connectWhatsAppAccount(workspaceId: string): Promise<WhatsAppAccountSnapshot>;
+  openWhatsAppAccount(workspaceId: string): Promise<void>;
+  disconnectWhatsAppAccount(workspaceId: string): Promise<WhatsAppAccountSnapshot>;
+  readWhatsAppContacts(workspaceId: string): Promise<WhatsAppAccountSnapshot>;
+  verifyWhatsAppLegacySources(workspaceId: string): Promise<WhatsAppAccountSnapshot>;
+  saveWhatsAppAccountBinding(input: WhatsAppBindingInput): Promise<WhatsAppAccountSnapshot>;
+  saveWhatsAppDefaultMerchant(input: WhatsAppDefaultInput): Promise<WhatsAppAccountSnapshot>;
+  setWhatsAppAccountReception(input: WhatsAppReceptionInput): Promise<WhatsAppAccountSnapshot>;
+  takeoverWhatsAppContact(input: WhatsAppTakeoverInput): Promise<WhatsAppAccountSnapshot>;
+  reconcileWhatsAppAccountOperation(input: { workspace_id: string; operation_id: string }): Promise<WhatsAppAccountSnapshot>;
+  getWhatsAppAccountContext(input: { workspace_id: string; chat_id: string }): Promise<WhatsAppContext>;
   getWhatsAppWritebackCapabilities(): Promise<WhatsAppWritebackCapabilities>;
 }
 

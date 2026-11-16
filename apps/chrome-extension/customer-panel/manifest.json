@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "客户信息",
+  "version": "0.4.1",
+  "permissions": ["sidePanel"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "客户信息" },
+  "side_panel": { "default_path": "panel.html" },
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; connect-src 'none'" }
+}

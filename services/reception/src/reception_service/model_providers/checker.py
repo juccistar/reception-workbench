@@ -115,7 +115,7 @@ def run_check(packet, transport=None, *, cancel=None, deadline=80):
                 return await transport.generate(profile=dict(profile), api_key=packet['api_key'],
                     system_prompt='Return only one complete JSON object. Do not call tools.',
                     user_payload=prompt, images=images, encoded_images=blocks)
-            response = runtime.run(purpose, operation, cancel=cancel, deadline=remaining)
+            response = runtime.run(purpose, operation, cancel=cancel, deadline=remaining, heavy=bool(images))
             if isinstance(response, str):
                 response = parse_json(response)
             if isinstance(response, dict) and 'output' in response:

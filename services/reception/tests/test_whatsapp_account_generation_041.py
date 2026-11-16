@@ -38,7 +38,7 @@ class Provider:
         self.started.set()
         while not self.release.is_set():
             await asyncio.sleep(0.01)
-        context = json.loads(kwargs['user_payload'])
+        context = json.loads(kwargs['user_payload'])['context']
         source = context['whatsapp_messages'][-1]['source_id']
         return {'output': {'reply_messages': [{'body': 'Synthetic response ' + str(i), 'reply_sources': [source]} for i in range(self.parts)],
                            'wa_summary': 'Synthetic customer summary'}}
@@ -224,7 +224,7 @@ class AccountGenerationTest(unittest.TestCase):
         self.prepare(self.generate())
         call = self.provider.calls[0]
         self.assertEqual(call['images'][0]['data'], PNG)
-        context = json.loads(call['user_payload'])
+        context = json.loads(call['user_payload'])['context']
         self.assertEqual(context['whatsapp_messages'][0]['text'], 'Please quote this product')
         self.assertEqual(context['image_transport'], 'inline')
         self.assertEqual(len(self.provider.calls), 1)

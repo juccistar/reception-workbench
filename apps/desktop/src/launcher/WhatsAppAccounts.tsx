@@ -1,114 +1,79 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { WhatsAppAccountBridge, WhatsAppLauncherSnapshot, WhatsAppMerchantChoice } from '../shared/whatsapp-account';
+import { useEffect, useRef, useState } from 'react';
+import type { LauncherBridge, LauncherMerchant } from '../shared/launcher';
+import type { WhatsAppAccountSnapshot as Detail, WhatsAppAccountSummary as Summary, WhatsAppMerchantChoice } from '../shared/whatsapp-account';
 import './whatsapp-accounts.css';
 
-type Props = { bridge: WhatsAppAccountBridge; onBack: () => void; onModels: () => void };
+type Merchant = LauncherMerchant & { company_name?: string; display_revision?: number };
+type Props = { bridge: unknown; merchants: Merchant[]; refreshMerchants: () => Promise<void>; onAuthorization: () => void; onModels: () => void };
+type Draft = { label: string; enabled: boolean; allowed: string[]; defaultMerchant: string };
+const reason = (e: unknown) => e instanceof Error ? e.message : '操作未完成，请重试。';
+const shortReason = (value: string) => /timeout|超时/i.test(value) ? '连接超时' : '连接失败';
+const options = (items: WhatsAppMerchantChoice[]) => items.map(m => <option key={m.merchant_id} value={m.merchant_id}>{m.name}{m.available ? '' : '（离线）'}</option>);
 
-function MerchantOptions({ merchants, value }: { merchants: WhatsAppMerchantChoice[]; value: string }) {
-  return <><option value="">不指定商家</option>{value && !merchants.some(m => m.merchant_id === value) && <option value={value}>当前商家（离线）</option>}{merchants.map(m => <option key={m.merchant_id} value={m.merchant_id} title={m.name}>{m.name} {m.account_tail ? `(${m.account_tail})` : ''}{m.available ? '' : '（离线）'}</option>)}</>;
-}
-
-export function WhatsAppAccounts({ bridge, onBack, onModels }: Props) {
-  const [snapshot, setSnapshot] = useState<WhatsAppLauncherSnapshot | null>(null);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [label, setLabel] = useState('');
+export function WhatsAppAccounts({ bridge: raw, merchants, refreshMerchants, onAuthorization, onModels }: Props) {
+  const bridge = raw as LauncherBridge & { renameMerchant(input: { merchant_id: string; name: string; expected_revision: number }): Promise<void> };
+  const [accounts, setAccounts] = useState<Summary[]>([]);
+  const [filter, setFilter] = useState<'all' | 'international' | 'whatsapp'>('all');
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [dialog, setDialog] = useState<'add' | 'create' | 'qr' | null>(null);
+  const [qrAccount, setQrAccount] = useState('');
+  const [newLabel, setNewLabel] = useState('');
+  const [panel, setPanel] = useState<{ type: 'wa' | 'merchant'; id: string; view: 'settings' | 'contacts' | 'contact' | 'pending' } | null>(null);
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [merchantName, setMerchantName] = useState('');
+  const [merchantBase, setMerchantBase] = useState<Merchant | null>(null);
+  const [panelError, setPanelError] = useState('');
+  const [search, setSearch] = useState('');
   const [chatId, setChatId] = useState('');
-  const [merchant, setMerchant] = useState('');
-  const [conversation, setConversation] = useState('');
-  const [defaultMerchant, setDefaultMerchant] = useState('');
-  const [allowed, setAllowed] = useState<string[]>([]);
-  const [capability, setCapability] = useState(false);
-  const mounted = useRef(false);
-  const generation = useRef(0);
-  const queue = useRef<Promise<unknown>>(Promise.resolve());
-  const refreshQueued = useRef(false);
-  const activeChat = useRef('');
-  const state = snapshot?.state;
-  const binding = state?.bindings.find(item => item.chat_id === chatId);
-  const chat = state?.conversations.find(item => item.chat_id === chatId);
-  const identity = state?.account_id && state.connection_epoch ? { expected_account_id: state.account_id, expected_connection_epoch: state.connection_epoch } : null;
-  const connecting = ['connecting', 'qr', 'authenticated', 'ready'].includes(snapshot?.host.status ?? '');
-  const browserOpen = connecting || snapshot?.host.page_state === 'available' || snapshot?.host.page_state === 'loading';
-  const hostStatus = ({ connecting: '正在连接', qr: '等待扫码', authenticated: '正在初始化', ready: '已连接', error: '连接异常', disconnected: '未连接', closed: '已关闭' } as Record<string, string>)[snapshot?.host.status ?? ''] ?? '未连接';
-
-  const refresh = useCallback(() => {
-    if (refreshQueued.current || document.visibilityState === 'hidden') return;
-    refreshQueued.current = true;
-    const token = generation.current;
-    const run = async () => {
-      try {
-        if (!mounted.current || token !== generation.current || document.visibilityState === 'hidden') return;
-        const next = await bridge.getWhatsAppAccounts();
-        if (mounted.current && token === generation.current) { setSnapshot(next); setError(''); }
-      } catch { if (mounted.current && token === generation.current) setError('无法读取 WhatsApp 状态，请重试。'); }
-      finally { refreshQueued.current = false; }
-    };
-    queue.current = queue.current.then(run, run);
-  }, [bridge]);
-
-  useEffect(() => {
-    mounted.current = true;
-    refresh();
-    bridge.getWhatsAppWritebackCapabilities().then(() => { if (mounted.current) setCapability(true); }).catch(() => { if (mounted.current) setCapability(false); });
-    const timer = window.setInterval(refresh, 5000);
-    const visible = () => { if (document.visibilityState === 'visible') refresh(); };
-    document.addEventListener('visibilitychange', visible);
-    return () => { mounted.current = false; generation.current++; window.clearInterval(timer); document.removeEventListener('visibilitychange', visible); };
-  }, [bridge, refresh]);
-
-  // Reset form drafts only when the selected entity or its authoritative revision changes.
-  useEffect(() => { setMerchant(binding?.merchant_id ?? ''); setConversation(binding?.conversation_id ?? ''); }, [chatId, state?.workspace_id, state?.account_id, state?.connection_epoch, binding?.revision]);
-  useEffect(() => { setDefaultMerchant(state?.default_merchant_id ?? ''); }, [state?.workspace_id, state?.account_id, state?.connection_epoch, state?.default_revision]);
-  useEffect(() => { setAllowed(state?.allowed_merchant_ids ?? []); }, [state?.workspace_id, state?.account_id, state?.connection_epoch, state?.enabled, state?.allowed_merchant_ids.join('\u0000')]);
-  useEffect(() => { activeChat.current = chatId; }, [chatId]);
-
-  const action = (fn: () => Promise<WhatsAppLauncherSnapshot | void>, options?: { select?: boolean; chat?: string }) => {
-    if (busy) return;
-    if (options?.select) { generation.current++; setChatId(''); activeChat.current = ''; }
-    const token = generation.current;
-    setBusy(true); setError('');
-    const run = async () => {
-      try {
-        if (!mounted.current || token !== generation.current) return;
-        const next = await fn();
-        if (mounted.current && token === generation.current && (!options?.chat || activeChat.current === options.chat)) {
-          if (next) setSnapshot(next); else refresh();
-        }
-      } catch { if (mounted.current && token === generation.current) setError('操作未完成，请检查连接和授权后重试。'); }
-      finally { if (mounted.current) setBusy(false); }
-    };
-    queue.current = queue.current.then(run, run);
+  const [contactMerchant, setContactMerchant] = useState('');
+  const panelToken = useRef(0);
+  const drafts = useRef<Record<string, Draft>>({});
+  const refreshToken = useRef(0);
+  useEffect(() => { if (panel?.type === 'wa' && draft) drafts.current[panel.id] = draft; }, [panel, draft]);
+  const refresh = async () => { const token = ++refreshToken.current; try { const value = await bridge.getWhatsAppAccounts(); if (token === refreshToken.current) setAccounts(value.accounts); } catch (e) { if (token === refreshToken.current) setErrors(old => ({ ...old, list: reason(e) })); } };
+  useEffect(() => { void refresh(); const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 5000); const focus = () => void refresh(); window.addEventListener('focus', focus); return () => { refreshToken.current++; panelToken.current++; window.clearInterval(timer); window.removeEventListener('focus', focus); }; }, [bridge]);
+  const close = () => { if (panel?.type === 'wa') delete drafts.current[panel.id]; panelToken.current++; setPanel(null); setDetail(null); setDraft(null); setPanelError(''); };
+  const begin = async (id: string, view: 'settings' | 'pending' = 'settings') => { const token = ++panelToken.current; setPanel({ type: 'wa', id, view }); setDetail(null); setDraft(null); setPanelError(''); try { const value = await bridge.getWhatsAppAccount(id); if (token !== panelToken.current) return; setDetail(value); setDraft(drafts.current[id] ?? { label: value.profile.label, enabled: value.state?.enabled ?? false, allowed: value.state?.allowed_merchant_ids ?? [], defaultMerchant: value.state?.default_merchant_id ?? '' }); } catch (e) { if (token === panelToken.current) setPanelError(reason(e)); } };
+  const action = async (id: string, fn: () => Promise<unknown>) => { if (busy[id]) return; setBusy(old => ({ ...old, [id]: true })); setErrors(old => ({ ...old, [id]: '' })); try { await fn(); await refresh(); } catch (e) { setErrors(old => ({ ...old, [id]: reason(e) })); } finally { setBusy(old => ({ ...old, [id]: false })); } };
+  const connect = async (id: string) => { const value = await bridge.connectWhatsAppAccount(id); if (value.host.status === 'qr') { setQrAccount(id); setDialog('qr'); } return value; };
+  const updateDetail = async (fn: () => Promise<Detail>) => { if (!panel || busy[panel.id]) return; const id = panel.id, token = panelToken.current; setBusy(old => ({ ...old, [id]: true })); setPanelError(''); try { const value = await fn(); if (token === panelToken.current) setDetail(value); await refresh(); } catch (e) { if (token === panelToken.current) setPanelError(reason(e)); } finally { setBusy(old => ({ ...old, [id]: false })); } };
+  const save = async () => {
+    if (!panel || !detail || !draft || busy[panel.id]) return;
+    const id = panel.id, token = panelToken.current; let current = detail; const saved: string[] = [];
+    setBusy(old => ({ ...old, [id]: true })); setPanelError('');
+    try {
+      if (!draft.label.trim()) throw new Error('请填写账号名称。');
+      if (draft.label.trim() !== current.profile.label) { current = await bridge.renameWhatsAppAccount({ workspace_id: id, label: draft.label.trim(), expected_revision: current.profile.revision }); saved.push('名称'); if (token === panelToken.current) setDetail(current); }
+      const state = current.state;
+      const original = detail.state;
+      if (!original && draft.enabled) throw new Error('请先连接账号，再设置自动接待。');
+      const defaultChanged = !!original && draft.defaultMerchant !== (original.default_merchant_id ?? '');
+      if (defaultChanged) { const s = current.state; if (!s?.connected || !s.account_id || !s.connection_epoch) throw new Error('请先连接账号，再设置默认商家。'); current = await bridge.saveWhatsAppDefaultMerchant({ workspace_id: id, expected_account_id: s.account_id, expected_connection_epoch: s.connection_epoch, merchant_id: draft.defaultMerchant || null, expected_revision: s.default_revision }); saved.push('默认商家'); if (token === panelToken.current) setDetail(current); }
+      if (original && (draft.enabled !== original.enabled || (draft.enabled && (defaultChanged || [...draft.allowed].sort().join('\0') !== [...original.allowed_merchant_ids].sort().join('\0'))))) {
+        if (!state?.account_id || !state.connection_epoch || !state.connected) throw new Error('请先连接账号，再设置自动接待。');
+        if (draft.enabled && !state.model.ready) throw new Error(state.model.message || '请先配置接待模型。');
+        if (draft.enabled && !draft.allowed.length) throw new Error('请选择接待商家。');
+        if (draft.enabled && state.legacy.status !== 'ready') throw new Error('请先核验历史接入记录。');
+        current = await bridge.setWhatsAppAccountReception({ workspace_id: id, expected_account_id: state.account_id, expected_connection_epoch: state.connection_epoch, enabled: draft.enabled, allowed_merchant_ids: draft.allowed }); saved.push('自动接待'); if (token === panelToken.current) setDetail(current);
+      }
+      if (token === panelToken.current) close();
+    } catch (e) { if (token === panelToken.current) setPanelError(`${saved.length ? `已保存${saved.join('、')}；其余未保存。` : ''}${reason(e)}`); }
+    finally { setBusy(old => ({ ...old, [id]: false })); void refresh(); }
   };
-  const selectChat = (id: string) => { activeChat.current = id; setChatId(id); };
-  const name = (id: string | null) => id ? (snapshot?.merchants.find(m => m.merchant_id === id)?.name ?? id) : '未指定';
-
-  return <div className="wa-accounts">
-    <div className="wa-heading"><div><h1>WhatsApp 账号</h1><p>使用专用的 Google Chrome 登录。请在新窗口重新扫码，此登录与旧内嵌登录分开。</p></div><button className="quiet" onClick={onBack}>返回</button></div>
-    <main className="wa-scroll">
-      {error && <p className="wa-error" role="alert">{error}</p>}
-      {!snapshot ? <p>正在读取账号…</p> : <>
-        <section><h2>账号环境</h2><p>可以保存多个环境名称，同一时间连接一个账号。日常人工聊天请在 Chrome 原窗口进行。</p>
-          {snapshot.profiles.length > 0 && <label>选择环境<select aria-label="选择环境" value={snapshot.selected_workspace_id ?? ''} disabled={busy} onChange={e => { const id = e.target.value; action(() => bridge.selectWhatsAppAccount(id), { select: true }); }}><option value="" disabled>请选择环境</option>{snapshot.profiles.map(p => <option key={p.workspace_id} value={p.workspace_id} title={p.label}>{p.label}{p.account_tail ? ` (${p.account_tail})` : ''}</option>)}</select></label>}
-          {!snapshot.profiles.length && <p>还没有账号环境，请先创建。</p>}
-          {creating ? <div className="wa-create"><label>环境名称<input value={label} maxLength={100} onChange={e => setLabel(e.target.value)} /></label><div className="wa-actions"><button className="secondary" disabled={busy || !label.trim()} onClick={() => { const value = label.trim(); action(async () => { const next = await bridge.createWhatsAppAccount(value); if (mounted.current) { setCreating(false); setLabel(''); } return next; }, { select: true }); }}>创建</button><button className="quiet" onClick={() => setCreating(false)}>取消</button></div></div> : <button className="secondary" disabled={busy} onClick={() => setCreating(true)}>新建环境</button>}
-          {snapshot.selected_workspace_id && <div className="wa-actions"><button className="primary" disabled={busy || connecting || !!state?.connected} onClick={() => action(() => bridge.connectWhatsAppAccount())}>连接真实 Chrome</button><button className="secondary" disabled={busy} onClick={() => action(() => bridge.openWhatsAppAccount())}>打开或切换到 Chrome</button><button className="secondary" disabled={busy || !(browserOpen || state?.connected)} onClick={() => action(() => bridge.disconnectWhatsAppAccount())}>断开连接</button></div>}
-          <p>Chrome 状态：{hostStatus}</p>
-        </section>
-        {state && <>
-          <section><h2>接待与模型</h2><p>模型：{state.model.ready ? '已就绪' : '未就绪'}{state.model.message ? ` · ${state.model.message}` : ''}</p><button className="quiet" onClick={onModels}>前往模型配置</button><p>旧登录来源：{state.legacy.status === 'ready' ? '已核验' : state.legacy.status === 'blocked' ? '受阻' : '未核验'}{state.legacy.reason ? ` · ${state.legacy.reason}` : ''}</p><button className="secondary" disabled={busy || !state.connected} onClick={() => action(() => bridge.verifyWhatsAppLegacySources())}>核查旧接入记录</button>
-            <fieldset disabled={busy || !identity}><legend>允许自动接待的商家</legend>{snapshot.merchants.length === 0 && <p>暂无商家。</p>}{snapshot.merchants.map(m => <label className="wa-check" key={m.merchant_id} title={m.name}><input type="checkbox" checked={allowed.includes(m.merchant_id)} onChange={e => setAllowed(e.target.checked ? [...allowed, m.merchant_id] : allowed.filter(id => id !== m.merchant_id))} /><span className="wa-ellipsis">{m.name}{m.available ? '' : '（离线）'}</span></label>)}{allowed.filter(id => !snapshot.merchants.some(m => m.merchant_id === id)).map(id => <label className="wa-check" key={id}><input type="checkbox" checked onChange={() => setAllowed(allowed.filter(item => item !== id))} /><span className="wa-ellipsis" title={id}>{id}（离线）</span></label>)}</fieldset>
-            <div className="wa-actions"><button className="secondary" disabled={busy || !identity || (!state.enabled && !allowed.length)} onClick={() => identity && action(() => bridge.setWhatsAppAccountReception({ ...identity, enabled: !state.enabled, allowed_merchant_ids: allowed }))}>{state.enabled ? '关闭自动接待' : '开启自动接待'}</button>{state.enabled && <button className="secondary" disabled={busy || !identity || !allowed.length} onClick={() => identity && action(() => bridge.setWhatsAppAccountReception({ ...identity, enabled: true, allowed_merchant_ids: allowed }))}>保存允许商家</button>}</div><p>当前自动接待：{state.enabled ? '开启' : '关闭'}。开启和变更授权需要系统确认。</p>
-            <label>新联系人的默认商家<select value={defaultMerchant} disabled={busy || !identity} onChange={e => setDefaultMerchant(e.target.value)}><MerchantOptions merchants={snapshot.merchants} value={defaultMerchant} /></select></label><button className="secondary" disabled={busy || !identity} onClick={() => identity && action(() => bridge.saveWhatsAppDefaultMerchant({ ...identity, merchant_id: defaultMerchant || null, expected_revision: state.default_revision }))}>保存默认商家</button><p>默认商家只用于新联系人；未绑定且没有默认商家的联系人不会使用 AI 接待。</p>
-          </section>
-          <section><h2>联系人</h2><button className="secondary" disabled={busy || !state.connected} onClick={() => action(() => bridge.readWhatsAppContacts())}>读取联系人</button>{state.conversations.length === 0 ? <p>暂无联系人，请连接后读取。</p> : <label>选择联系人<select value={chatId} onChange={e => selectChat(e.target.value)}><option value="">请选择联系人</option>{state.conversations.map(c => <option key={c.chat_id} value={c.chat_id} title={c.name}>{c.name}</option>)}</select></label>}
-            {chat && <div className="wa-contact"><h3 className="wa-ellipsis" title={chat.name}>{chat.name}</h3><p>当前商家：<span title={name(binding?.merchant_id ?? null)}>{name(binding?.merchant_id ?? null)}</span> · {chat.human_owned ? '人工接管' : chat.reception_paused ? '自动接待已暂停' : '自动接待'}</p><label>联系人商家<select value={merchant} disabled={busy || !identity} onChange={e => setMerchant(e.target.value)}><MerchantOptions merchants={snapshot.merchants} value={merchant} /></select></label><label>国际站会话 ID（可选）<input value={conversation} disabled={busy || !identity} onChange={e => setConversation(e.target.value)} /></label><p>填写后会核验会话归属。</p><div className="wa-actions"><button className="secondary" disabled={busy || !identity} onClick={() => identity && action(() => bridge.saveWhatsAppAccountBinding({ ...identity, chat_id: chatId, merchant_id: merchant || null, conversation_id: conversation.trim() || null, expected_revision: binding?.requested_binding_revision ?? binding?.revision ?? 0 }), { chat: chatId })}>保存联系人绑定</button><button className="secondary" disabled={busy || !identity} onClick={() => identity && action(() => bridge.takeoverWhatsAppContact({ ...identity, chat_id: chatId, enabled: !(chat.human_owned || chat.reception_paused) }), { chat: chatId })}>{chat.human_owned || chat.reception_paused ? '恢复自动接待' : '人工接管'}</button></div>{!binding?.merchant_id && !state.default_merchant_id && <p>此联系人未绑定商家且没有默认商家，不会使用 AI 接待。</p>}{binding?.requested_binding && <p>请求的绑定：{name(binding.requested_binding.merchant_id)}，等待原发送结果明确后生效。</p>}</div>}
-          </section>
-          <section><h2>待核查发送</h2>{state.pending_operations.length ? state.pending_operations.map(op => <div className="wa-operation" key={op.operation_id}><p>原操作 ID：<span title={op.operation_id}>{op.operation_id}</span></p><p>商家：<span title={name(op.merchant_id)}>{name(op.merchant_id)}</span> · 状态：{op.status} · 联系人：<span title={op.chat_id}>{op.chat_id}</span></p><button className="secondary" disabled={busy} onClick={() => action(() => bridge.reconcileWhatsAppAccountOperation(op.operation_id))}>核查原发送结果</button></div>) : <p>没有待核查发送。</p>}<p>核查沿用原操作，不会重新发送。</p></section>
-          <section><h2>回写</h2><p>商家工作台及国际站回写尚不可用，未启用。{!capability && ' 能力状态暂不可读取。'}</p></section>
-        </>}
-      </>}
-    </main>
-  </div>;
+  const state = detail?.state; const identity = state?.account_id && state.connection_epoch && panel ? { workspace_id: panel.id, expected_account_id: state.account_id, expected_connection_epoch: state.connection_epoch } : null;
+  const binding = state?.bindings.find(x => x.chat_id === chatId); const contact = state?.conversations.find(x => x.chat_id === chatId);
+  const filtered = [...(filter === 'whatsapp' ? [] : merchants.map(m => ({ kind: 'merchant' as const, item: m }))), ...(filter === 'international' ? [] : accounts.map(a => ({ kind: 'wa' as const, item: a })))];
+  return <>
+    <header className="home-header"><h1>接待工作台</h1><div><button className="secondary" onClick={onModels}>设置</button><button className="primary" onClick={() => setDialog('add')}>＋ 添加账号</button></div></header>
+    <nav className="account-tabs" aria-label="账号类型">{([['all','全部'],['international','国际站'],['whatsapp','WhatsApp']] as const).map(([id, name]) => <button key={id} aria-pressed={filter === id} onClick={() => setFilter(id)}>{name}</button>)}</nav>
+    <section className="account-list" aria-label="账号列表">{filtered.length === 0 && <div className="empty">还没有账号</div>}{filtered.map(entry => {
+      if (entry.kind === 'merchant') { const m = entry.item; return <article className="account-card" key={`m${m.id}`}><span className="account-avatar international">国</span><div className="account-copy"><strong title={m.name}>{m.name}</strong><small>国际站 · {m.account_tail ? `尾号 ${m.account_tail}` : '待核验'}</small></div><div className="account-controls"><div className="status-edit"><span className="status">{m.status === 'opened' ? '已打开' : '待授权'}</span><button className="edit-account" aria-label={`编辑${m.name}`} onClick={() => { panelToken.current++; setMerchantBase(m); setMerchantName(m.name); setPanelError(''); setPanel({ type: 'merchant', id: m.id, view: 'settings' }); }}>✎</button></div><button className="secondary account-open" disabled={busy[m.id]} onClick={() => m.status !== 'opened' ? onAuthorization() : void action(m.id, async () => { await bridge.openMerchant(m.id); await refreshMerchants(); })}>{m.status === 'opened' ? '打开窗口' : '授权'}</button></div></article>; }
+      const a = entry.item; const error = errors[a.workspace_id] || a.error || (a.host.status === 'error' ? a.host.error_code || '连接失败' : ''); const status = a.runtime_status === 'closing' ? '正在断开' : error || a.runtime_status === 'error' ? shortReason(error) : a.host.status === 'qr' ? '等待扫码' : a.host.status === 'ready' ? '已连接' : a.runtime_status === 'starting' || ['connecting','authenticated'].includes(a.host.status) ? '正在连接' : '未连接'; const open = ['connecting','authenticated','qr','ready'].includes(a.host.status);
+      return <article className="account-card" key={`w${a.workspace_id}`}><span className="account-avatar whatsapp">W</span><div className="account-copy"><strong title={a.label}>{a.label}</strong><small>WhatsApp · {a.account_tail ? `尾号 ${a.account_tail}` : '待登录'}{a.enabled ? ' · 自动接待中' : ''}</small></div><div className="account-controls"><div className="status-edit"><div className="status-summary"><span className="status" title={error}>{status}</span>{a.pending_count > 0 && <button className="pending-status" onClick={() => void begin(a.workspace_id, 'pending')}>{a.pending_count} 条待核查</button>}</div><button className="edit-account" aria-label={`编辑${a.label}`} onClick={() => void begin(a.workspace_id)}>✎</button></div><button className="secondary account-open" disabled={busy[a.workspace_id] || a.runtime_status === 'starting' || a.runtime_status === 'closing'} onClick={() => void action(a.workspace_id, () => open ? bridge.openWhatsAppAccount(a.workspace_id) : connect(a.workspace_id))}>{open ? '打开窗口' : '连接'}</button></div></article>;
+    })}</section><footer className="home-footer"><span>{filtered.length} 个账号</span><button className="quiet" onClick={onModels}>模型设置 ›</button></footer>{errors.list && <p role="alert">{errors.list}</p>}
+    {dialog && <div className="overlay"><div className="dialog" role="dialog" aria-modal="true" aria-label={dialog === 'add' ? '添加账号' : dialog === 'qr' ? '等待扫码' : '添加 WhatsApp'}><div className="dialog-title"><h2>{dialog === 'add' ? '添加账号' : '添加 WhatsApp'}</h2><button className="quiet" aria-label="关闭" onClick={() => setDialog(null)}>✕</button></div>{dialog === 'qr' ? <><p>请在新窗口完成扫码。</p><button className="primary" onClick={() => void action(qrAccount, () => bridge.openWhatsAppAccount(qrAccount))}>打开窗口</button></> : dialog === 'add' ? <><button className="type-choice" onClick={() => { setDialog(null); onAuthorization(); }}>国际站</button><button className="type-choice" onClick={() => setDialog('create')}>WhatsApp</button></> : <><label>账号名称<input value={newLabel} maxLength={100} onChange={e => setNewLabel(e.target.value)}/></label><p role="alert">{errors.create}</p><div className="dialog-actions"><button className="secondary" onClick={() => setDialog(null)}>取消</button><button className="primary" disabled={!newLabel.trim() || busy.create} onClick={() => void action('create', async () => { const value = await bridge.createWhatsAppAccount(newLabel.trim()); setDialog(null); setNewLabel(''); await action(value.profile.workspace_id, () => connect(value.profile.workspace_id)); })}>连接</button></div></>}</div></div>}
+    {panel && <div className="sheet-overlay"><section className="sheet" role="dialog" aria-modal="true" aria-label={panel.view === 'pending' ? '发送核查' : panel.view === 'contacts' || panel.view === 'contact' ? '联系人分配' : '账号设置'}><div className="sheet-header"><h2>{panel.view === 'pending' ? '发送核查' : panel.view === 'contacts' || panel.view === 'contact' ? '联系人分配' : '账号设置'}</h2><button className="quiet" aria-label="关闭设置" onClick={close}>✕</button></div><div className="sheet-content"><p className="panel-error" role="status">{panelError}</p>{panel.type === 'merchant' && merchantBase ? <><label className="field">显示名称<input value={merchantName} onChange={e => setMerchantName(e.target.value)} /></label><p>已核验公司：{merchantBase.company_name || '尚未提供'}</p><p>接待规则和业务资料在对应账号窗口管理。</p><button className="settings-link" onClick={onModels}>共享模型设置 ›</button><button className="settings-link" onClick={onAuthorization}>重新授权 ›</button></> : !detail || !draft ? <p>正在读取账号…</p> : panel.view === 'settings' ? <><label className="field">账号名称<input value={draft.label} onChange={e => setDraft({ ...draft, label: e.target.value })}/></label><label className="setting-row"><strong>自动接待</strong><input type="checkbox" checked={draft.enabled} onChange={e => setDraft({ ...draft, enabled: e.target.checked })}/></label>{draft.enabled && <><p className="muted">开启或扩大范围需要确认本账号和商家。</p><details className="merchant-picker"><summary>接待商家（{draft.allowed.length}）</summary>{detail.merchants.map(m => <label key={m.merchant_id}><input type="checkbox" checked={draft.allowed.includes(m.merchant_id)} onChange={e => setDraft({ ...draft, allowed: e.target.checked ? [...draft.allowed, m.merchant_id] : draft.allowed.filter(id => id !== m.merchant_id) })}/>{m.name}{m.available ? '' : '（离线）'}</label>)}</details><label className="field">新联系人默认商家<select value={draft.defaultMerchant} onChange={e => setDraft({ ...draft, defaultMerchant: e.target.value })}><option value="">不指定商家</option>{options(detail.merchants)}</select></label><p className="muted">更改只影响新联系人。</p>{!state?.connected && <p>请先连接账号。</p>}{state && !state.model.ready && <p>{state.model.message || '请先配置接待模型。'}</p>}{state && state.legacy.status !== 'ready' && <><p>请先核验历史接入记录。{state.legacy.reason}</p><button className="secondary" disabled={busy[panel.id] || !state.connected} onClick={() => void updateDetail(() => bridge.verifyWhatsAppLegacySources(panel.id))}>核验历史记录</button></>}</> }<button className="settings-link" onClick={onModels}>接待模型 {state ? (state.model.ready ? '已就绪' : '未就绪') : ''} ›</button><button className="settings-link" onClick={() => { setPanel({ ...panel, view: 'contacts' }); setSearch(''); }}>联系人分配 ›</button><details className="advanced"><summary>更多设置</summary><p>连接状态：{detail.host.status === 'qr' ? '等待扫码，请在新窗口完成扫码' : state?.connected ? '已连接' : '未连接'}</p><button className="secondary" disabled={busy[panel.id] || !['qr','ready','authenticated','connecting'].includes(detail.host.status)} onClick={() => void updateDetail(() => bridge.disconnectWhatsAppAccount(panel.id))}>断开连接</button></details></> : panel.view === 'pending' ? <>{state?.pending_operations.filter(op => op.status === 'unknown').map(op => <div className="operation" key={op.operation_id}><p>{state.conversations.find(c => c.chat_id === op.chat_id)?.name || '联系人'} · 发送结果待核查</p><button className="secondary" disabled={busy[panel.id]} onClick={() => void updateDetail(() => bridge.reconcileWhatsAppAccountOperation({ workspace_id: panel.id, operation_id: op.operation_id }))}>核查结果</button></div>)}{!state && <p>请连接账号查看待核查记录。</p>}</> : panel.view === 'contacts' ? <><button className="secondary" disabled={busy[panel.id] || !state?.connected} onClick={() => void updateDetail(() => bridge.readWhatsAppContacts(panel.id))}>读取联系人</button><label className="field">搜索联系人<input value={search} onChange={e => setSearch(e.target.value)} /></label>{state?.conversations.filter(c => c.name.toLowerCase().includes(search.toLowerCase())).map(c => <button className="settings-link" key={c.chat_id} onClick={() => { setChatId(c.chat_id); setContactMerchant(state.bindings.find(b => b.chat_id === c.chat_id)?.merchant_id ?? ''); setPanel({ ...panel, view: 'contact' }); }}>{c.name} ›</button>)}</> : contact && <><p>{contact.name}</p><label className="field">联系人商家<select value={contactMerchant} onChange={e => setContactMerchant(e.target.value)}><option value="">不指定商家</option>{options(detail.merchants)}</select></label><p>更改商家后，该联系人的接待将暂停；待发送操作仍归原商家。</p><button className="secondary" disabled={!identity || busy[panel.id]} onClick={() => identity && void updateDetail(() => bridge.saveWhatsAppAccountBinding({ ...identity, chat_id: chatId, merchant_id: contactMerchant || null, conversation_id: contactMerchant === binding?.merchant_id ? binding?.conversation_id ?? null : null, expected_revision: binding?.requested_binding_revision ?? binding?.revision ?? 0 }))}>保存联系人商家</button><button className="secondary" disabled={!identity || busy[panel.id]} onClick={() => identity && void updateDetail(() => bridge.takeoverWhatsAppContact({ ...identity, chat_id: chatId, enabled: !(contact.human_owned || contact.reception_paused) }))}>{contact.human_owned || contact.reception_paused ? '恢复自动接待' : '人工接管'}</button>{binding?.requested_binding && <p>等待原发送结果明确后生效。</p>}</>}</div><div className="sheet-footer">{panel.view !== 'settings' && <button className="secondary" onClick={() => setPanel({ ...panel, view: panel.view === 'contact' ? 'contacts' : 'settings' })}>返回</button>}<button className="secondary" onClick={close}>取消</button>{panel.view === 'settings' && <button className="primary" disabled={busy[panel.id] || (panel.type === 'wa' && !detail)} onClick={() => { if (panel.type === 'wa') void save(); else if (merchantBase) void (async () => { if (!merchantName.trim()) { setPanelError('请填写显示名称。'); return; } if (merchantName.trim() === merchantBase.name) { close(); return; } setBusy(old => ({ ...old, [panel.id]: true })); try { await bridge.renameMerchant({ merchant_id: panel.id, name: merchantName.trim(), expected_revision: merchantBase.display_revision ?? 0 }); await refreshMerchants(); close(); } catch (e) { setPanelError(reason(e)); } finally { setBusy(old => ({ ...old, [panel.id]: false })); } })(); }}>保存</button>}</div></section></div>}
+  </>;
 }

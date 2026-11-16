@@ -30,13 +30,13 @@ function publicTool(file){
  if(!realPathUnchanged(file))throw invalid('runtime_path_unsafe');
  const absolute=path.resolve(file);
  if(path.basename(absolute).toLowerCase()==='workctl.exe')return absolute;
- // Recognize only Accio's documented generation prefix. Do not read, parse or
- // execute shim contents, including when the caller explicitly supplies a shim.
+ // Recognize only Accio's legacy and compact generation prefixes. Do not read,
+ // parse or execute shim contents, even when the caller explicitly supplies one.
  const account=accountRoot(absolute);
  const parts=account?path.relative(account,absolute).split(path.sep):[];
- const expected=[...generationsRelative.split('/'),null,null,'prefix',null];
- if(parts.length!==expected.length||!expected.every((part,index)=>part===null||comparable(parts[index])===comparable(part))
-    ||!['workctl','workctl.cmd','workctl.ps1'].includes(path.basename(absolute).toLowerCase()))throw invalid();
+ const layouts=[[...generationsRelative.split('/'),null,null,'prefix',null],['r',null,'p',null]];
+ const knownLayout=layouts.some(layout=>parts.length===layout.length&&layout.every((part,index)=>part===null||comparable(parts[index])===comparable(part)));
+ if(!knownLayout||!['workctl','workctl.cmd','workctl.ps1'].includes(path.basename(absolute).toLowerCase()))throw invalid();
  const executable=path.join(path.dirname(absolute),exeRelative);
  if(!fileExists(executable))throw invalid();
  if(!realPathUnchanged(executable)||!samePath(accountRoot(executable),account))throw invalid('runtime_path_unsafe');

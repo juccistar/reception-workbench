@@ -17,7 +17,7 @@ from PIL import Image
 
 from reception_service.image_assets import decode_image
 from reception_service.integrations.live import LiveIntegration
-from reception_service.integrations.reception_prompts import AUTOMATIC, MANUAL, POLISH, REQUIREMENTS, IMAGE_NATIVE
+from reception_service.integrations.reception_prompts import AUTOMATIC, MANUAL, POLISH, REQUIREMENTS, WHATSAPP, IMAGE_NATIVE
 from reception_service.model_providers.transport import ProviderTransport
 from reception_service.model_router import ModelRouter
 from reception_service.photos import direct_image_id, photo_version
@@ -74,13 +74,17 @@ class NativeImageRequests(unittest.TestCase):
                    'image_manifest': [{'image_id': ref['image_id'], 'alias': 'p1'}]}
         return context, [{'message': message, 'asset': self.asset}], ref
 
-    def inspect(self, protocol, expected_manifest, attached=True):
+    def inspect(self, protocol, expected_manifest, attached=True, *, prompt=None):
         body = self.requests[-1]
         if protocol == 'anthropic':
             system, blocks = body['system'], body['messages'][0]['content']
         else:
             system, blocks = body['messages'][0]['content'], body['messages'][1]['content']
-        payload = json.loads(blocks[0]['text'])
+        envelope = json.loads(blocks[0]['text'])
+        self.assertEqual(list(envelope)[-1], 'context')
+        payload = envelope['context']
+        if prompt is not None:
+            self.assertEqual(system, prompt + ('\n' + IMAGE_NATIVE if attached else ''))
         if attached:
             self.assertIn(IMAGE_NATIVE, system)
             self.assertEqual(payload['image_transport'], 'inline')
@@ -110,12 +114,12 @@ class NativeImageRequests(unittest.TestCase):
                     context, inputs, ref = self.fixture()
                     context['task_mode'] = mode
                     self.facade._business_query(prompt, context, inputs)
-                    payload = self.inspect(protocol, [{'alias': 'p1', 'image_id': ref['image_id'], 'role': 'buyer', 'message_id': 'm'}])
+                    payload = self.inspect(protocol, [{'alias': 'p1', 'image_id': ref['image_id'], 'role': 'buyer', 'message_id': 'm'}], prompt=prompt)
                     self.assertEqual(payload['message_view'][0]['text'], '[image]')
                 context, _, _ = self.fixture()
                 context.update(photo_context={}, image_manifest=[])
                 self.facade._business_query(MANUAL, context, [])
-                payload = self.inspect(protocol, None, attached=False)
+                payload = self.inspect(protocol, None, attached=False, prompt=MANUAL)
                 self.assertEqual(payload['message_view'][0]['media_notice'], 'image_not_available_to_this_request')
 
     def test_selected_message_original_reaches_the_same_native_request(self):
@@ -162,7 +166,7 @@ class NativeImageRequests(unittest.TestCase):
                     inputs = photo_owner._direct_photo_inputs(context)
                     self.facade._business_query(prompt, context, inputs)
                     ref = context['photo_context']['direct_images'][0]
-                    payload = self.inspect(protocol, [{'alias': 'p1', 'image_id': ref['image_id'], 'role': 'buyer', 'message_id': 'm'}])
+                    payload = self.inspect(protocol, [{'alias': 'p1', 'image_id': ref['image_id'], 'role': 'buyer', 'message_id': 'm'}], prompt=prompt)
                     self.assertEqual(payload['message_view'][0]['text'], '[图片 p1]')
                     self.assertNotIn('media_notice', payload['message_view'][0])
 
@@ -177,7 +181,7 @@ class NativeImageRequests(unittest.TestCase):
                 context['image_manifest'].append({'alias': 'p2', 'image_id': 'supp', 'origin': 'business_supplement'})
                 inputs.append({'attachment': attachment, 'asset': self.asset})
                 self.facade._business_query(POLISH, context, inputs)
-                payload = self.inspect(protocol, [{'alias': 'p2', 'image_id': 'supp', 'role': 'seller', 'origin': 'business_supplement', 'attachment_id': 'supp'}])
+                payload = self.inspect(protocol, [{'alias': 'p2', 'image_id': 'supp', 'role': 'seller', 'origin': 'business_supplement', 'attachment_id': 'supp'}], prompt=POLISH)
                 self.assertEqual(payload['message_view'][0]['media_notice'], 'image_not_available_to_this_request')
 
     def test_independent_whatsapp_request(self):
@@ -212,7 +216,7 @@ class NativeImageRequests(unittest.TestCase):
                            pending_message_id='wa1', source_fingerprint='fp')
                 host._run_account_generation(job)
                 self.assertEqual(host.repo.rows['generation_attempt', 'key']['status'], 'completed')
-                self.inspect(protocol, [{'alias': 'p1', 'image_id': 'wa-image', 'source_id': 'wa1', 'role': 'buyer'}])
+                self.inspect(protocol, [{'alias': 'p1', 'image_id': 'wa-image', 'source_id': 'wa1', 'role': 'buyer'}], prompt=WHATSAPP)
 
 
 if __name__ == '__main__':

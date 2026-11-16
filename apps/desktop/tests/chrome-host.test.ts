@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { EventEmitter } from 'node:events';
 import { EventEmitter as PuppeteerEventEmitter } from 'puppeteer';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,21 +10,22 @@ import { ChromeWhatsAppHost } from '../src/main/whatsapp/chrome-host';
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 const tick = () => new Promise(resolve => setTimeout(resolve, 10));
-async function setup(fail = false, shutdownGraceMs = 10000) {
+async function setup(fail = false, shutdownGraceMs = 10000, extra: Record<string, any> = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'chrome-host-test-')); roots.push(root);
   const events: any[] = [];
   const instances: MockClient[] = [];
   class MockClient extends EventEmitter {
-    info = { wid: { _serialized: '123@c.us' } };
+    info = { wid: { _serialized: extra.account ?? '123@c.us' } };
+    getContactLidAndPhone = extra.getContactLidAndPhone;
     pupPage = Object.assign(new PuppeteerEventEmitter() as any, { isClosed: () => false, bringToFront: vi.fn(async () => {}) });
-    pupBrowser = Object.assign(new PuppeteerEventEmitter() as any, { close: vi.fn(async () => { this.pupBrowser.emit('disconnected'); }), process: () => null });
+    pupBrowser = Object.assign(new PuppeteerEventEmitter() as any, { close: vi.fn(async () => { this.pupBrowser.emit('disconnected'); }), process: () => null, installExtension: extra.installExtension ?? vi.fn(async () => 'a'.repeat(32)) });
     getChats = vi.fn(async () => []);
     sendMessage = vi.fn(async () => ({ id: { _serialized: 'msg1' }, ack: 1 }));
     getMessageById = vi.fn(async () => ({ id: { _serialized: 'msg1' }, ack: 1 }));
     constructor(public options: any) { super(); instances.push(this); }
     async initialize() { if (fail) throw new Error('failure'); this.emit('ready'); }
   }
-  const host = new ChromeWhatsAppHost({ directory: root, profileDirectory: path.join(root, 'profile'), onEvent: event => events.push(event), shutdownGraceMs, resolveExecutable: async () => 'chrome.exe', loadSdk: async () => ({ Client: MockClient }) });
+  const host = new ChromeWhatsAppHost({ directory: root, profileDirectory: path.join(root, 'profile'), onEvent: event => events.push(event), shutdownGraceMs, resolveExecutable: async () => 'chrome.exe', loadSdk: async () => ({ Client: MockClient }), ...extra });
   await host.connect(); await tick();
   return { host, events, instances };
 }
@@ -117,6 +118,108 @@ describe('Chrome WhatsApp host', () => {
     const browser = Object.assign(new EventEmitter(), { process: () => null, close: vi.fn(async () => {}) });
     client.pupBrowser = browser;
     await closing; expect(browser.close).toHaveBeenCalledOnce();
+  });
+  it('installs the fixed extension through the owned browser and closes it before the browser', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'chrome-extension-')); roots.push(root);
+    await writeFile(path.join(root, 'manifest.json'), '{}');
+    const order: string[] = [];
+    const ready = vi.fn(async () => { order.push('ready'); });
+    const closed = vi.fn(async () => { order.push('panel-closed'); });
+    const opened = vi.fn(async () => { order.push('open'); });
+    const { host, instances } = await setup(false, 10000, { extensionDirectory: root, onBrowserReady: ready, onBrowserClosed: closed, onOpen: opened });
+    const client = instances[0];
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledWith(client.pupBrowser, client.pupPage, 'a'.repeat(32)));
+    expect(client.options.puppeteer).toMatchObject({ enableExtensions: true, headless: false, pipe: true });
+    expect(client.pupBrowser.installExtension).toHaveBeenCalledWith(root);
+    await host.open(); expect(opened).toHaveBeenCalledOnce();
+    client.pupBrowser.close.mockImplementation(async () => { order.push('browser-closed'); });
+    await host.close(); expect(order).toEqual(['ready', 'open', 'panel-closed', 'browser-closed']);
+  });
+  it('opens the sidebar after a user opens the window while installation is pending', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'chrome-extension-')); roots.push(root); await writeFile(path.join(root, 'manifest.json'), '{}');
+    let finish!: (id: string) => void;
+    const installExtension = vi.fn(() => new Promise<string>(resolve => { finish = resolve; }));
+    const opened = vi.fn(async () => {}), ready = vi.fn(async () => {});
+    const { host } = await setup(false, 5, { extensionDirectory: root, installExtension, onBrowserReady: ready, onOpen: opened });
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    await host.open(); expect(opened).not.toHaveBeenCalled(); finish('a'.repeat(32));
+    await vi.waitFor(() => expect(opened).toHaveBeenCalledOnce()); expect(ready).toHaveBeenCalledOnce(); await host.close();
+  });
+  it('does not attach a late extension to a closed runtime', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'chrome-extension-')); roots.push(root);
+    await writeFile(path.join(root, 'manifest.json'), '{}');
+    let finish!: (id: string) => void;
+    const installExtension = vi.fn(() => new Promise<string>(resolve => { finish = resolve; }));
+    const ready = vi.fn(async () => {}), closed = vi.fn(async () => {});
+    const { host } = await setup(false, 5, { extensionDirectory: root, installExtension, onBrowserReady: ready, onBrowserClosed: closed });
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    await host.close(); finish('a'.repeat(32)); await tick();
+    expect(ready).not.toHaveBeenCalled(); expect(closed).not.toHaveBeenCalled();
+  });
+  it('does not attach an old installation after reconnecting', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'chrome-extension-')); roots.push(root); await writeFile(path.join(root, 'manifest.json'), '{}');
+    let finish!: (id: string) => void;
+    const installExtension = vi.fn().mockImplementationOnce(() => new Promise<string>(resolve => { finish = resolve; })).mockResolvedValue('b'.repeat(32));
+    const ready = vi.fn(async () => {});
+    const { host, instances } = await setup(false, 5, { extensionDirectory: root, installExtension, onBrowserReady: ready });
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    instances[0].pupPage.emit('close'); await host.connect();
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledTimes(1));
+    expect(ready).toHaveBeenCalledWith(instances[1].pupBrowser, instances[1].pupPage, 'b'.repeat(32));
+    finish('a'.repeat(32)); await tick(); expect(ready).toHaveBeenCalledTimes(1); await host.close();
+  });
+  it('waits for an attaching sidebar to be destroyed before closing Chrome', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'chrome-extension-')); roots.push(root); await writeFile(path.join(root, 'manifest.json'), '{}');
+    let finish!: () => void; const closed = vi.fn(async () => {});
+    const ready = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    const { host, instances } = await setup(false, 5, { extensionDirectory: root, onBrowserReady: ready, onBrowserClosed: closed });
+    await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+    const closing = host.close(); await tick(); expect(instances[0].pupBrowser.close).not.toHaveBeenCalled();
+    finish(); await closing; expect(closed).toHaveBeenCalledOnce(); expect(instances[0].pupBrowser.close).toHaveBeenCalledOnce();
+  });
+  it('leaves WhatsApp connected when extension installation fails', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'chrome-extension-')); roots.push(root);
+    const ready = vi.fn(async () => {});
+    const { host, instances } = await setup(false, 10000, { extensionDirectory: root, onBrowserReady: ready });
+    expect(host.getStatus().status).toBe('ready');
+    expect(instances[0].pupBrowser.installExtension).not.toHaveBeenCalled(); expect(ready).not.toHaveBeenCalled();
+    await host.close();
+  });
+  it('rejects a linked extension directory', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'chrome-extension-')); roots.push(root);
+    const actual = path.join(root, 'actual'), alias = path.join(root, 'alias'); await mkdir(actual); await writeFile(path.join(actual, 'manifest.json'), '{}');
+    await symlink(actual, alias, 'junction');
+    const ready = vi.fn(async () => {});
+    const { host, instances } = await setup(false, 10000, { extensionDirectory: alias, onBrowserReady: ready });
+    expect(host.getStatus().status).toBe('ready'); expect(instances[0].pupBrowser.installExtension).not.toHaveBeenCalled(); expect(ready).not.toHaveBeenCalled(); await host.close();
+  });
+  it('authorizes LID only with exact SDK mapping while retaining the raw account', async () => {
+    const authorize = vi.fn(async () => {});
+    const getContactLidAndPhone = vi.fn(async () => [{ lid: '123@lid', pn: '456@c.us' }]);
+    const { host } = await setup(false, 10000, { account: '123@lid', authorizeAccount: authorize, getContactLidAndPhone });
+    expect(getContactLidAndPhone).toHaveBeenCalledWith(['123@lid']); expect(authorize).toHaveBeenCalledWith('456@c.us'); expect(host.getStatus()).toMatchObject({ status: 'ready', account_id: '123@lid' }); await host.close();
+  });
+  it.each([undefined, [{ lid: 'other@lid', pn: '456@c.us' }], [{ lid: '123@lid', pn: 'bad@c.us' }]])('fails closed without a proven LID mapping %#', async mapping => {
+    const authorize = vi.fn(async () => {});
+    const { host } = await setup(false, 10000, { account: '123@lid', authorizeAccount: authorize, getContactLidAndPhone: mapping && vi.fn(async () => mapping) });
+    expect(host.getStatus()).toMatchObject({ status: 'error', error_code: 'auth_failed' }); expect(authorize).not.toHaveBeenCalled(); await host.close();
+  });
+  it('identifies a single active chat only while both reads and identity agree', async () => {
+    const { host, instances } = await setup(); const client = instances[0];
+    const chats: any[] = [{ active: true, id: { _serialized: '456@c.us' } }], channels: any[] = [];
+    const oldWindow = (globalThis as any).window;
+    (globalThis as any).window = { require: (name: string) => name === 'WAWebCollections' ? { Chat: { getModelsArray: () => chats } } : { default: { getModelsArray: () => channels } } };
+    Object.assign(client.pupPage, { url: () => 'https://web.whatsapp.com/', evaluate: async (fn: () => unknown) => fn() });
+    (client as any).getChatById = vi.fn(async () => ({ id: { _serialized: '456@c.us' }, isGroup: false, name: 'Customer' }));
+    try {
+      expect(await host.resolveCurrentChat()).toEqual({ chat_id: '456@c.us', name: 'Customer' });
+      chats.push({ active: true, id: { _serialized: '789@c.us' } }); expect(await host.resolveCurrentChat()).toBeNull(); chats.pop();
+      channels.push({ active: true }); expect(await host.resolveCurrentChat()).toBeNull(); channels.pop();
+      (client as any).getChatById.mockImplementationOnce(async () => { chats[0].id._serialized = '789@c.us'; return { id: '456@c.us', isGroup: false }; });
+      expect(await host.resolveCurrentChat()).toBeNull();
+      chats[0].id._serialized = '456@c.us'; (client as any).getChatById.mockResolvedValueOnce({ id: '456@c.us', isGroup: true }); expect(await host.resolveCurrentChat()).toBeNull();
+      (client as any).getChatById.mockImplementationOnce(async () => { client.pupPage.emit('close'); return { id: '456@c.us', isGroup: false }; }); expect(await host.resolveCurrentChat()).toBeNull();
+    } finally { (globalThis as any).window = oldWindow; await host.close(); }
   });
   it('rejects stale identities and never resends an unknown submission', async () => {
     const { host, instances } = await setup(); const client = instances[0], info = host.getStatus();

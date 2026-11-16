@@ -57,17 +57,22 @@ MODEL_CONTEXT_CHARS = 120_000
 MODEL_REQUEST_CHARS = 140_000
 
 
-# Keep task/settings and selected merchant material ahead of conversation data.
-# Existing messages can retain their prefix when the target or summary changes.
-# Case-selected material remains inside its owning case; arrays are never sorted.
-_MODEL_FIELD_ORDER = (
-    'payload_version', 'task_mode', 'collection_rules', 'knowledge', 'guidance', 'style',
-    'seller_id', 'binding_revision', 'product_context', 'supplier_context',
-    'international_background', 'current_case_ref', 'selected_case_ref',
-    'message_view', 'whatsapp_messages', 'case_catalog', 'case', 'requirements',
-    'supplement', 'continuation', 'followup_context', 'required_fields',
-    'conversation_intent', 'conversation_summary', 'wa_summary', 'message_semantics',
-    'reply_target', 'unsent_reply', 'image_manifest', 'image_transport',
+# The system message carries the fixed reception rules. Its user message is
+# knowledge -> guidance -> style -> context, with customer context ordered as
+# supplement -> summary -> requirements/supply -> chat -> this turn's target.
+# Case-selected material stays with its owning case; arrays are never sorted.
+_MATERIAL_FIELDS = ('knowledge', 'guidance', 'style')
+_CONTEXT_FIELD_ORDER = (
+    'supplement', 'conversation_summary', 'wa_summary',
+    'case', 'requirements', 'product_context', 'supplier_context', 'case_catalog',
+    'international_background', 'message_view', 'whatsapp_messages',
+    'image_manifest', 'image_transport', 'message_semantics',
+)
+_TARGET_FIELD_ORDER = (
+    'payload_version', 'task_mode', 'seller_id', 'binding_revision',
+    'collection_rules', 'required_fields', 'conversation_intent',
+    'current_case_ref', 'selected_case_ref', 'continuation', 'followup_context',
+    'reply_target', 'unsent_reply',
 )
 
 
@@ -80,19 +85,26 @@ def _order_keys(row, fields):
 
 
 def _ordered_model_projection(projected):
-    """Order only the wire projection, leaving the authoritative context untouched."""
+    """Assemble the wire envelope without changing the authoritative context."""
     if not isinstance(projected, dict):
         return projected
-    ordered = _order_keys(projected, _MODEL_FIELD_ORDER)
-    if isinstance(ordered.get('case_catalog'), list):
-        ordered['case_catalog'] = [
+    envelope = {key: projected[key] for key in _MATERIAL_FIELDS if key in projected}
+    customer = _order_keys(
+        {key: value for key, value in projected.items()
+         if key not in _MATERIAL_FIELDS and key not in _TARGET_FIELD_ORDER},
+        _CONTEXT_FIELD_ORDER)
+    if isinstance(customer.get('case_catalog'), list):
+        customer['case_catalog'] = [
             _order_keys(row, ('case_ref', 'knowledge', 'guidance', 'style'))
-            for row in ordered['case_catalog']
+            for row in customer['case_catalog']
         ]
-    if 'international_background' in ordered:
-        ordered['international_background'] = _order_keys(
-            ordered['international_background'], ('messages', 'requirements', 'supplement', 'summary'))
-    return ordered
+    if 'international_background' in customer:
+        customer['international_background'] = _order_keys(
+            customer['international_background'], ('supplement', 'summary', 'requirements', 'messages'))
+    # Preserve any additional channel fields before the final task/target block.
+    customer.update((key, projected[key]) for key in _TARGET_FIELD_ORDER if key in projected)
+    envelope['context'] = customer
+    return envelope
 
 
 def model_json(context):

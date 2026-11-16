@@ -75,6 +75,20 @@ class WhatsAppMerchantContextMixin:
             return {'seller_id': self.seller_id, 'data_root': identity['data_root'],
                     'conversation_id': conversation_id, 'revision': hashlib.sha256(raw).hexdigest(), 'context': context}
 
+    def _wa_export_customer_candidates(self, account_id, chat_id, merchant_id, binding_revision, query, limit=25):
+        from .whatsapp_customer_search import search_merchant_customers
+        _identifier(account_id)
+        _identifier(chat_id)
+        _identifier(merchant_id)
+        if type(binding_revision) is not int or binding_revision < 0:
+            raise ServiceError('invalid_params', '绑定修订无效')
+        with self._lock:
+            if (self.mode != 'live' or not self.account_verified or not self.seller_id or self._closing or self._closed
+                    or self.repo.get('meta', 'seller', {}).get('seller_id') != self.seller_id):
+                raise ServiceError('identity_required', '商家服务未核验或已关闭')
+            candidates = search_merchant_customers(self.repo, self.seller_id, query, limit)
+            return {'seller_id': self.seller_id, 'data_root': str(self.data_root.resolve()), 'candidates': candidates}
+
     def _wa_writeback_capabilities(self):
         return {'format': 'wa-writeback-capabilities-v1', 'available': False, 'enabled': False,
                 'reason': '写回能力尚未开放', 'destinations': ['merchant_workbench', 'international_platform'],

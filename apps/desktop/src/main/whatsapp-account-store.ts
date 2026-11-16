@@ -1,12 +1,13 @@
 import path from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { resolveModelSettingsDirectory } from './model-settings-store';
+import { accountDigest, accountKey, ownershipDirectory, WhatsAppAccountOwnership } from './whatsapp-account-ownership';
 // @ts-ignore Existing Windows kernel mutex helper.
 import { acquireMerchantRegistryMutex } from '../../../../scripts/merchant-mutex.mjs';
 
-export interface WhatsAppAccountEntry { id: string; label: string; account_tail: string; selected: boolean }
-type DiskEntry = { id: string; label: string; account_tail: string; account_digest?: string };
+export interface WhatsAppAccountEntry { id: string; label: string; account_tail: string; revision: number }
+type DiskEntry = { id: string; label: string; account_tail: string; account_digest?: string; revision?: number; identity_version?: 1 };
 type Index = { format: 'whatsapp-accounts-v1'; selected: string | null; accounts: DiskEntry[] };
 type Lock = (key: string) => Promise<() => Promise<void>>;
 const validId = (id: unknown): id is string => typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id);
@@ -29,12 +30,15 @@ export class WhatsAppAccountStore {
   private readonly profiles: string;
   private readonly data: string;
   private readonly lock: Lock;
-  constructor(root: string, lock: Lock = key => acquireMerchantRegistryMutex(key, 1000)) {
+  private readonly ownershipRoot: string | undefined;
+  private readonly holders = new Map<string, { identity?: string; identityLocks: Map<string, () => Promise<void>> }>();
+  constructor(root: string, lock: Lock = key => acquireMerchantRegistryMutex(key, 1000), ownershipRoot?: string) {
     if (!path.isAbsolute(root) || path.resolve(root) !== root || root === path.parse(root).root || /^(?:\\\\|\/\/)/.test(root) || /[\x00-\x1f]/.test(root)) throw new Error('whatsapp_account_path_invalid');
     this.metadata = path.join(root, 'ARWData', 'whatsapp');
     this.profiles = path.join(root, 'ARWBrowser', 'wa');
     this.data = path.join(root, 'ARWData', 'whatsapp', 'workspaces');
     this.lock = lock;
+    this.ownershipRoot = ownershipRoot;
   }
   private async prepare(directory: string): Promise<void> {
     await checkParents(directory);
@@ -60,7 +64,7 @@ export class WhatsAppAccountStore {
       if (!value || Object.keys(value).sort().join(',') !== 'accounts,format,selected' || value.format !== 'whatsapp-accounts-v1' || !Array.isArray(value.accounts) || value.accounts.length > 512 || (value.selected !== null && !validId(value.selected))) throw new Error('invalid');
       const ids = new Set<string>();
       for (const entry of value.accounts) {
-        if (!entry || Object.keys(entry).sort().join(',') !== (entry.account_digest === undefined ? 'account_tail,id,label' : 'account_digest,account_tail,id,label') || (entry.account_digest !== undefined && !/^[a-f0-9]{64}$/.test(entry.account_digest)) || !validId(entry.id) || !validLabel(entry.label) || !validTail(entry.account_tail) || ids.has(entry.id)) throw new Error('invalid');
+        if (!entry || Object.keys(entry).some(key => !['id', 'label', 'account_tail', 'account_digest', 'revision', 'identity_version'].includes(key)) || (entry.identity_version !== undefined && (entry.identity_version !== 1 || !entry.account_digest)) || (entry.revision !== undefined && (!Number.isSafeInteger(entry.revision) || entry.revision < 0)) || (entry.account_digest !== undefined && !/^[a-f0-9]{64}$/.test(entry.account_digest)) || !validId(entry.id) || !validLabel(entry.label) || !validTail(entry.account_tail) || ids.has(entry.id)) throw new Error('invalid');
         ids.add(entry.id);
       }
       if (value.selected !== null && !ids.has(value.selected)) throw new Error('invalid');
@@ -82,32 +86,34 @@ export class WhatsAppAccountStore {
   }
   async list(): Promise<WhatsAppAccountEntry[]> {
     const index = await this.read();
-    return index.accounts.map(entry => ({ id: entry.id, label: entry.label, account_tail: entry.account_tail, selected: entry.id === index.selected }));
+    return index.accounts.map(entry => ({ id: entry.id, label: entry.label, account_tail: entry.account_tail, revision: entry.revision ?? 0 }));
   }
-  async selected(): Promise<WhatsAppAccountEntry | null> { return (await this.list()).find(entry => entry.selected) ?? null; }
   async create(label: string): Promise<WhatsAppAccountEntry> {
     if (!validLabel(label)) throw new Error('whatsapp_account_label_invalid');
     await this.prepare(this.metadata);
     const release = await this.lock(path.join(this.metadata, 'metadata-lock'));
     try {
       const index = await this.read();
-      const entry: DiskEntry = { id: randomUUID(), label: label.trim(), account_tail: '' };
+      const entry = { id: randomUUID(), label: label.trim(), account_tail: '', revision: 0 };
       index.accounts.push(entry);
       await this.write(index);
-      return { ...entry, selected: false };
+      return entry;
     } finally { await release(); }
   }
-  async select(workspaceId: string): Promise<WhatsAppAccountEntry> {
+  async rename(workspaceId: string, label: string, expectedRevision: number): Promise<WhatsAppAccountEntry> {
     if (!validId(workspaceId)) throw new Error('whatsapp_account_invalid');
+    if (!validLabel(label) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('whatsapp_account_label_invalid');
     await this.prepare(this.metadata);
     const release = await this.lock(path.join(this.metadata, 'metadata-lock'));
     try {
       const index = await this.read();
       const entry = index.accounts.find(item => item.id === workspaceId);
       if (!entry) throw new Error('whatsapp_account_invalid');
-      index.selected = workspaceId;
+      if ((entry.revision ?? 0) !== expectedRevision) throw new Error('whatsapp_account_revision_conflict');
+      entry.label = label.trim();
+      entry.revision = expectedRevision + 1;
       await this.write(index);
-      return { ...entry, selected: true };
+      return { id: entry.id, label: entry.label, account_tail: entry.account_tail, revision: entry.revision };
     } finally { await release(); }
   }
   async directory(workspaceId: string): Promise<string> {
@@ -125,29 +131,61 @@ export class WhatsAppAccountStore {
   /** Bind a verified browser identity once; a second workspace cannot bypass its ledger. */
   async bindAccount(workspaceId: string, accountId: string): Promise<void> {
     if (!validId(workspaceId) || typeof accountId !== 'string' || !/^\d+(?::\d+)?@(c\.us|lid)$/.test(accountId)) throw new Error('WhatsApp 账号标识无效。');
+    const holder = this.holders.get(workspaceId);
+    if (!holder) throw new Error('账号环境未持有运行锁。');
+    const key = accountKey(accountId);
+    if (holder.identity && holder.identity !== key) throw new Error('当前登录账号与此环境原账号不同，请使用相应的原账号环境。');
+    if (holder.identity === key) return;
     await this.prepare(this.metadata);
-    const release = await this.lock(path.join(this.metadata, 'metadata-lock'));
+    const existing = await this.read();
+    const existingItem = existing.accounts.find(entry => entry.id === workspaceId);
+    const canonicalDigest = accountDigest(key), originalDigest = accountDigest(accountId);
+    if (!existingItem || existingItem.account_digest && existingItem.account_digest !== canonicalDigest && existingItem.account_digest !== originalDigest) throw new Error('当前登录账号与此环境原账号不同，请使用相应的原账号环境。');
+    if (existing.accounts.some(entry => entry.id !== workspaceId && (entry.account_digest === canonicalDigest || entry.account_digest === originalDigest))) throw new Error('此 WhatsApp 账号已有保存的环境，请选择原环境以保留消息和发送记录。');
+    if (!existingItem.account_digest && existing.accounts.some(entry => entry.id !== workspaceId && entry.account_digest && !entry.identity_version)) throw new Error('旧账号身份尚未核验，请先连接原有账号环境。');
+    const ownership = new WhatsAppAccountOwnership(this.ownershipRoot ?? await ownershipDirectory(), this.lock);
+    const heldIdentity = holder.identityLocks.has(canonicalDigest);
+    const releaseIdentity = heldIdentity ? undefined : await ownership.acquire(accountId, workspaceId, await this.directory(workspaceId));
     try {
-      const index = await this.read();
-      const item = index.accounts.find(entry => entry.id === workspaceId);
-      const digest = createHash('sha256').update(accountId).digest('hex');
-      if (!item) throw new Error('账号环境不存在。');
-      if (item.account_digest && item.account_digest !== digest) throw new Error('当前登录账号与此环境原账号不同，请使用相应的原账号环境。');
-      if (index.accounts.some(entry => entry.id !== workspaceId && entry.account_digest === digest)) throw new Error('此 WhatsApp 账号已有保存的环境，请选择原环境以保留消息和发送记录。');
-      item.account_digest = digest;
-      item.account_tail = accountId.split('@')[0].split(':')[0].slice(-4);
-      await this.write(index);
-    } finally { await release(); }
+      const release = await this.lock(path.join(this.metadata, 'metadata-lock'));
+      try {
+        const index = await this.read();
+        const item = index.accounts.find(entry => entry.id === workspaceId);
+        const digest = accountDigest(key), rawDigest = accountDigest(accountId);
+        if (!item) throw new Error('账号环境不存在。');
+        if (item.account_digest && item.account_digest !== digest && item.account_digest !== rawDigest) throw new Error('当前登录账号与此环境原账号不同，请使用相应的原账号环境。');
+        if (index.accounts.some(entry => entry.id !== workspaceId && (entry.account_digest === digest || entry.account_digest === rawDigest))) throw new Error('此 WhatsApp 账号已有保存的环境，请选择原环境以保留消息和发送记录。');
+        if (!item.account_digest && index.accounts.some(entry => entry.id !== workspaceId && entry.account_digest && !entry.identity_version)) throw new Error('旧账号身份尚未核验，请先连接原有账号环境。');
+        item.account_digest = digest;
+        item.identity_version = 1;
+        item.account_tail = key.split('@')[0].slice(-4);
+        await this.write(index);
+        holder.identity = key;
+        if (releaseIdentity) holder.identityLocks.set(canonicalDigest, releaseIdentity);
+      } finally { await release(); }
+    } catch (error) { await releaseIdentity?.(); throw error; }
   }
   /** Holds the per-user single-consumer mutex until the browser has actually exited. */
   async acquire(workspaceId: string): Promise<() => Promise<void>> {
     if (!validId(workspaceId) || !(await this.read()).accounts.some(item => item.id === workspaceId)) throw new Error('whatsapp_account_invalid');
     await this.prepare(this.metadata);
-    const release = await this.lock(path.join(this.metadata, 'active-owner'));
+    const release = await this.lock(path.join(this.metadata, 'active-owner', workspaceId));
     try {
-      if (!(await this.read()).accounts.some(item => item.id === workspaceId)) throw new Error('whatsapp_account_invalid');
+      const entry = (await this.read()).accounts.find(item => item.id === workspaceId);
+      if (!entry || this.holders.has(workspaceId)) throw new Error('whatsapp_account_invalid');
       await this.profileDirectory(workspaceId);
-      return release;
+      const holder: { identity?: string; identityLocks: Map<string, () => Promise<void>> } = { identityLocks: new Map() };
+      if (entry.account_digest) {
+        const ownership = new WhatsAppAccountOwnership(this.ownershipRoot ?? await ownershipDirectory(), this.lock);
+        const releaseIdentity = await ownership.acquireDigest(entry.account_digest, workspaceId, await this.directory(workspaceId));
+        holder.identityLocks.set(entry.account_digest, releaseIdentity);
+      }
+      this.holders.set(workspaceId, holder);
+      return async () => {
+        for (const [digest, releaseIdentity] of holder.identityLocks) { await releaseIdentity(); holder.identityLocks.delete(digest); }
+        await release();
+        if (this.holders.get(workspaceId) === holder) this.holders.delete(workspaceId);
+      };
     } catch (error) { await release(); throw error; }
   }
 }

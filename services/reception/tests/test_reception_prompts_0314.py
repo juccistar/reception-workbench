@@ -64,7 +64,7 @@ class ReceptionPromptRequestTests(unittest.TestCase):
 
     def decode(self):
         instruction, body = self.requests[-1].rsplit('\ncontext =\n', 1)
-        return instruction, json.loads(body)
+        return instruction, json.loads(body)['context']
 
     def assert_business_rules(self, instruction):
         for section in ('【任务边界】', '【事实与意图】', '【资料用途】', '【商品、图片与供货】', '【对话与进度】', '【来源与输出】'):
@@ -78,7 +78,7 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         for irrelevant in ('商品主图仅供展示和找货', '另一客户的数量、预算', '未入清单的展示图',
                            '【兼容图片输入】', '【本轮图片附件与聊天记录】'):
             self.assertNotIn(irrelevant, instruction)
-        self.assertEqual(prompts.PROMPT_VERSION, 'reception-0.4.0')
+        self.assertEqual(prompts.PROMPT_VERSION, 'reception-0.4.1')
         self.assertNotIn('read_compat', instruction)
         self.assertIn('不调用工具', instruction)
 

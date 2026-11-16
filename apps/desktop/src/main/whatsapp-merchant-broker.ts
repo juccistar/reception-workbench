@@ -9,6 +9,10 @@ import { resolveModelSettingsDirectory } from './model-settings-store';
 import { createWindowsUserEncryption } from './windows-user-encryption';
 
 type Exported = Pick<WhatsAppMerchantContext, 'seller_id' | 'data_root' | 'conversation_id' | 'revision' | 'context'>;
+export type WhatsAppCustomerSearchRequest = { request_id: string; account_id: string; chat_id: string; merchant_id: string; binding_revision: number; query: string; limit: number };
+export type WhatsAppCustomerCandidate = { conversation_id: string; name: string; revision: string };
+export type WhatsAppCustomerSearchExport = { seller_id: string; data_root: string; candidates: WhatsAppCustomerCandidate[] };
+export type WhatsAppCustomerSearchLease = WhatsAppCustomerSearchExport & { format: 'wa-merchant-customer-search-v1'; merchant_id: string; instance_id: string; observed_at_ms: number; expires_at_ms: number };
 type Stored = { version: 1; binding: ActivationBinding; instance: string; key: string; endpoint: string };
 type Options = { directory: string; encryption: CredentialEncryption; timeoutMs?: number };
 const LIMIT = 256 * 1024, RECORD_LIMIT = 8192, MAX_CONNECTIONS = 16, MAX_RECORDS = 128, MAX_NONCES = 4096, LEASE_MS = 5000;
@@ -24,6 +28,19 @@ function requestOf(v: WhatsAppContextRequest, binding: ActivationBinding): Whats
   const id = (s: unknown) => typeof s === 'string' && s.trim().length > 0 && s.length <= 300 && !/[\x00-\x1f\x7f]/.test(s);
   if (!v || Object.keys(v).sort().join(',') !== 'account_id,binding_revision,chat_id,conversation_id,merchant_id,request_id' || !id(v.request_id) || !id(v.account_id) || !id(v.chat_id) || v.merchant_id !== binding.record_id || !(v.conversation_id === null || id(v.conversation_id)) || !Number.isSafeInteger(v.binding_revision) || v.binding_revision < 0) throw new Error('wa_broker_invalid_request');
   return { request_id: v.request_id, account_id: v.account_id, chat_id: v.chat_id, merchant_id: v.merchant_id, conversation_id: v.conversation_id, binding_revision: v.binding_revision };
+}
+function searchRequestOf(v: WhatsAppCustomerSearchRequest, binding: ActivationBinding): WhatsAppCustomerSearchRequest {
+  if (!v || Object.keys(v).sort().join(',') !== 'account_id,binding_revision,chat_id,limit,merchant_id,query,request_id' || typeof v.query !== 'string' || Array.from(v.query).length > 80 || /[\x00-\x1f\x7f-\x9f]/.test(v.query) || !Number.isInteger(v.limit) || v.limit < 1 || v.limit > 25) throw new Error('wa_broker_invalid_request');
+  const checked = requestOf({ request_id: v.request_id, account_id: v.account_id, chat_id: v.chat_id, merchant_id: v.merchant_id, binding_revision: v.binding_revision, conversation_id: null }, binding);
+  return { request_id: checked.request_id, account_id: checked.account_id, chat_id: checked.chat_id, merchant_id: checked.merchant_id, binding_revision: checked.binding_revision, query: v.query, limit: v.limit };
+}
+function searchExported(value: WhatsAppCustomerSearchExport, binding: ActivationBinding, limit: number): WhatsAppCustomerSearchExport {
+  if (!value || value.seller_id !== binding.seller_id || value.data_root !== binding.data_root || !Array.isArray(value.candidates) || value.candidates.length > limit || value.candidates.length > 25) throw new Error('wa_broker_identity');
+  const candidates = value.candidates.map(row => {
+    if (!row || Object.keys(row).sort().join(',') !== 'conversation_id,name,revision' || typeof row.conversation_id !== 'string' || !row.conversation_id.trim() || row.conversation_id.length > 300 || /[\x00-\x1f\x7f-\x9f]/.test(row.conversation_id) || typeof row.name !== 'string' || !row.name.trim() || Array.from(row.name).length > 120 || /[\x00-\x1f\x7f-\x9f]/.test(row.name) || typeof row.revision !== 'string' || !/^[a-f0-9]{64}$/.test(row.revision)) throw new Error('wa_broker_identity');
+    return { conversation_id: row.conversation_id, name: row.name, revision: row.revision };
+  });
+  return { seller_id: value.seller_id, data_root: value.data_root, candidates };
 }
 const bindingHash = (b: ActivationBinding) => hash(JSON.stringify(b));
 const endpointFor = (directory: string, instance: string) => process.platform === 'win32' ? `\\\\.\\pipe\\reception-wa-merchant-${instance}` : path.join(directory, `${instance}.sock`);
@@ -66,8 +83,8 @@ export function createWhatsAppMerchantBroker({ directory, encryption, timeoutMs 
   }
   // validate must check the live merchant service and the authoritative account/chat binding,
   // including its conversation and revision. It runs both before and after every read.
-  async function publishVerifiedMerchant(input: ActivationBinding, readContext: (request: WhatsAppContextRequest) => Promise<Exported>, validate: (request: WhatsAppContextRequest) => void | Promise<void>): Promise<() => Promise<void>> {
-    const binding = bindingOf(input); if (!encryption.isEncryptionAvailable() || typeof readContext !== 'function' || typeof validate !== 'function') throw new Error('wa_broker_unavailable');
+  async function publishVerifiedMerchant(input: ActivationBinding, readContext: (request: WhatsAppContextRequest) => Promise<Exported>, validate: (request: WhatsAppContextRequest) => void | Promise<void>, readSearch?: (request: WhatsAppCustomerSearchRequest) => Promise<WhatsAppCustomerSearchExport>): Promise<() => Promise<void>> {
+    const binding = bindingOf(input); if (!encryption.isEncryptionAvailable() || typeof readContext !== 'function' || typeof validate !== 'function' || (readSearch !== undefined && typeof readSearch !== 'function')) throw new Error('wa_broker_unavailable');
     await directoryCheck(directory, true);
     const instance = hex(16), key = hex(32), endpoint = endpointFor(directory, instance), file = path.join(directory, `${bindingHash(binding)}-${instance}.bin`);
     const record: Stored = { version: 1, binding, instance, key, endpoint }, sockets = new Set<net.Socket>(), nonces = new Map<string, number>(); let closed = false;
@@ -83,14 +100,27 @@ export function createWhatsAppMerchantBroker({ directory, encryption, timeoutMs 
           for (const [nonce, expiry] of nonces) if (expiry < now) nonces.delete(nonce);
           if (nonces.has(envelope.nonce) || nonces.size >= MAX_NONCES) return;
           nonces.set(envelope.nonce, envelope.issued_at_ms + 30000);
-          const req = requestOf(JSON.parse(envelope.body), binding);
+          const decoded = JSON.parse(envelope.body);
+          const isSearch = decoded?.kind === 'customer-search' && Object.keys(decoded).sort().join(',') === 'kind,request';
+          const searchReq = isSearch ? searchRequestOf(decoded.request, binding) : null;
+          const req = searchReq ? requestOf({ request_id: searchReq.request_id, account_id: searchReq.account_id, chat_id: searchReq.chat_id, merchant_id: searchReq.merchant_id, binding_revision: searchReq.binding_revision, conversation_id: null }, binding) : requestOf(decoded, binding);
           const check = () => { if (closed || socket.destroyed || Date.now() >= until) throw new Error('wa_broker_expired'); };
           check(); await deadline(() => validate(req), Math.max(1, until - Date.now())); check();
-          const result = await deadline(() => readContext(req), Math.max(1, until - Date.now())); check();
-          const value = exported(result, binding, req);
-          await deadline(() => validate(req), Math.max(1, until - Date.now())); check();
-          const observed = Date.now();
-          const lease: WhatsAppMerchantContext = { format: 'wa-merchant-context-v1', merchant_id: binding.record_id, ...value, instance_id: instance, observed_at_ms: observed, expires_at_ms: observed + LEASE_MS };
+          let lease: WhatsAppMerchantContext | WhatsAppCustomerSearchLease;
+          if (searchReq) {
+            if (!readSearch) throw new Error('wa_broker_unavailable');
+            const result = await deadline(() => readSearch(searchReq), Math.max(1, until - Date.now())); check();
+            if (!result || Object.keys(result).sort().join(',') !== 'candidates,data_root,seller_id') throw new Error('wa_broker_identity');
+            const value = searchExported(result, binding, searchReq.limit);
+            await deadline(() => validate(req), Math.max(1, until - Date.now())); check();
+            const observed = Date.now();
+            lease = { format: 'wa-merchant-customer-search-v1', merchant_id: binding.record_id, ...value, instance_id: instance, observed_at_ms: observed, expires_at_ms: observed + LEASE_MS };
+          } else {
+            const value = exported(await deadline(() => readContext(req), Math.max(1, until - Date.now())), binding, req); check();
+            await deadline(() => validate(req), Math.max(1, until - Date.now())); check();
+            const observed = Date.now();
+            lease = { format: 'wa-merchant-context-v1', merchant_id: binding.record_id, ...value, instance_id: instance, observed_at_ms: observed, expires_at_ms: observed + LEASE_MS };
+          }
           const body = JSON.stringify(lease), proof = mac(key, `response|${instance}|${bindingHash(binding)}|${envelope.nonce}|${hash(body)}`), wire = JSON.stringify({ body, proof }) + '\n';
           if (Buffer.byteLength(wire) <= LIMIT) socket.end(wire);
         } catch { /* fail closed */ } finally { socket.destroySoon(); }
@@ -101,8 +131,8 @@ export function createWhatsAppMerchantBroker({ directory, encryption, timeoutMs 
     catch (e) { for (const s of sockets) s.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); await unlink(file).catch(() => {}); throw e; }
     return async () => { if (closed) return; closed = true; for (const s of sockets) s.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); try { await directoryCheck(directory, false); const v = await readRecord(file, binding); if (v.key === key && v.instance === instance) await unlink(file); } catch { /* preserve replaced records */ } };
   }
-  async function request(input: ActivationBinding, requestInput: WhatsAppContextRequest): Promise<WhatsAppMerchantContext> {
-    const binding = bindingOf(input), req = requestOf(requestInput, binding), until = Date.now() + timeoutMs;
+  async function exchange(input: ActivationBinding, requestInput: WhatsAppContextRequest | WhatsAppCustomerSearchRequest, search: boolean): Promise<WhatsAppMerchantContext | WhatsAppCustomerSearchLease> {
+    const binding = bindingOf(input), req = search ? searchRequestOf(requestInput as WhatsAppCustomerSearchRequest, binding) : requestOf(requestInput as WhatsAppContextRequest, binding), until = Date.now() + timeoutMs;
     if (!encryption.isEncryptionAvailable()) throw new Error('wa_broker_unavailable');
     await deadline(() => directoryCheck(directory, false), Math.max(1, until - Date.now()));
     const names = (await deadline(() => readdir(directory), Math.max(1, until - Date.now()))).filter(n => n.startsWith(`${bindingHash(binding)}-`) && /^[a-f0-9]{64}-[a-f0-9]{32}\.bin$/.test(n));
@@ -114,19 +144,32 @@ export function createWhatsAppMerchantBroker({ directory, encryption, timeoutMs 
         if (Date.now() >= until) break;
         const socket = net.createConnection(v.endpoint); socket.on('error', () => {});
         try {
-          const nonce = hex(32), body = JSON.stringify(req), issued_at_ms = Date.now(), proof = mac(v.key, `request|${v.instance}|${bindingHash(binding)}|${nonce}|${issued_at_ms}|${hash(body)}`);
+          const nonce = hex(32), body = JSON.stringify(search ? { kind: 'customer-search', request: req } : req), issued_at_ms = Date.now(), proof = mac(v.key, `request|${v.instance}|${bindingHash(binding)}|${nonce}|${issued_at_ms}|${hash(body)}`);
           const pending = message(socket, Math.max(1, until - Date.now())); socket.write(JSON.stringify({ nonce, body, issued_at_ms, proof }) + '\n');
           const response = JSON.parse(await pending);
           if (typeof response.body !== 'string' || !equal(response.proof, mac(v.key, `response|${v.instance}|${bindingHash(binding)}|${nonce}|${hash(response.body)}`))) continue;
-          const lease: WhatsAppMerchantContext = JSON.parse(response.body); exported(lease, binding, req);
-          const now = Date.now(); if (lease.format !== 'wa-merchant-context-v1' || lease.merchant_id !== binding.record_id || lease.instance_id !== v.instance || !Number.isSafeInteger(lease.observed_at_ms) || !Number.isSafeInteger(lease.expires_at_ms) || lease.observed_at_ms > now || lease.expires_at_ms <= now || lease.expires_at_ms - lease.observed_at_ms > 10000 || now >= until) continue;
+          const lease: WhatsAppMerchantContext | WhatsAppCustomerSearchLease = JSON.parse(response.body);
+          if (search) {
+            if (lease.format !== 'wa-merchant-customer-search-v1' || Object.keys(lease).sort().join(',') !== 'candidates,data_root,expires_at_ms,format,instance_id,merchant_id,observed_at_ms,seller_id') continue;
+            searchExported(lease, binding, (req as WhatsAppCustomerSearchRequest).limit);
+          } else {
+            if (lease.format !== 'wa-merchant-context-v1') continue;
+            exported(lease, binding, req as WhatsAppContextRequest);
+          }
+          const now = Date.now(); if (lease.merchant_id !== binding.record_id || lease.instance_id !== v.instance || !Number.isSafeInteger(lease.observed_at_ms) || !Number.isSafeInteger(lease.expires_at_ms) || lease.observed_at_ms > now || lease.expires_at_ms <= now || lease.expires_at_ms - lease.observed_at_ms > 10000 || now >= until) continue;
           return lease;
         } finally { socket.destroy(); }
       } catch { /* invalid or stale instance */ }
     }
     throw new Error('wa_broker_unavailable');
   }
-  return { publishVerifiedMerchant, request };
+  async function request(input: ActivationBinding, req: WhatsAppContextRequest): Promise<WhatsAppMerchantContext> {
+    return await exchange(input, req, false) as WhatsAppMerchantContext;
+  }
+  async function searchCustomers(input: ActivationBinding, req: WhatsAppCustomerSearchRequest): Promise<WhatsAppCustomerSearchLease> {
+    return await exchange(input, req, true) as WhatsAppCustomerSearchLease;
+  }
+  return { publishVerifiedMerchant, request, searchCustomers };
 }
 
 export async function createWindowsWhatsAppMerchantBroker() {

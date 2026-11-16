@@ -11,7 +11,10 @@ from .encoding import failure
 
 class ModelRuntime:
     """A timed-out cleanup keeps its task and slots until it actually exits."""
-    def __init__(self, cleanup_timeout=2):
+    def __init__(self, cleanup_timeout=2, *, budget_directory=None, budget_factory=None):
+        self._budget_directory = budget_directory
+        self._budget_factory = budget_factory
+        self._budget = None
         self._loop = asyncio.new_event_loop()
         self._ready = threading.Event()
         self._lock = threading.Lock()
@@ -42,13 +45,33 @@ class ModelRuntime:
         task_ready = threading.Event()
         abandoned = threading.Event()
         task_holder = []
+        inputs_completed = False
+        def complete_inputs():
+            nonlocal inputs_completed
+            if not inputs_completed:
+                inputs_completed = True
+                if on_complete is not None:
+                    on_complete()
         async def execute():
-            async with self._slots[purpose]:
-                async with self._total:
-                    if heavy:
-                        async with self._heavy:
-                            return await operation()
-                    return await operation()
+            token = None
+            try:
+                if self._budget is None:
+                    from ..model_request_budget import ModelRequestBudget
+                    factory = self._budget_factory or ModelRequestBudget
+                    self._budget = factory(directory=self._budget_directory)
+                token = await self._budget.acquire(purpose, heavy)
+                async with self._slots[purpose]:
+                    async with self._total:
+                        if heavy:
+                            async with self._heavy:
+                                return await operation()
+                        return await operation()
+            finally:
+                try:
+                    complete_inputs()
+                finally:
+                    if token is not None:
+                        self._budget.release(token)
         def start():
             if abandoned.is_set():
                 if on_complete is not None:
@@ -59,8 +82,11 @@ class ModelRuntime:
             task = self._loop.create_task(execute())
             task_holder.append(task)
             def complete(done):
-                if on_complete is not None:
-                    on_complete()
+                try:
+                    complete_inputs()
+                except BaseException as error:
+                    future.set_exception(error)
+                    return
                 if done.cancelled():
                     future.cancel()
                 elif done.exception() is not None:
