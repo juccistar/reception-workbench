@@ -429,6 +429,119 @@ describe('mounted requirement workspace', () => {
 });
 
 describe('manual suggestion and supplement', () => {
+  it('allows a verified live merchant to generate without checking AI on startup', async () => {
+    const bridge = failedAiBridge(); bridge.snapshot.checks.ai.status = 'not_checked'; bridge.details.emma.chat_draft = null;
+    await openApp(bridge);
+    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
+    await waitFor(() => expect(calls(bridge, 'generate_manual_suggestion')).toHaveLength(1));
+    expect(calls(bridge, 'check_ai')).toHaveLength(0);
+  });
+
+  it('reports the requested model failure once, preserves typing, and allows retry', async () => {
+    const bridge = failedAiBridge(); bridge.details.emma.chat_draft = null;
+    const invoke = bridge.invoke.bind(bridge); let attempt = 0;
+    bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => {
+      if (method !== 'generate_manual_suggestion') return invoke<T>(method, params);
+      bridge.calls.push({ method, params });
+      const job: Job = { job_id: `failed-manual-${++attempt}`, kind: 'manual_suggestion', conversation_id: 'emma', case_id: 'case-emma', status: 'failed', stage: 'model', message: '模型不可用', error: { code: 'model_unavailable', message: '模型不可用' }, created_at: Date.now(), started_at: Date.now(), completed_at: Date.now() };
+      bridge.snapshot.jobs.push(job);
+      bridge.emit({ event: 'job.updated', data: clone(job) });
+      return { job_id: job.job_id } as T;
+    };
+    await openApp(bridge);
+    fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
+    const dialog = await screen.findByRole('dialog', { name: 'AI不可用' });
+    fireEvent.click(within(dialog).getByRole('button', { name: '知道了' }));
+    act(() => bridge.emit({ event: 'job.updated', data: clone(bridge.snapshot.jobs[0]) }));
+    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
+    await screen.findByRole('dialog', { name: 'AI不可用' });
+    fireEvent.click(screen.getByRole('button', { name: '知道了' }));
+    fireEvent.change(textarea(), { target: { value: '保留我的正文' } });
+    expect(textarea()).toHaveValue('保留我的正文');
+  });
+
+  it('keeps text typed while polish is running when the model fails', async () => {
+    const originalSubtle = Object.getOwnPropertyDescriptor(globalThis.crypto, 'subtle');
+    Object.defineProperty(globalThis.crypto, 'subtle', { configurable: true, value: webcrypto.subtle });
+    try {
+      const bridge = failedAiBridge(); const invoke = bridge.invoke.bind(bridge);
+      bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => {
+        if (method !== 'generate_manual_suggestion') return invoke<T>(method, params);
+        bridge.calls.push({ method, params });
+        return { job_id: 'polish-failure' } as T;
+      };
+      await openApp(bridge);
+      fireEvent.click(screen.getByRole('button', { name: '润色当前回复' }));
+      await waitFor(() => expect(calls(bridge, 'generate_manual_suggestion')).toHaveLength(1));
+      fireEvent.change(textarea(), { target: { value: '等待期间的新正文' } });
+      const failed: Job = { job_id: 'polish-failure', kind: 'manual_suggestion', conversation_id: 'emma', case_id: 'case-emma', status: 'failed', stage: 'model', message: '模型不可用', error: { code: 'model_auth_error', message: '模型不可用' }, created_at: Date.now(), started_at: Date.now(), completed_at: Date.now() };
+      act(() => bridge.emit({ event: 'job.updated', data: failed }));
+      const dialog = await screen.findByRole('dialog', { name: 'AI不可用' });
+      fireEvent.click(within(dialog).getByRole('button', { name: '知道了' }));
+      expect(textarea()).toHaveValue('等待期间的新正文');
+    } finally {
+      if (originalSubtle) Object.defineProperty(globalThis.crypto, 'subtle', originalSubtle);
+      else Reflect.deleteProperty(globalThis.crypto, 'subtle');
+    }
+  });
+
+  it('reports invalid model requirement output as AI unavailable', async () => {
+    const bridge = failedAiBridge(); bridge.details.emma.chat_draft = null;
+    const invoke = bridge.invoke.bind(bridge);
+    bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => {
+      if (method !== 'generate_manual_suggestion') return invoke<T>(method, params);
+      bridge.calls.push({ method, params });
+      bridge.snapshot.jobs.push({ job_id: 'invalid-model-requirements', kind: 'manual_suggestion', conversation_id: 'emma', case_id: null, status: 'failed', stage: 'model', message: '模型需求格式无效', error: { code: 'invalid_requirement_change', message: '模型需求格式无效' }, created_at: Date.now(), started_at: Date.now(), completed_at: Date.now() });
+      return { job_id: 'invalid-model-requirements' } as T;
+    };
+    await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
+    await screen.findByRole('dialog', { name: 'AI不可用' });
+  });
+  it('does not show an old customer model failure on the newly selected customer', async () => {
+    const bridge = failedAiBridge(); bridge.details.emma.chat_draft = null;
+    const invoke = bridge.invoke.bind(bridge);
+    bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => {
+      if (method !== 'generate_manual_suggestion') return invoke<T>(method, params);
+      bridge.calls.push({ method, params }); return { job_id: 'late-old-customer-failure' } as T;
+    };
+    await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
+    await waitFor(() => expect(calls(bridge, 'generate_manual_suggestion')).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: /Sofia.*Do you have this mug in white/s }));
+    await screen.findByRole('main', { name: 'Sofia 的客户接待' });
+    const failed: Job = { job_id: 'late-old-customer-failure', kind: 'manual_suggestion', conversation_id: 'emma', case_id: null, status: 'failed', stage: 'model', message: '模型不可用', error: { code: 'model_auth_error', message: '模型不可用' }, created_at: Date.now(), started_at: Date.now(), completed_at: Date.now() };
+    bridge.snapshot.jobs.push(failed); act(() => bridge.emit({ event: 'job.updated', data: clone(failed) }));
+    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Emma.*Could you make a sample/s }));
+    await screen.findByRole('main', { name: 'Emma 的客户接待' });
+    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+  });
+  it('does not reinterpret a code-less configuration change as provider unavailability', async () => {
+    const bridge = failedAiBridge(); bridge.details.emma.chat_draft = null;
+    const invoke = bridge.invoke.bind(bridge);
+    bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => {
+      if (method !== 'generate_manual_suggestion') return invoke<T>(method, params);
+      bridge.calls.push({ method, params }); throw new Error('模型配置不可用或已变化，请重新检查配置');
+    };
+    await openApp(bridge); fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
+    await screen.findByText('模型配置不可用或已变化，请重新检查配置');
+    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+  });
+  it.each(['cancelled', 'source_changed', 'model_configuration_stale', 'task_failed'])('does not label %s as AI unavailable', async code => {
+    const bridge = failedAiBridge(); bridge.details.emma.chat_draft = null;
+    const invoke = bridge.invoke.bind(bridge);
+    bridge.invoke = async <T,>(method: ApiMethod, params: Record<string, unknown> = {}): Promise<T> => {
+      if (method !== 'generate_manual_suggestion') return invoke<T>(method, params);
+      bridge.calls.push({ method, params });
+      bridge.snapshot.jobs.push({ job_id: 'other-failure', kind: 'manual_suggestion', conversation_id: 'emma', case_id: null, status: code === 'cancelled' ? 'cancelled' : 'failed', stage: 'complete', message: code, error: { code, message: code }, created_at: Date.now(), started_at: Date.now(), completed_at: Date.now() });
+      return { job_id: 'other-failure' } as T;
+    };
+    await openApp(bridge);
+    fireEvent.click(screen.getByRole('button', { name: '生成回复建议' }));
+    await waitFor(() => expect(calls(bridge, 'list_jobs').length).toBeGreaterThan(0));
+    expect(screen.queryByRole('dialog', { name: 'AI不可用' })).not.toBeInTheDocument();
+  });
   it('keeps an attachment with its original customer when selection changes', async () => {
     const bridge = new FakeBridge();
     const pending = deferred<Supplement | null>();

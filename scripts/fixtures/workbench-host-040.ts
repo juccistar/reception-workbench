@@ -38,6 +38,11 @@ async function start() {
   const env = { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1' };
   client = new ServiceClient(python, ['-I', '-c', pythonGuard, serviceEntry, '--data-dir', path.join(temp, 'data')], root, env);
   (globalThis as any).__injectWindowFixture = () => client!.invoke('_fixture_inject', { conversation_id: 'demo-emma', text: 'I need 100 pieces' });
+  if (process.env.HARNESS_MANUAL_AI_DIRECT === '1') {
+    (globalThis as any).__setWindowAiFailure = (enabled: boolean) => client!.invoke('_fixture_ai_failure', { enabled });
+    (globalThis as any).__getWindowAiStats = () => client!.invoke('_fixture_ai_stats');
+    (globalThis as any).__repeatWindowAiFailure = () => client!.invoke('_fixture_repeat_ai_failure');
+  }
   client.on('event', event => { if (!win.isDestroyed()) win.webContents.send('reception:event', event); });
   bind('reception:invoke', (method: unknown, params: unknown) => {
     if (closing || typeof method !== 'string' || !allowed.has(method) || !api.has(method) || !params || typeof params !== 'object' || Array.isArray(params)) throw new Error('fixture RPC rejected');

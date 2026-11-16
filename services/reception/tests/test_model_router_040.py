@@ -46,6 +46,23 @@ class ModelRouterTest(unittest.TestCase):
         with self.assertRaises(ServiceError):
             self.router.assert_current(snapshot)
 
+    def test_manual_unchecked_keeps_revision_checks_and_automatic_gate(self):
+        self.settings['profiles'][0]['capabilities']['text']['status'] = 'failed'
+        self.write()
+        self.router.configure({'format': 'model-runtime-v1', 'authority_file': str(self.path),
+                               'settings': self.settings, 'credentials': {'p': 'private-key'}})
+        with self.assertRaises(ServiceError) as error:
+            self.router.resolve('reception', ['text'])
+        self.assertEqual(error.exception.code, 'model_not_ready')
+        snapshot = self.router.resolve('reception', ['text', 'single_image'], allow_unchecked=True)
+        self.router.assert_current(snapshot)
+        with self.assertRaises(ServiceError):
+            self.router.resolve('translation', ['text'], allow_unchecked=True)
+        self.settings['profiles'][0]['config_revision'] += 1
+        self.write()
+        with self.assertRaises(ServiceError):
+            self.router.assert_current(snapshot)
+
     def test_capabilities_and_close_fail_closed(self):
         with self.assertRaises(ServiceError):
             self.router.resolve('reception', ['single_image'])

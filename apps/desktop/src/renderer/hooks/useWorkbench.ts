@@ -51,13 +51,16 @@ const generationBlocker = (snapshot: Snapshot | null, detail: ConversationDetail
   if (!executorHealth(snapshot).ready) return `${executorHealth(snapshot).message}，正文仍可编辑保存。`;
   if (!detail) return '请先选择客户。';
   if (!snapshot || (snapshot.app.mode !== 'demo' && !snapshot.app.account_verified)) return '请先核验当前商家身份。';
-  if (!checksReady(snapshot, ['ai'])) {
-    const status = snapshot?.checks.ai.status;
-    if (status === 'running') return '正在检查 AI 回复能力；您仍可直接手写发送。';
-    if (status === 'not_checked' || !status) return '当前工作区尚未检查 AI 回复能力，可在连接与设置中检查；您仍可直接手写发送。';
-    return '本次 AI 回复能力检查未通过，可在连接与设置中查看原因；您仍可直接手写发送。';
-  }
   return '';
+};
+
+const aiFailureCodes = new Set(['model_configuration_invalid', 'model_not_ready', 'model_timeout', 'model_invalid_response', 'model_invalid_input', 'model_network_error', 'model_auth_error', 'model_rate_limited', 'model_unavailable', 'ai_unavailable', 'invalid_ai_output', 'invalid_requirement_change', 'answer_non_json', 'answer_missing', 'answer_schema']);
+const isAiFailure = (failure: unknown) => {
+  if (!failure || typeof failure !== 'object') return false;
+  if ('code' in failure && typeof failure.code === 'string') return aiFailureCodes.has(failure.code);
+  // Electron IPC may retain only the approved message. Configuration changes are
+  // ambiguous without a code and must not be mislabeled as provider failure.
+  return /(?:^|: )(?:模型配置不可用|接待模型尚未配置)$/.test(errorText(failure));
 };
 
 export function useWorkbench(bridge: ReceptionBridge | undefined) {
@@ -83,6 +86,9 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [aiUnavailable, setAiUnavailable] = useState(false);
+  const manualJobs = useRef(new Set<string>());
+  const reportedManualJobs = useRef(new Set<string>());
   useEffect(() => { if (!notice || /失败|未完成|未连接|断开|异常|未知|核查|重试|未保存|尚未确认/.test(notice)) return; const timer = setTimeout(() => setNotice(''), 4500); return () => clearTimeout(timer); }, [notice]);
   const [page, setPage] = useState<Page>('reception');
   const [selection, setSelection] = useState<{ conversationId: string; caseId: string }>({ conversationId: '', caseId: '' });
@@ -159,19 +165,27 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
     if (mounted.current) redraw();
   }, [settleSend]);
 
+  const reportManualFailure = useCallback((job: Job) => {
+    if (manualJobs.current.has(job.job_id) && !reportedManualJobs.current.has(job.job_id) && job.kind === 'manual_suggestion' && job.status === 'failed' && isAiFailure(job.error)) {
+      reportedManualJobs.current.add(job.job_id);
+      if (mounted.current && !closingRef.current && job.conversation_id === selectionRef.current.conversationId) setAiUnavailable(true);
+    }
+  }, []);
+
   const updateJobs = useCallback((incoming: Job[]) => {
     const combined = new Map(jobsRef.current.map(job => [job.job_id, job]));
     for (const job of incoming) {
       const current = combined.get(job.job_id);
       if (!current || !isActive(job) || (isActive(current) && !(current.status === 'running' && job.status === 'queued'))) combined.set(job.job_id, job);
       if (job.case_id && job.conversation_id) caseOwners.current.set(job.case_id, job.conversation_id);
+      reportManualFailure(job);
     }
     jobsRef.current = [...combined.values()].sort((a, b) => b.created_at - a.created_at);
     setGenerationRequests(previous => previous.filter(request => !combined.has(request.job_id)));
     setHistoryRequests(previous => previous.filter(request => !combined.has(request.job_id)));
     setJobs(jobsRef.current);
     syncSends();
-  }, [syncSends]);
+  }, [syncSends, reportManualFailure]);
 
   const mergeDraft = useCallback((result: ConversationDetail) => {
     const key = result.conversation.conversation_id;
@@ -515,9 +529,22 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const runJob = useCallback(async (method: ApiMethod, params: Record<string, unknown> = {}) => action(`${method}:${String(method === 'generate_manual_suggestion' ? params.conversation_id ?? '' : params.case_id ?? params.conversation_id ?? '')}`, async () => {
     const health = executorHealth(snapshotRef.current);
     if (!health.ready) throw new Error(`${health.message}，此任务暂未就绪。`);
-    const ack = await invoke<JobAck & { cancelled?: boolean }>(method, params);
+    let ack: JobAck & { cancelled?: boolean };
+    try { ack = await invoke<JobAck & { cancelled?: boolean }>(method, params); }
+    catch (failure) {
+      if (method === 'generate_manual_suggestion' && isAiFailure(failure)) {
+        if (mounted.current && !closingRef.current && params.conversation_id === selectionRef.current.conversationId) setAiUnavailable(true);
+        return null;
+      }
+      throw failure;
+    }
     if (ack?.cancelled) { setNotice('已取消本次操作。'); return null; }
     if (!ack?.job_id) throw new Error('服务未返回任务编号，不能确认任务已创建。');
+    if (method === 'generate_manual_suggestion') {
+      manualJobs.current.add(ack.job_id);
+      const observed = jobsRef.current.find(job => job.job_id === ack.job_id);
+      if (observed) reportManualFailure(observed);
+    }
     setNotice('任务已提交，处理结果会在运行记录中更新。');
     if (method === 'fill_history' && !jobsRef.current.some(job => job.job_id === ack.job_id)) setHistoryRequests(previous => [...previous, { job_id: ack.job_id, conversation_id: String(params.conversation_id ?? '') }]);
     if ((method === 'generate_draft' || method === 'generate_manual_suggestion') && !jobsRef.current.some(job => job.job_id === ack.job_id)) {
@@ -531,7 +558,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
       setNotice('生成任务已受理，状态同步暂未完成。可刷新运行记录核对原任务，请勿重复提交。');
     }
     return ack;
-  }), [action, invoke, updateJobs]);
+  }), [action, invoke, updateJobs, reportManualFailure]);
 
   const changePreferences = useCallback((value: Partial<Preferences>) => {
     setPreferences(previous => ({ ...previous, ...value }));
@@ -746,7 +773,7 @@ export function useWorkbench(bridge: ReceptionBridge | undefined) {
   const legacyBatchId = editor?.server?.blocked_batch_id ?? editor?.server?.batch_id;
   const legacyPartialBatch = detail?.reply_batches?.find(batch => batch.batch_id === legacyBatchId && batch.status === 'stopped' && batch.accepted > 0) ?? null;
 
-  return { bridge, snapshot, connected, closing, loading, error, notice, setError, setNotice, page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, historyRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, legacyPartialBatch, startNewDraft, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
+  return { bridge, snapshot, connected, closing, loading, error, notice, setError, setNotice, aiUnavailable, dismissAiUnavailable: () => setAiUnavailable(false), page, selection, detail, detailLoading, detailError, editor, supplement, editSupplement, saveSupplement, changeSupplementAttachment, uploadSupplementFiles, pasteSupplementAttachments, jobs, pending, generationRequests, historyRequests, preferences, setFormDirty, changePreferences, refreshSnapshot, loadDetail, markMessagesRead, selectConversation, navigate, invoke, action, mutate, runJob, generate, preview, send, editBody, legacyPartialBatch, startNewDraft, saveDraft, flush, adoptSuggestion, pendingSuggestion, dismissSuggestion: finishSuggestionReview, beginManualEdit, scrollPositions,
     aiReady, aiReceptionReady, executorReady: health.ready, executorMessage: health.message, sendIssue, generationIssue, reconcileOperation,
     unknownOperations: snapshot?.outbox.filter(item => isSendOperation(item) && item.status === 'unknown' && (item.conversation_id === selection.conversationId || caseOwners.current.get(item.case_id) === selection.conversationId)) ?? [],
     canSave: connected && !closing && !!editor?.dirty,

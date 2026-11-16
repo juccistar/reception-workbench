@@ -3,6 +3,7 @@
   const $ = id => document.getElementById(id);
   let token = '', view = null, customer = null, sequence = 0, searchTimer;
   const pending = new Map();
+  const connectionTimer = setTimeout(() => { if (!token) $('empty').textContent = '侧栏连接较慢，请稍后'; }, 8000);
   function clear() {
     view = null; customer = null; clearTimeout(searchTimer);
     for (const item of pending.values()) item.reject(new Error('客户已变更'));
@@ -11,7 +12,7 @@
     $('merchant').replaceChildren(); $('results').replaceChildren(); $('query').value = ''; $('selected').textContent = ''; $('error').textContent = '';
   }
   function request(action, input) {
-    if (!token || !view || pending.size >= 4) return Promise.reject(new Error('侧栏尚未就绪'));
+    if (!token || !view || view.context_status !== 'ready' || pending.size >= 4) return Promise.reject(new Error('侧栏尚未就绪'));
     const request_id = String(++sequence);
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => { pending.delete(request_id); reject(new Error('请求超时')); }, 15000);
@@ -21,7 +22,15 @@
   }
   function render(next) {
     clear(); view = next; $('empty').hidden = true; $('content').hidden = false;
-    $('name').textContent = next.name; $('summary').textContent = next.summary || '暂无摘要'; $('requirements').textContent = next.requirements || '暂无需求摘要';
+    $('name').textContent = next.name;
+    const ready = next.context_status === 'ready';
+    $('details').hidden = !ready;
+    $('basic-merchant').hidden = ready;
+    const merchantName = next.merchants.find(m => m.merchant_id === next.merchant_id)?.name;
+    $('basic-merchant').textContent = `接待商家：${merchantName || '未选择商家'}`;
+    $('context-status').textContent = ready ? '' : next.context_status === 'loading' ? '正在加载客户信息' : '客户信息暂不可用，正在重试';
+    for (const id of ['merchant', 'query', 'save', 'takeover']) $(id).disabled = !ready;
+    $('summary').textContent = next.summary || '暂无摘要'; $('requirements').textContent = next.requirements || '暂无需求摘要';
     const none = document.createElement('option'); none.value = ''; none.textContent = '未选择商家'; $('merchant').append(none);
     for (const merchant of next.merchants) { const option = document.createElement('option'); option.value = merchant.merchant_id; option.textContent = merchant.name; option.disabled = !merchant.available; $('merchant').append(option); }
     $('merchant').value = next.merchant_id || '';
@@ -31,10 +40,14 @@
     $('reception').textContent = paused ? '已暂停' : next.reception_active ? '自动接待中' : '未开启'; $('takeover').textContent = paused ? '恢复接待' : '人工接管';
   }
   function fail(error) { $('error').textContent = error.message || '操作未完成'; }
-  window.__customerPanelBootstrap = value => { if (!token && typeof value === 'string') token = value; };
+  window.__customerPanelBootstrap = value => {
+    if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) return;
+    if (token !== value) { clear(); token = value; }
+    clearTimeout(connectionTimer);
+  };
   window.__customerPanelReceive = raw => {
     let message; try { message = JSON.parse(raw); } catch { return; }
-    if (message.kind === 'clear') { clear(); return; }
+    if (message.kind === 'clear') { clear(); $('empty').textContent = message.status || '正在连接侧栏'; return; }
     if (message.kind === 'view') { render(message.view); return; }
     if (message.kind === 'response') { const item = pending.get(message.request_id); if (!item) return; pending.delete(message.request_id); message.error ? item.reject(new Error(message.error)) : item.resolve(message.result); }
   };

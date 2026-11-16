@@ -59,13 +59,24 @@ class ServiceAttemptPaths(unittest.TestCase):
         self.addCleanup(target.stop)
         self.addCleanup(self.transport.release.set)
 
-    def request(self, kind):
+    def set_capability_status(self, status):
+        import copy
+        import json
+        router = self.service._model_router
+        settings = copy.deepcopy(router._settings)
+        for capability in settings['profiles'][0]['capabilities'].values():
+            capability['status'] = status
+        Path(router._authority).write_text(json.dumps({**settings, 'encrypted_keys': {}}), encoding='utf-8')
+        router.configure({'format': 'model-runtime-v1', 'authority_file': router._authority,
+                          'settings': settings, 'credentials': {'fixture': 'synthetic'}})
+
+    def request(self, kind, suffix=''):
         if kind == 'automatic':
             self.fixture.start_assisted()
             self.fixture.ingest(mid='new-authorized-source', stamp=self.service._started_at_ms + 1)
             return self.service._enqueue('generate_draft', self.fixture.generation_params(), automatic=True)
         params = {'conversation_id': self.fixture.cid, 'case_id': self.fixture.case_id,
-                  'client_request_id': 'request-' + kind}
+                  'client_request_id': 'request-' + kind + suffix}
         if kind == 'polish':
             body = 'Thank you.'
             draft = self.service.save_chat_draft(self.fixture.cid, body, None, 'draft')
@@ -110,6 +121,71 @@ class ServiceAttemptPaths(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         rows = self.service.repo.list('model_attempt_chain_v1')
         self.assertEqual([(row['attempts'], row['status']) for row in rows], [(2, 'completed')])
+
+    def test_manual_generation_uses_saved_route_without_session_check(self):
+        import json
+        import httpx
+        from reception_service.model_providers.transport import ProviderTransport
+        calls = []
+        async def respond(request):
+            calls.append(request)
+            output = {'action': 'ask', 'reply_messages': [{'body': 'Noted.', 'reply_sources': ['synthetic-source']}],
+                      'reply': 'Noted.', 'reply_sources': ['synthetic-source']}
+            return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': json.dumps(output)}}]})
+        self.service._model_router._transport = ProviderTransport(_transport_factory=lambda: httpx.MockTransport(respond))
+        with patch.object(self.service, 'check_ai', side_effect=AssertionError('unexpected AI check'), create=True):
+            for status in ('not_checked', 'failed'):
+                self.set_capability_status(status)
+                for kind in ('suggestion', 'polish'):
+                    with self.subTest(status=status, kind=kind):
+                        self.service.checks['ai']['status'] = status
+                        job = self.fixture.wait_job(self.request(kind, '-' + status))
+                        self.assertEqual(job['status'], 'succeeded', job)
+                        self.assertEqual(self.service.checks['ai']['status'], status)
+        self.assertEqual(len(calls), 4)
+
+    def test_manual_image_request_reaches_provider_with_unchecked_capabilities(self):
+        import json
+        import httpx
+        from reception_service.errors import ServiceError
+        from reception_service.model_providers.transport import ProviderTransport
+        from test_model_inputs_040 import fixture
+        calls = []
+        async def respond(request):
+            calls.append(json.loads(request.content))
+            return httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {'content': '{"reply":"ok"}'}}]})
+        self.service._model_router._transport = ProviderTransport(_transport_factory=lambda: httpx.MockTransport(respond))
+        self.set_capability_status('failed')
+        live = LiveIntegration.__new__(LiveIntegration)
+        live.settings = {}
+        live._query_state = threading.local()
+        live._model_router = self.service._model_router
+        context, photos = fixture()
+        context['task_mode'] = 'manual_suggestion'
+        output, refs = live._business_query('rules', context, photos)
+        self.assertEqual(output['answer']['reply'], 'ok')
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(len(calls), 1)
+        self.assertIn('image_url', str(calls[0]))
+        context['task_mode'] = 'automatic'
+        with self.assertRaises(ServiceError) as error:
+            live._business_query('rules', context, photos)
+        self.assertEqual(error.exception.code, 'model_not_ready')
+        self.assertEqual(len(calls), 1)
+
+    def test_manual_provider_failure_preserves_safe_error(self):
+        import httpx
+        from reception_service.model_providers.transport import ProviderTransport
+        async def respond(request):
+            return httpx.Response(401, json={'error': {'message': 'secret provider detail'}})
+        self.service._model_router._transport = ProviderTransport(_transport_factory=lambda: httpx.MockTransport(respond))
+        self.service.checks['ai']['status'] = 'not_checked'
+        self.set_capability_status('failed')
+        with patch.object(self.service, 'check_ai', side_effect=AssertionError('unexpected AI check'), create=True):
+            job = self.fixture.wait_job(self.request('suggestion'))
+        self.assertEqual(job['status'], 'failed', job)
+        self.assertEqual(job['error']['code'], 'model_auth_error')
+        self.assertNotIn('secret provider detail', str(job))
 
     def test_automatic_claim(self): self.check_path('automatic', False)
     def test_suggestion_claim(self): self.check_path('suggestion', False)

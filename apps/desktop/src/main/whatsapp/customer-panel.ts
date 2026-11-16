@@ -17,7 +17,7 @@ export interface CustomerPanelOptions {
   searchCustomers(input: { merchant_id: string; query: string; chat_id: string; binding_revision: number }): Promise<Customer[]>;
 }
 type Identity = { workspace_id: string; runtime_instance_id: string; account_id: string; connection_epoch: string; chat_id: string; view_revision: number };
-type View = { identity: Identity; name: string; merchants: Array<{ merchant_id: string; name: string; available: boolean }>; merchant_id: string | null; conversation_id: string | null; binding_revision: number; human_owned: boolean; reception_paused: boolean; reception_active: boolean; summary: string; requirements: string };
+type View = { identity: Identity; name: string; merchants: Array<{ merchant_id: string; name: string; available: boolean }>; merchant_id: string | null; conversation_id: string | null; binding_revision: number; human_owned: boolean; reception_paused: boolean; reception_active: boolean; summary: string; requirements: string; context_status: 'loading' | 'unavailable' | 'ready' };
 const BINDING = '__receptionCustomerPanel';
 const MAX_REQUEST = 8192;
 const MAX_RESPONSE = 65536;
@@ -49,12 +49,18 @@ export class CustomerPanelController {
   private generation = 0;
   private revision = 0;
   private fingerprint = '';
+  private emptyStatus = '';
+  private observedEmptyStatus = '正在连接侧栏';
   private view: View | null = null;
   private inflight = 0;
   private candidates = new Set<string>();
   private error = '';
   private listening = false;
   private panelBehaviorReady = false;
+  private contextAttempts = 0;
+  private contextNextAttempt = 0;
+  private contextPending = false;
+  private connectAttempts = 0;
   private readonly onTarget = (target: any) => { if (target === this.target && target.url() !== this.panelUrl()) this.retirePanel(); else if (target.url() === this.panelUrl()) void this.connectPanel(target); };
   private readonly onDestroyed = (target: any) => { if (target === this.target) this.retirePanel(); };
   private readonly onDisconnected = () => { this.retirePanel(); this.browser = undefined; this.listening = false; };
@@ -64,7 +70,7 @@ export class CustomerPanelController {
   async attach(browser: any, page: any, extensionId: string): Promise<void> {
     await this.close();
     if (!browser || !page || !/^[a-p]{32}$/.test(extensionId)) throw new Error('无效的扩展或浏览器');
-    this.browser = browser; this.page = page; this.extensionId = extensionId; this.error = '';
+    this.browser = browser; this.page = page; this.extensionId = extensionId; this.error = ''; this.connectAttempts = 0;
     browser.on('targetcreated', this.onTarget); browser.on('targetchanged', this.onTarget);
     browser.on('targetdestroyed', this.onDestroyed); browser.on('disconnected', this.onDisconnected); this.listening = true;
     const targets = browser.targets().filter((t: any) => t.url() === this.panelUrl());
@@ -108,8 +114,20 @@ export class CustomerPanelController {
   private retirePanel() {
     this.generation++; clearTimeout(this.timer); this.timer = undefined;
     const session = this.session; this.session = undefined; this.target = undefined; this.contextId = 0; this.token = '';
-    this.view = null; this.fingerprint = ''; this.inflight = 0; this.candidates.clear();
+    this.view = null; this.fingerprint = ''; this.emptyStatus = ''; this.observedEmptyStatus = '正在连接侧栏'; this.inflight = 0; this.candidates.clear();
+    // An old read keeps its slot until it actually settles, including after a reconnect.
+    this.contextAttempts = 0; this.contextNextAttempt = 0;
     if (session) { session.removeAllListeners?.(); void session.detach().catch(() => {}); }
+  }
+  private reconnectPanel(target: any) {
+    this.retirePanel();
+    if (!this.browser || target.url() !== this.panelUrl()) return;
+    this.connectAttempts = Math.min(this.connectAttempts + 1, 6);
+    const generation = this.generation;
+    const delay = Math.min(30000, 2000 * 2 ** (this.connectAttempts - 1));
+    this.timer = setTimeout(() => {
+      if (generation === this.generation && this.browser && target.url() === this.panelUrl()) void this.connectPanel(target);
+    }, delay);
   }
   private async connectPanel(target: any) {
     if (!this.browser || target.url() !== this.panelUrl() || target === this.target) return;
@@ -125,8 +143,8 @@ export class CustomerPanelController {
         const c = event.context;
         if (c.origin === `chrome-extension://${this.extensionId}` && c.auxData?.frameId === frameId && c.auxData?.isDefault && c.auxData?.type === 'default') this.contextId = c.id;
       });
-      session.on('Runtime.executionContextDestroyed', (event: any) => { if (event.executionContextId === this.contextId) this.retirePanel(); });
-      session.on('Runtime.executionContextsCleared', () => this.retirePanel());
+      session.on('Runtime.executionContextDestroyed', (event: any) => { if (event.executionContextId === this.contextId) this.reconnectPanel(target); });
+      session.on('Runtime.executionContextsCleared', () => this.reconnectPanel(target));
       session.on('Runtime.bindingCalled', (event: any) => { void this.handleBinding(event, generation); });
       await session.send('Runtime.enable');
       if (!this.contextId || generation !== this.generation || target.url() !== this.panelUrl()) throw new Error('扩展执行上下文不可用');
@@ -135,15 +153,21 @@ export class CustomerPanelController {
       const bootstrap = await session.send('Runtime.evaluate', { contextId: this.contextId, expression: `(async()=>{for(let i=0;i<100;i++){if(typeof window.__customerPanelBootstrap==='function'){window.__customerPanelBootstrap(${JSON.stringify(this.token)});return true}await new Promise(r=>setTimeout(r,50))}throw Error('panel bootstrap timeout')})()`, awaitPromise: true, returnByValue: true });
       if (bootstrap.exceptionDetails || bootstrap.result?.value !== true) throw new Error('侧栏初始化失败');
       if (generation !== this.generation) return;
-      this.error = ''; void this.poll(generation);
-    } catch { if (generation === this.generation) { this.error = '侧栏连接失败'; this.retirePanel(); } }
+      this.error = ''; this.connectAttempts = 0; void this.poll(generation);
+    } catch {
+      if (generation === this.generation) {
+        this.error = '侧栏连接失败'; this.reconnectPanel(target);
+      }
+    }
   }
   private async observe() {
     const before = this.options.getStatus();
     const snapshot = await this.options.readState();
     const chat = await this.options.resolveCurrentChat();
     const after = this.options.getStatus(); const state = snapshot.state;
-    if (!chat || !short(chat.chat_id) || /@g\.us$|@broadcast$/.test(chat.chat_id) || !state?.connected || !state.account_id || !state.connection_epoch || snapshot.runtime_instance_id !== this.options.runtimeInstanceId || snapshot.profile.workspace_id !== this.options.workspaceId || state.workspace_id !== this.options.workspaceId || before.status !== 'ready' || after.status !== 'ready' || before.account_id !== state.account_id || after.account_id !== state.account_id || before.connection_epoch !== state.connection_epoch || after.connection_epoch !== state.connection_epoch) return null;
+    if (!state?.connected || !state.account_id || !state.connection_epoch || snapshot.runtime_instance_id !== this.options.runtimeInstanceId || snapshot.profile.workspace_id !== this.options.workspaceId || state.workspace_id !== this.options.workspaceId || before.status !== 'ready' || after.status !== 'ready' || before.account_id !== state.account_id || after.account_id !== state.account_id || before.connection_epoch !== state.connection_epoch || after.connection_epoch !== state.connection_epoch) { this.observedEmptyStatus = '正在连接侧栏'; return null; }
+    this.observedEmptyStatus = '请选择一个单聊';
+    if (!chat || !short(chat.chat_id) || /@g\.us$|@broadcast$/.test(chat.chat_id)) return null;
     return { chat, snapshot, state };
   }
   private async poll(generation: number) {
@@ -153,29 +177,51 @@ export class CustomerPanelController {
       const binding = observed?.state.bindings.find(b => b.chat_id === observed.chat.chat_id);
       const conversation = observed?.state.conversations.find(c => c.chat_id === observed.chat.chat_id);
       const fingerprint = observed ? JSON.stringify([observed.state.account_id, observed.state.connection_epoch, observed.chat.chat_id, observed.chat.name, binding, conversation, observed.snapshot.merchants, observed.state.default_merchant_id, observed.state.default_revision, observed.state.enabled, observed.state.allowed_merchant_ids, observed.state.model.ready, observed.state.legacy.status]) : '';
-      if (fingerprint !== this.fingerprint || (!!observed && !this.view)) {
+      const emptyStatus = this.observedEmptyStatus;
+      if (fingerprint !== this.fingerprint || (!!observed && !this.view) || (!observed && emptyStatus !== this.emptyStatus)) {
+        this.emptyStatus = observed ? '' : emptyStatus;
         this.fingerprint = fingerprint; this.view = null; this.candidates.clear(); this.revision++;
-        await this.emit({ kind: 'clear' }, generation);
+        this.contextAttempts = 0; this.contextNextAttempt = 0;
+        await this.emit({ kind: 'clear', status: observed ? '正在加载客户信息' : emptyStatus }, generation);
         if (observed) {
           const identity: Identity = { workspace_id: this.options.workspaceId, runtime_instance_id: this.options.runtimeInstanceId, account_id: observed.state.account_id!, connection_epoch: observed.state.connection_epoch!, chat_id: observed.chat.chat_id, view_revision: this.revision };
-          const view: View = { identity, name: observed.chat.name?.trim() || '当前客户', merchants: observed.snapshot.merchants.map(m => ({ merchant_id: m.merchant_id, name: m.name, available: m.available })), merchant_id: binding ? binding.merchant_id : observed.state.default_merchant_id, conversation_id: binding?.conversation_id ?? null, binding_revision: binding?.revision ?? 0, human_owned: !!conversation?.human_owned, reception_paused: !!conversation?.reception_paused, reception_active: !!observed.state.enabled && observed.state.allowed_merchant_ids.includes((binding ? binding.merchant_id : observed.state.default_merchant_id) ?? '') && observed.state.model.ready && observed.state.legacy.status === 'ready', summary: '', requirements: '' };
+          const view: View = { identity, name: observed.chat.name?.trim() || '当前客户', merchants: observed.snapshot.merchants.map(m => ({ merchant_id: m.merchant_id, name: m.name, available: m.available })), merchant_id: binding ? binding.merchant_id : observed.state.default_merchant_id, conversation_id: binding?.conversation_id ?? null, binding_revision: binding?.revision ?? 0, human_owned: !!conversation?.human_owned, reception_paused: !!conversation?.reception_paused, reception_active: !!observed.state.enabled && observed.state.allowed_merchant_ids.includes((binding ? binding.merchant_id : observed.state.default_merchant_id) ?? '') && observed.state.model.ready && observed.state.legacy.status === 'ready', summary: '', requirements: '', context_status: 'loading' };
           this.view = view;
-          const context = await this.options.getContext(identity.chat_id);
-          await this.assertCurrent(identity, generation);
-          if (context.binding_revision !== view.binding_revision) throw new Error('关联已更新');
-          view.summary = context.wa_summary || '';
-          view.requirements = formatRequirements(context.international_background?.requirements || {});
           await this.emit({ kind: 'view', view }, generation);
         }
       }
-    } catch { if (generation === this.generation) { this.view = null; this.fingerprint = ''; await this.emit({ kind: 'clear' }, generation); } }
+      if (this.view && this.view.context_status !== 'ready' && !this.contextPending && Date.now() >= this.contextNextAttempt) void this.loadContext(this.view, generation);
+    } catch { if (generation === this.generation) { this.view = null; this.fingerprint = ''; this.emptyStatus = ''; await this.emit({ kind: 'clear', status: '客户信息暂不可用' }, generation); } }
     finally { if (generation === this.generation && this.session) this.timer = setTimeout(() => void this.poll(generation), 500); }
+  }
+  private async loadContext(view: View, generation: number) {
+    this.contextPending = true;
+    this.contextAttempts = Math.min(this.contextAttempts + 1, 6);
+    const retryDelay = Math.min(30000, 3000 * 2 ** (this.contextAttempts - 1));
+    this.contextNextAttempt = Date.now() + retryDelay;
+    try {
+      const context = await this.options.getContext(view.identity.chat_id);
+      await this.assertCurrent(view.identity, generation);
+      if (context.binding_revision !== view.binding_revision) throw new Error('关联已更新');
+      view.summary = context.wa_summary || '';
+      view.requirements = formatRequirements(context.international_background?.requirements || {});
+      view.context_status = 'ready';
+      await this.emit({ kind: 'view', view }, generation);
+    } catch {
+      if (generation !== this.generation || this.view !== view) return;
+      try { await this.assertCurrent(view.identity, generation); } catch { return; }
+      if (generation !== this.generation || this.view !== view) return;
+      view.context_status = 'unavailable';
+      this.contextNextAttempt = Date.now() + retryDelay;
+      await this.emit({ kind: 'view', view }, generation).catch(() => {});
+    } finally { this.contextPending = false; }
   }
   private async assertCurrent(identity: Identity, generation: number, allowBindingChange = false) {
     if (generation !== this.generation || !this.view || JSON.stringify(identity) !== JSON.stringify(this.view.identity)) throw new Error('客户已变更');
     const observed = await this.observe();
     const binding = observed?.state.bindings.find(b => b.chat_id === identity.chat_id);
-    if (generation !== this.generation || !this.view || JSON.stringify(identity) !== JSON.stringify(this.view.identity) || !observed || observed.chat.chat_id !== identity.chat_id || observed.state.account_id !== identity.account_id || observed.state.connection_epoch !== identity.connection_epoch || (!allowBindingChange && (binding?.revision ?? 0) !== this.view.binding_revision)) {
+    if (generation !== this.generation || !this.view || JSON.stringify(identity) !== JSON.stringify(this.view.identity)) throw new Error('客户已变更');
+    if (!observed || observed.chat.chat_id !== identity.chat_id || observed.state.account_id !== identity.account_id || observed.state.connection_epoch !== identity.connection_epoch || (!allowBindingChange && (binding?.revision ?? 0) !== this.view.binding_revision)) {
       this.view = null; this.fingerprint = ''; await this.emit({ kind: 'clear' }, generation); throw new Error('客户或连接已变更');
     }
   }
@@ -195,6 +241,7 @@ export class CustomerPanelController {
     try {
       const identity = request.identity as Identity;
       await this.assertCurrent(identity, generation);
+      if (this.view?.context_status !== 'ready') throw new Error('客户信息尚未就绪');
       const input = request.input; let result: unknown;
       if (request.action === 'search' && keys(input, ['merchant_id', 'query']) && short(input.merchant_id) && typeof input.query === 'string' && input.query.length <= 80 && this.view!.merchants.some(m => m.merchant_id === input.merchant_id && m.available)) {
         const rows = await this.options.searchCustomers({ merchant_id: input.merchant_id, query: input.query, chat_id: identity.chat_id, binding_revision: this.view!.binding_revision });

@@ -2,7 +2,30 @@
   "version": "0.4.1",
   "date": "2026-11-15",
   "updated": "2026-11-16",
-  "status": "candidate_B_packaged_and_isolated_checks_passed_publication_blocked_authentication",
+  "status": "customer_panel_and_manual_ai_source_built_candidate_pending",
+  "customer_panel_followup": {
+    "date": "2026-11-16",
+    "status": "source_fixed_candidate_window_pending",
+    "diagnosis_report": "artifacts/verification/041-sidepanel-fix-001/diagnosis.json",
+    "baseline_resolver_reproduction": "artifacts/verification/041-sidepanel-fix-001/resolver-shape-baseline.json",
+    "frozen_backend_missing_contact_reproduction": "artifacts/verification/041-sidepanel-fix-001/context-registration-before-fix.json",
+    "exact_live_failure_path_verified": false,
+    "reported_visible_direct_chat": true,
+    "reported_panel_prompt": "请选择一个单聊",
+    "report": "artifacts/verification/041-sidepanel-fix-001/issue.json",
+    "candidate_B_isolated_checks_do_not_cover_reported_live_failure": true,
+    "real_user_profile_or_customer_database_inspected": false,
+    "fixed_resolver_reproduction": "artifacts/verification/041-sidepanel-fix-001/resolver-shape-fixed.json",
+    "desktop_targeted": {
+      "files": 3,
+      "passed": 44,
+      "report": "artifacts/verification/041-sidepanel-fix-001/sidepanel-complete.log"
+    },
+    "resource_tests": {
+      "passed": 2,
+      "report": "artifacts/verification/041-sidepanel-fix-001/resource-targeted.log"
+    }
+  },
   "formal_revision": {
     "date": "2026-11-16",
     "production_build": {
@@ -939,6 +962,7 @@
     "draft_created": false,
     "assets_uploaded": false,
     "blockers": [
+      "candidate_C_package_validation_pending",
       "github_cli_not_authenticated"
     ],
     "known_limitations": [
@@ -1012,5 +1036,91 @@
       "historical": true
     },
     "private_source_pushed": false
+  },
+  "manual_ai_on_demand": {
+    "date": "2026-11-16",
+    "status": "implemented_window_and_candidate_pending",
+    "explicit_manual_suggestion_and_polish_only": true,
+    "startup_check_required": false,
+    "saved_passed_capability_records_required": false,
+    "implicit_preflight_calls": false,
+    "valid_configuration_and_source_revision_checks_preserved": true,
+    "automatic_authorization_unchanged": true,
+    "failure_popup": "AI不可用",
+    "popup_scoped_to_current_requested_customer_and_deduplicated": true,
+    "cancellation_stale_source_and_unrelated_failures_excluded": true,
+    "editor_text_preserved": true,
+    "backend_targeted": {
+      "status": "passed",
+      "full_suite": false,
+      "files": [
+        {
+          "file": "test_model_router_040.py",
+          "passed": true,
+          "exit": 0,
+          "tests": 4,
+          "log": "test_model_router_040.py.log"
+        },
+        {
+          "file": "test_attempt_service_paths_040.py",
+          "passed": true,
+          "exit": 0,
+          "tests": 10,
+          "log": "test_attempt_service_paths_040.py.log"
+        },
+        {
+          "file": "test_conversation_assistance_031.py",
+          "passed": true,
+          "exit": 0,
+          "tests": 13,
+          "log": "test_conversation_assistance_031.py.log"
+        },
+        {
+          "file": "test_model_inputs_040.py",
+          "passed": true,
+          "exit": 0,
+          "tests": 10,
+          "log": "test_model_inputs_040.py.log"
+        },
+        {
+          "file": "test_native_image_requests_041.py",
+          "passed": true,
+          "exit": 0,
+          "tests": 5,
+          "log": "test_native_image_requests_041.py.log"
+        }
+      ],
+      "total": 42
+    },
+    "desktop_targeted": {
+      "file": "renderer-workbench.test.tsx",
+      "passed": 114,
+      "report": "artifacts/verification/041-sidepanel-fix-001/manual-ai-ui.log"
+    },
+    "real_model_calls": 0
+  },
+  "followup_validation": {
+    "typecheck": "passed",
+    "reviewed_prompts": "matched",
+    "full_suite": false,
+    "executor_additional_regression": {
+      "status": "failed_two_assertions_in_30_tests",
+      "report": "artifacts/verification/041-sidepanel-fix-001/execution-final.log",
+      "named_current_and_baseline_rechecks": "both_named_cases_passed_once_per_revision",
+      "classification_report": "artifacts/verification/041-sidepanel-fix-001/execution-finding.json",
+      "scheduler_assertion": "queue_settlement_race_in_unchanged_code",
+      "finalizer_timeout": "root_cause_unconfirmed_not_reproduced_in_named_rechecks",
+      "counted_as_passed": false
+    },
+    "real_customer_messages": 0,
+    "installed": false,
+    "migrated_real_data": false,
+    "private_source_pushed": false,
+    "production_build": {
+      "status": "passed",
+      "command": "node scripts/build.mjs",
+      "date": "2026-11-16",
+      "window_validation": "pending"
+    }
   }
 }

@@ -391,11 +391,11 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
             if batch.get('origin') == 'automatic' and batch.get('status') in ('prepared', 'sending', 'waiting_retry', 'waiting_receipt', 'waiting_sync'):
                 self._stop_reply_batch(batch, '接待模型配置已变化，未提交条目已停止')
 
-    def _freeze_reception_model(self, required_capabilities=('text', 'structure')):
+    def _freeze_reception_model(self, required_capabilities=('text', 'structure'), *, allow_unchecked=False):
         if not self._model_config_valid:
             raise ServiceError('model_configuration_invalid', '模型配置不可用', stage='model_configuration')
         from dataclasses import asdict
-        return asdict(self._model_router.resolve('reception', required_capabilities))
+        return asdict(self._model_router.resolve('reception', required_capabilities, allow_unchecked=allow_unchecked))
 
     def _assert_reception_model(self, frozen):
         if not self._model_config_valid:
@@ -416,7 +416,8 @@ class ReceptionService(ReplyBatchMixin, WhatsAppMerchantContextMixin, WhatsAppMi
         self._assert_reception_model(frozen)
         self._assert_reception_model(actual)
         keys = ('purpose', 'profile_id', 'route_revision', 'config_revision', 'credential_revision', 'capability_revision')
-        if any(frozen.get(key) != actual.get(key) for key in keys):
+        if (any(frozen.get(key) != actual.get(key) for key in keys)
+                or actual.get('allow_unchecked', False) and not frozen.get('allow_unchecked', False)):
             raise ServiceError('model_configuration_stale', '模型配置已变化，请重新生成', stage='model_configuration')
         return copy.deepcopy(actual)
 

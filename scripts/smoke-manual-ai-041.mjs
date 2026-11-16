@@ -1,0 +1,68 @@
+import { _electron as electron } from 'playwright';
+import { build } from 'esbuild';
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const args = new Map();
+for (let index = 2; index < process.argv.length; index += 2) { assert(['--label', '--assets'].includes(process.argv[index]) && process.argv[index + 1] && !args.has(process.argv[index])); args.set(process.argv[index], process.argv[index + 1]); }
+const label = args.get('--label'); assert(/^[a-z0-9][a-z0-9-]{0,60}$/.test(label || ''));
+const output = path.join(root, 'artifacts/verification', `manual-ai-041-${label}`); await mkdir(output);
+const temp = await mkdtemp(path.join(os.tmpdir(), 'arw-manual-ai-window-'));
+const assets = args.has('--assets') ? path.resolve(args.get('--assets')) : path.join(root, 'artifacts/app');
+const report = { status: 'failed', actual_window: false, actual_exe_entry: false, fixture_host: true, production_renderer_and_preload: true, real_service_rpc: true, synthetic_python_integration: true, synthetic_live_ui_projection: true, candidate_assets: args.has('--assets'), real_ai_calls: 0, customer_sends: 0, screenshots: [], checks: {} };
+const env = {};
+for (const [key, value] of Object.entries(process.env)) if (/^(SystemRoot|WINDIR|SystemDrive|PATH|PATHEXT|ComSpec|TEMP|TMP|ProgramFiles|ProgramFiles\(x86\)|ProgramW6432|USERPROFILE|USERNAME|USERDOMAIN|COMPUTERNAME|SESSIONNAME|OS|PROCESSOR_ARCHITECTURE|NUMBER_OF_PROCESSORS|ALLUSERSPROFILE|PUBLIC|HOMEDRIVE|HOMEPATH)$/i.test(key)) env[key] = value;
+Object.assign(env, { HARNESS_ROOT: root, HARNESS_TEMP: temp, HARNESS_ASSETS: assets, HARNESS_PYTHON: path.join(root, 'services/reception/.venv/Scripts/python.exe'), HARNESS_MANUAL_AI_DIRECT: '1', LOCALAPPDATA: path.join(temp, 'local'), APPDATA: path.join(temp, 'roaming'), RECEPTION_MODEL_BUDGET_DIRECTORY: path.join(temp, 'model-budget') });
+const host = path.join(temp, 'host.cjs');
+await build({ entryPoints: [path.join(root, 'scripts/fixtures/workbench-host-040.ts')], outfile: host, bundle: true, platform: 'node', format: 'cjs', target: 'node22', external: ['electron'] });
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const until = async (check, timeout = 30000) => { const end = Date.now() + timeout; do { if (await check()) return; await pause(150); } while (Date.now() < end); throw new Error('Manual AI window condition timed out'); };
+let app;
+try {
+  app = await electron.launch({ executablePath: path.join(root, 'node_modules/electron/dist/electron.exe'), args: [host], cwd: root, env, timeout: 60000 });
+  const page = await app.firstWindow(); report.actual_window = true;
+  const invoke = (method, params = {}) => page.evaluate(({ method, params }) => window.reception.invoke(method, params), { method, params });
+  const detail = () => invoke('get_conversation', { conversation_id: 'demo-emma' });
+  const shot = async name => {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].show());
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const encoded = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage({ stayAwake: true })).toPNG().toString('base64'));
+    await writeFile(path.join(output, name), Buffer.from(encoded, 'base64')); report.screenshots.push(name);
+  };
+  await page.getByRole('button', { name: /Emma Wilson/ }).click();
+  await page.getByRole('main', { name: 'Emma Wilson 的客户接待' }).waitFor();
+  const snapshot = await invoke('get_snapshot'); assert.equal(snapshot.app.mode, 'live'); assert.equal(snapshot.checks.ai.status, 'not_checked');
+  assert.equal(await page.getByRole('dialog', { name: 'AI不可用' }).count(), 0);
+  const editor = page.getByRole('textbox', { name: '回复正文', exact: true });
+  const generate = page.getByRole('button', { name: '生成回复建议', exact: true });
+  await generate.click();
+  await until(async () => (await detail()).manual_suggestion?.status === 'ready');
+  await page.getByRole('region', { name: '待处理回复建议' }).waitFor();
+  await shot('01-direct-suggestion.png'); report.checks.not_checked_generates_without_precheck = true;
+  const body = 'Please keep my draft while the model is unavailable.';
+  await editor.fill(body); await until(async () => (await detail()).chat_draft?.body === body);
+  await app.evaluate(() => globalThis.__setWindowAiFailure(true));
+  await page.getByRole('button', { name: '润色当前回复', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'AI不可用' }); await dialog.waitFor();
+  assert.equal(await editor.inputValue(), body); await shot('02-ai-unavailable.png');
+  await dialog.getByRole('button', { name: '知道了', exact: true }).click();
+  await app.evaluate(() => globalThis.__repeatWindowAiFailure()); await pause(600);
+  assert.equal(await dialog.count(), 0); assert.equal(await editor.inputValue(), body);
+  report.checks.failure_popup_preserves_input_and_is_deduplicated = true;
+  await app.evaluate(() => globalThis.__setWindowAiFailure(false));
+  await page.getByRole('button', { name: '润色当前回复', exact: true }).click();
+  await until(async () => { const value = (await detail()).manual_suggestion; return value?.status === 'ready' && value.mode === 'polish'; });
+  await page.getByRole('region', { name: '待处理回复建议' }).waitFor();
+  await shot('03-retry-recovered.png'); report.checks.dismiss_and_retry_after_actual_failure = true;
+  report.stats = await app.evaluate(() => globalThis.__getWindowAiStats());
+  assert.equal(report.stats.checks, 0); assert(report.stats.generation_attempts >= 3);
+  const child = app.process(); await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  await until(async () => child.exitCode !== null); assert.equal(child.exitCode, 0);
+  assert.equal(JSON.parse(await readFile(path.join(temp, 'normal-shutdown.json'), 'utf8')).service_exited, true);
+  app = undefined; report.checks.normal_shutdown = true; report.status = 'passed';
+} catch (error) { report.error = String(error?.stack || error); process.exitCode = 1; }
+finally { if (app) await app.close().catch(() => {}); await writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n'); await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => {}); }
+console.log(JSON.stringify(report));

@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>客户信息</title><link rel="stylesheet" href="panel.css"><script defer src="panel.js"></script></head>
 <body><header><h1>客户信息</h1><button id="close" aria-label="收起客户侧栏">×</button></header>
-<main><p id="empty" role="status">请选择一个单聊</p><section id="content" hidden>
-<h2 id="name"></h2><p class="muted">WhatsApp · 当前聊天</p>
-<label>接待商家<select id="merchant"></select></label>
+<main><p id="empty" role="status">正在连接侧栏</p><section id="content" hidden>
+<h2 id="name"></h2><p class="muted">WhatsApp · 当前聊天</p><p id="basic-merchant" class="muted"></p><p id="context-status" role="status" class="muted"></p>
+<div id="details" hidden><label>接待商家<select id="merchant"></select></label>
 <label>国际站客户<input id="query" maxlength="80" placeholder="搜索客户名称或买家标识"></label><div id="results"></div><p id="selected" class="muted"></p><button id="save">保存关联</button><p class="muted">更改接待商家后将暂停该客户的自动接待。</p>
 <hr><h3>客户摘要</h3><p id="summary" class="text"></p><hr><h3>需求摘要</h3><p id="requirements" class="text"></p>
-<footer><span id="reception"></span><button id="takeover"></button></footer>
+<footer><span id="reception"></span><button id="takeover"></button></footer></div>
 </section><p id="error" role="alert"></p></main></body></html>

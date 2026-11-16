@@ -194,8 +194,6 @@ class ConversationAssistanceMixin:
                         or draft.get('revision') != input_revision):
                     raise ServiceError('source_changed', '当前回复正文已变化，请保存后重新润色')
             context, fingerprint = self._manual_context(conversation_id, case_id, input_body, input_revision)
-            if self.mode == 'live' and self.checks['ai']['status'] != 'passed':
-                raise ServiceError('ai_capability', '请先检查 AI 接待能力')
             job = {'job_id': new_id('job'), 'kind': 'manual_suggestion', 'conversation_id': conversation_id,
                    'case_id': case_id, 'status': 'queued', 'stage': 'queued', 'message': '等待生成回复建议',
                    'created_at': now_ms(), 'started_at': None, 'completed_at': None, 'automatic': False}
@@ -286,7 +284,7 @@ class ConversationAssistanceMixin:
                     self._charge_usage(ai=True)
             with self._job_phase(job_id, 'identity_ms'):
                 self._ensure_identity(facade)
-            model_snapshot = self._freeze_reception_model() if self.mode == 'live' else None
+            model_snapshot = self._freeze_reception_model(allow_unchecked=True) if self.mode == 'live' else None
             found_product, catalog_product = None, None
             attempt_lifecycle = AttemptLifecycle(self.repo, started, attempt_tokens)
             options = {'on_call_start': attempt_lifecycle, 'cancel_event': self._generation_cancel_event(job_id)}

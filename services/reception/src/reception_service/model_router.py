@@ -94,6 +94,7 @@ class ModelSnapshot:
     credential_revision: int
     capability_revision: int
     required_capabilities: tuple[str, ...]
+    allow_unchecked: bool = False
 
 
 class ModelRouter:
@@ -178,8 +179,8 @@ class ModelRouter:
             self._credentials = dict(credentials)
             return affected
 
-    def resolve(self, purpose, required_capabilities=()):
-        if purpose not in _PURPOSES:
+    def resolve(self, purpose, required_capabilities=(), *, allow_unchecked=False):
+        if purpose not in _PURPOSES or type(allow_unchecked) is not bool or (allow_unchecked and purpose != 'reception'):
             raise _failure()
         try:
             required = tuple(sorted(set(required_capabilities)))
@@ -190,10 +191,10 @@ class ModelRouter:
         with self._lock:
             if self._closed or self._settings is None:
                 raise _failure()
-            profile, revisions = _selected(self._settings, purpose, required)
+            profile, revisions = _selected(self._settings, purpose, () if allow_unchecked else required)
             if profile['profile_id'] not in self._credentials:
                 raise _failure('model_not_ready')
-            snapshot = ModelSnapshot(purpose, profile['profile_id'], *revisions, required)
+            snapshot = ModelSnapshot(purpose, profile['profile_id'], *revisions, required, allow_unchecked)
             self.assert_current(snapshot)
             return snapshot
 
@@ -208,8 +209,9 @@ class ModelRouter:
         with self._lock:
             if self._closed or self._settings is None or self._authority != path:
                 raise _failure('model_configuration_stale')
-            local, local_rev = _selected(self._settings, snapshot.purpose, snapshot.required_capabilities)
-            remote, remote_rev = _selected(authority, snapshot.purpose, snapshot.required_capabilities)
+            required = () if snapshot.allow_unchecked and snapshot.purpose == 'reception' else snapshot.required_capabilities
+            local, local_rev = _selected(self._settings, snapshot.purpose, required)
+            remote, remote_rev = _selected(authority, snapshot.purpose, required)
             expected = (snapshot.route_revision, snapshot.config_revision, snapshot.credential_revision, snapshot.capability_revision)
             fields = ('profile_id', 'protocol', 'base_url', 'model', 'credential_ref', 'has_key')
             if (local_rev != expected or remote_rev != expected or
@@ -220,7 +222,8 @@ class ModelRouter:
             return None
 
     def generate(self, purpose, system_prompt, user_payload, *, images=(), required_capabilities=(),
-                 cancel=None, on_call_start=None, max_output_tokens=8192, deadline=None, _owned_input=None):
+                 cancel=None, on_call_start=None, max_output_tokens=8192, deadline=None, _owned_input=None,
+                 _allow_unchecked=False):
         started = time.monotonic()
         try:
             images = tuple(dict(item) for item in images)
@@ -245,8 +248,8 @@ class ModelRouter:
                 return local_cancel.is_set() or (cancel is not None and cancel.is_set())
         combined_cancel = Cancel()
         with self._lock:
-            snapshot = self.resolve(purpose, required)
-            profile, _ = _selected(self._settings, purpose, snapshot.required_capabilities)
+            snapshot = self.resolve(purpose, required, allow_unchecked=_allow_unchecked)
+            profile, _ = _selected(self._settings, purpose, () if snapshot.allow_unchecked else snapshot.required_capabilities)
             profile = deepcopy(profile)
             key = self._credentials[snapshot.profile_id]
             if self._runtime is None:

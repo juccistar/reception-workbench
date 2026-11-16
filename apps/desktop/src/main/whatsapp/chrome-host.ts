@@ -286,23 +286,31 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
     // WAWebCollections.Chat.getModelsArray() for the same chat collection.
     const readActive = async (): Promise<string | null> => page.evaluate(() => {
       try {
-        const chat = (window as any).require('WAWebCollections').Chat;
-        const newsletter = (window as any).require('WAWebNewsletterCollection').default;
+        const collections = (window as any).require('WAWebCollections');
+        const chat = collections.Chat;
+        // The pinned SDK exposes the channel collection on WAWebCollections.
+        // Older builds exposed a separate default export; an unreadable store is never empty.
+        const newsletter = 'WAWebNewsletterCollection' in collections ? collections.WAWebNewsletterCollection : (window as any).require('WAWebNewsletterCollection').default;
         if (typeof chat?.getModelsArray !== 'function' || typeof newsletter?.getModelsArray !== 'function') return null;
         const chats = chat.getModelsArray(), channels = newsletter.getModelsArray();
         if (!Array.isArray(chats) || !Array.isArray(channels) || channels.some((item: any) => item?.active === true)) return null;
         const active = chats.filter((item: any) => item?.active === true);
         if (active.length !== 1) return null;
-        return typeof active[0]?.id?._serialized === 'string' ? active[0].id._serialized : null;
+        const id = active[0]?.id;
+        const value = id?._serialized ?? id?.$1;
+        if (id?._serialized != null && id?.$1 != null && id._serialized !== id.$1) return null;
+        return typeof value === 'string' ? value : null;
       } catch { return null; }
     });
     try {
       const first = await readActive();
-      if (!this.active(generation, account, epoch) || this.client !== client || !first || !/^\d+(?::\d+)?@(c\.us|lid)$/.test(first)) return null;
+      if (!this.active(generation, account, epoch) || this.client !== client || client.pupPage !== page || !first || !/^\d+(?::\d+)?@(c\.us|lid)$/.test(first)) return null;
       const chat = await client.getChatById(first);
-      if (!this.active(generation, account, epoch) || this.client !== client || !chat || chat.isGroup !== false || serial(chat.id) !== first) return null;
+      const chatId = chat?.id;
+      const resolvedId = typeof chatId === 'string' ? chatId : (chatId?._serialized ?? chatId?.$1);
+      if (!this.active(generation, account, epoch) || this.client !== client || client.pupPage !== page || !chat || chat.isGroup !== false || resolvedId !== first || (chatId?._serialized != null && chatId?.$1 != null && chatId._serialized !== chatId.$1)) return null;
       const second = await readActive();
-      if (!this.active(generation, account, epoch) || this.client !== client || page.isClosed() || !this.allowedPage(page.url()) || second !== first) return null;
+      if (!this.active(generation, account, epoch) || this.client !== client || client.pupPage !== page || page.isClosed() || !this.allowedPage(page.url()) || second !== first) return null;
       return { chat_id: first, ...(typeof chat.name === 'string' && chat.name.trim() ? { name: chat.name } : {}) };
     } catch { return null; }
   }

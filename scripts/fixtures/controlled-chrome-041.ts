@@ -39,11 +39,10 @@ class ControlledClient extends EventEmitter {
     });
     await this.pupPage.goto('https://web.whatsapp.com/', { waitUntil: 'domcontentloaded' });
     await this.pupPage.evaluate(() => {
-      const rows = [{ id: { _serialized: '10000001@c.us' }, name: '合成客户甲' }, { id: { _serialized: '10000002@c.us' }, name: '合成客户乙' }];
-      (window as any).__fixtureActiveChat = rows[0].id._serialized;
+      const rows = [{ id: { _serialized: '10000001@c.us' }, name: '合成客户甲' }, { id: { $1: '10000002@c.us' }, name: '合成客户乙' }];
+      (window as any).__fixtureActiveChat = '10000001@c.us';
       (window as any).require = (name: string) => {
-        if (name === 'WAWebCollections') return { Chat: { getModelsArray: () => rows.map(row => ({ ...row, active: row.id._serialized === (window as any).__fixtureActiveChat })) } };
-        if (name === 'WAWebNewsletterCollection') return { default: { getModelsArray: () => [] } };
+        if (name === 'WAWebCollections') return { Chat: { getModelsArray: () => rows.map(row => ({ ...row, active: (row.id._serialized ?? row.id.$1) === (window as any).__fixtureActiveChat })) }, WAWebNewsletterCollection: { getModelsArray: () => [] } };
         throw new Error('Unknown fixture module');
       };
     });
