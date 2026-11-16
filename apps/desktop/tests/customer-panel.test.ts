@@ -80,6 +80,17 @@ describe('private customer panel bridge', () => {
     expect(f.messages.at(-1).result).toHaveLength(25);
     await f.controller.close();
   });
+  it('keeps an explicitly unassigned customer separate from the default merchant for new contacts', async () => {
+    const f = fixture();
+    const snapshot = await f.options.readState();
+    snapshot.state.enabled = true; snapshot.state.allowed_merchant_ids = ['merchant']; snapshot.state.model.ready = true;
+    snapshot.state.bindings = [{ chat_id: 'a@c.us', merchant_id: null, conversation_id: null, revision: 0 }];
+    f.options.readState.mockResolvedValue(snapshot);
+    await f.controller.poll(0);
+    const view = f.messages.find(m => m.kind === 'view').view;
+    expect(view.merchant_id).toBeNull(); expect(view.reception_active).toBe(false);
+    await f.controller.close();
+  });
   it('waits for the extension behavior before first open and can reopen after its worker sleeps', async () => {
     const f = fixture(); const order: string[] = [];
     const browserSession = { send: vi.fn(async (method: string) => { if (method === 'Extensions.triggerAction') { order.push('open'); return {}; } return { targetInfos: [{ type: 'tab', targetId: 'tab' }, { type: 'page', targetId: 'page', parentId: 'tab' }] }; }), detach: vi.fn(async () => {}) };

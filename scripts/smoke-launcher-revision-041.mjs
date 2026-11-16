@@ -87,6 +87,7 @@ try {
   await app.evaluate((_, p) => globalThis.chromeFixture.screenshot(p.id, p.file), { id: a, file: path.join(output, '06-native-customer-panel.png') }); report.screenshots.push('06-native-customer-panel.png');
   report.checks.two_independent_browsers_and_native_panels = true;
   report.checks.website_has_no_business_binding = true;
+  await until(async () => (await panel(a)).merchants.some(row => row.id === seed.merchants[0].id && !row.disabled));
   await interact(a, 'merchant', seed.merchants[0].id);
   await interact(a, 'query', '合成');
   await until(async () => (await panel(a)).results.includes('合成国际站客户'));

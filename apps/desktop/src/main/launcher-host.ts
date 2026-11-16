@@ -102,7 +102,7 @@ export async function runLauncher(): Promise<void> {
                 const snapshot = await manager.detail(runtime.workspaceId);
                 const state = snapshot.state;
                 const binding = state?.bindings.find(item => item.chat_id === chatId);
-                const merchantId = binding?.merchant_id ?? state?.default_merchant_id;
+                const merchantId = binding ? binding.merchant_id : state?.default_merchant_id;
                 if (!state?.connected || !state.account_id || !merchantId || !binding?.conversation_id) return context;
                 const merchant = (await candidates()).find(item => item.record_id === merchantId && item.verified_at > 0);
                 if (!merchant) return context;

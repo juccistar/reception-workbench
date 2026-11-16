@@ -32,7 +32,7 @@ export class WhatsAppAccountStore {
   private readonly lock: Lock;
   private readonly ownershipRoot: string | undefined;
   private readonly holders = new Map<string, { identity?: string; identityLocks: Map<string, () => Promise<void>> }>();
-  constructor(root: string, lock: Lock = key => acquireMerchantRegistryMutex(key, 1000), ownershipRoot?: string) {
+  constructor(root: string, lock: Lock = key => acquireMerchantRegistryMutex(key, /[\\/]metadata-lock$/.test(key) ? 10000 : 1000), ownershipRoot?: string) {
     if (!path.isAbsolute(root) || path.resolve(root) !== root || root === path.parse(root).root || /^(?:\\\\|\/\/)/.test(root) || /[\x00-\x1f]/.test(root)) throw new Error('whatsapp_account_path_invalid');
     this.metadata = path.join(root, 'ARWData', 'whatsapp');
     this.profiles = path.join(root, 'ARWBrowser', 'wa');
