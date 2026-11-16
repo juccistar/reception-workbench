@@ -176,5 +176,7 @@ export function createWhatsAppMerchantBroker({ directory, encryption, timeoutMs 
 
 export async function createWindowsWhatsAppMerchantBroker() {
   const models = await resolveModelSettingsDirectory();
-  return createWhatsAppMerchantBroker({ directory: path.join(path.dirname(models), 'whatsapp-merchant-broker'), encryption: createWindowsUserEncryption() });
+  // Include Windows DPAPI cold startup in the bounded source deadline; the
+  // response lease and both live-source checks retain their original limits.
+  return createWhatsAppMerchantBroker({ directory: path.join(path.dirname(models), 'whatsapp-merchant-broker'), encryption: createWindowsUserEncryption(), timeoutMs: 8000 });
 }

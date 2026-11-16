@@ -25,9 +25,11 @@ const shim = path.join(temp, 'known-folder.ts');
 await writeFile(shim, `export async function resolveWindowsUserLocalAppData() { return ${JSON.stringify(local)}; }\n`, { flag: 'wx' });
 const fixture = path.join(temp, 'host.cjs');
 const controlled = path.join(root, 'scripts/fixtures/controlled-chrome-041.ts');
+const panelDiagnostics = path.join(root, 'scripts/fixtures/customer-panel-diagnostics-041.ts');
 await build({ entryPoints: [path.join(root, 'scripts/fixtures/launcher-revision-041.ts')], outfile: fixture, bundle: true, platform: 'node', format: 'cjs', target: 'node22', external: ['electron', 'whatsapp-web.js', 'puppeteer'], define: { __dirname: JSON.stringify(path.join(assets, 'main')) }, plugins: [{ name: 'isolated-controlled-accounts', setup(builder) {
   builder.onResolve({ filter: /(?:^|\/)windows-user-directories$/ }, args => args.importer.replaceAll('\\', '/').endsWith('/whatsapp/chrome-host.ts') ? undefined : { path: shim });
   builder.onResolve({ filter: /(?:^|\/)whatsapp\/chrome-host$/ }, args => path.resolve(args.importer).toLowerCase() === controlled.toLowerCase() ? undefined : { path: controlled });
+  builder.onResolve({ filter: /(?:^|\/)whatsapp\/customer-panel$/ }, args => path.resolve(args.importer).toLowerCase() === panelDiagnostics.toLowerCase() ? undefined : { path: panelDiagnostics });
 } }] });
 const report = { status: 'failed', production_launcher_host: true, production_preload_renderer: true, production_account_service: true, frozen_backend: !!resources, actual_release_exe_entry: false, real_system_chrome: true, native_panel: true, synthetic_sdk_and_customers: true, chrome_network_requests_fulfilled_locally: true, known_folder_isolated: true, real_account: false, model_calls: 0, customer_sends: 0, screenshots: [], checks: {} };
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -36,7 +38,7 @@ let app;
 try {
   app = await electron.launch({ executablePath: path.join(root, 'node_modules/electron/dist/electron.exe'), args: [fixture], cwd: root, env, timeout: 90000 });
   const page = await app.firstWindow();
-  const shot = async name => { await page.screenshot({ path: path.join(output, name), animations: 'disabled' }); report.screenshots.push(name); };
+  const shot = async name => { const encoded = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString('base64')); await writeFile(path.join(output, name), Buffer.from(encoded, 'base64')); report.screenshots.push(name); };
   const panel = id => app.evaluate((_, id) => globalThis.chromeFixture.panel(id), id);
   const interact = (id, action, value) => app.evaluate((_, p) => globalThis.chromeFixture.interact(p.id, p.action, p.value), { id, action, value });
   await page.getByText('还没有账号', { exact: true }).waitFor();
@@ -124,6 +126,6 @@ try {
   await app.evaluate(() => globalThis.quitProbe()).catch(() => {}); await exited;
   assert.equal(process.exitCode, 0); app = undefined;
   report.checks.normal_shutdown = true; report.status = 'passed';
-} catch (error) { report.error = String(error?.stack || error); if (app) { report.browser_diagnostics = await app.evaluate(() => globalThis.chromeFixture?.diagnostics()).catch(() => null); report.account_diagnostics = await (await app.firstWindow()).evaluate(() => window.launcher.getWhatsAppAccounts()).catch(() => null); } process.exitCode = 1; }
+} catch (error) { report.error = String(error?.stack || error); if (app) { report.browser_diagnostics = await app.evaluate(() => globalThis.chromeFixture?.diagnostics()).catch(() => null); report.account_diagnostics = await (await app.firstWindow()).evaluate(() => window.launcher.getWhatsAppAccounts()).catch(() => null); report.panel_diagnostics = await app.evaluate(() => globalThis.panelDiagnostics?.()).catch(() => null); report.panel_dom = await app.evaluate(async () => Promise.all(globalThis.chromeFixture.diagnostics().map(async row => ({ workspace: row.workspace, state: await globalThis.chromeFixture.panel(row.workspace).catch(error => ({ error: String(error) })) })))).catch(() => null); } process.exitCode = 1; }
 finally { if (app) { await app.evaluate(() => globalThis.quitProbe()).catch(() => {}); await app.close().catch(() => {}); } await writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n', { flag: 'wx' }); }
 console.log(JSON.stringify(report));

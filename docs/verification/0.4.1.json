@@ -47,7 +47,10 @@
         "artifacts/verification/launcher-revision-041-source-002/report.json",
         "artifacts/verification/launcher-revision-041-source-003/report.json",
         "artifacts/verification/launcher-revision-041-source-004/report.json",
-        "artifacts/verification/launcher-revision-041-source-005/report.json"
+        "artifacts/verification/launcher-revision-041-source-005/report.json",
+        "artifacts/verification/launcher-revision-041-source-006/report.json",
+        "artifacts/verification/launcher-revision-041-source-007/report.json",
+        "artifacts/verification/launcher-revision-041-source-008/report.json"
       ],
       "first_four_screenshots_viewed": true,
       "extension_readiness_fix": "pending_actual_window_recheck",
@@ -75,7 +78,27 @@
       "real_account": false
     },
     "identity_metadata_wait_ms": 10000,
-    "long_lifetime_owner_lock_wait_ms": 1000
+    "long_lifetime_owner_lock_wait_ms": 1000,
+    "broker_cold_start": {
+      "real_windows_dpapi_ms": 2314,
+      "synthetic_roundtrip_ms": 2326,
+      "cached_roundtrip_ms": 2,
+      "windows_source_deadline_ms": 8000
+    },
+    "message_image_followup": {
+      "reported_status": "loading_in_screenshot_no_failure_receipt",
+      "product_images_visible": 5,
+      "exact_live_failure_cause_verified": false,
+      "source_defect": "direct_known_platform_bucket_rejected_while_downloader_already_accepts_same_bucket_as_redirect",
+      "scope": "align_only_exact_existing_bucket",
+      "targeted_tests": {
+        "test_photo_source": 14,
+        "test_message_photos": 17,
+        "test_image_assets": 13
+      },
+      "real_customer_sqlite_read": false,
+      "live_task_details_unavailable": true
+    }
   },
   "branch": "feat/whatsapp-chrome-0.4.1",
   "base_commit": "626fe07",

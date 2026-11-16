@@ -44,7 +44,7 @@ def _url(content):
         if (parsed.scheme != 'https' or not host or parsed.username is not None or parsed.password is not None
                 or parsed.port not in (None, 443) or parsed.fragment
                 or not re.fullmatch(r'[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?)*', host)
-                or not (host == 'clouddisk.alibaba.com' or host == 'alicdn.com' or host.endswith('.alicdn.com'))):
+                or not (host in ('clouddisk.alibaba.com', 'hz-icbuim-file.oss-cn-beijing.aliyuncs.com', 'alicdn.com') or host.endswith('.alicdn.com'))):
             _fail()
     except ValueError:
         _fail()

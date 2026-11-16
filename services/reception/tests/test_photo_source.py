@@ -160,6 +160,16 @@ class PhotoSourceTests(unittest.TestCase):
             page['messages'].insert(0, dict(senderAliId='2', timestamp=900, content='earlier', messageId='earlier'))
         self.assertEqual(self.lookup()['resource_url'], URL)
 
+    def test_direct_known_platform_bucket_matches_the_downloaders_existing_redirect_allowlist(self):
+        url = 'https://hz-icbuim-file.oss-cn-beijing.aliyuncs.com/owned-photo.png?signature=synthetic'
+        self.aimode['messages'][0]['content'] = '[image] ' + url
+        self.assertEqual(self.lookup()['resource_url'], url)
+        for untrusted in ('https://other-bucket.oss-cn-beijing.aliyuncs.com/photo.png',
+                          'https://hz-icbuim-file.oss-cn-beijing.aliyuncs.com.evil.example/photo.png'):
+            self.aimode['messages'][0]['content'] = '[image] ' + untrusted
+            with self.assertRaises(ServiceError):
+                self.lookup()
+
     def test_valid_cdn(self):
         self.aimode['messages'][0]['content'] = '[image]https://img.alicdn.com/path'
         self.assertEqual(self.lookup()['resource_url'], 'https://img.alicdn.com/path')
