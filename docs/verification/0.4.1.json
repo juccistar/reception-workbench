@@ -18,13 +18,15 @@
     "fixed_resolver_reproduction": "artifacts/verification/041-sidepanel-fix-001/resolver-shape-fixed.json",
     "desktop_targeted": {
       "files": 3,
-      "passed": 44,
-      "report": "artifacts/verification/041-sidepanel-fix-001/sidepanel-complete.log"
+      "passed": 46,
+      "report": "artifacts/verification/041-sidepanel-fix-001/sidepanel-ready-final.log"
     },
     "resource_tests": {
       "passed": 2,
       "report": "artifacts/verification/041-sidepanel-fix-001/resource-targeted.log"
-    }
+    },
+    "failed_source_window": "artifacts/verification/launcher-revision-041-panel-fix-source-001/report.json",
+    "extension_startup_correction": "wait_for_extension_APIs_and_keep_attached_bridge_when_first_action_is_delayed"
   },
   "formal_revision": {
     "date": "2026-11-16",
@@ -1122,5 +1124,14 @@
       "date": "2026-11-16",
       "window_validation": "pending"
     }
+  },
+  "manual_ai_window_source": {
+    "status": "passed",
+    "report": "artifacts/verification/manual-ai-041-source-001/report.json",
+    "screenshots_viewed": 3,
+    "actual_exe_entry": false,
+    "synthetic_live_ui_projection": true,
+    "model_checks": 0,
+    "generation_attempts": 3
   }
 }

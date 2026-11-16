@@ -127,7 +127,8 @@ export async function runLauncher(): Promise<void> {
             controller = panel;
             panels.set(runtime.workspaceId, panel);
             await panel.attach(browser, page, extensionId);
-            await panel.open();
+            // A delayed first action must not discard the attached customer bridge.
+            await panel.open().catch(() => {});
           },
           onOpen: async () => { await controller?.open(); },
           onBrowserClosed: async () => {

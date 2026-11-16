@@ -203,12 +203,33 @@ describe('private customer panel bridge', () => {
   it('waits for the extension behavior before first open and can reopen after its worker sleeps', async () => {
     const f = fixture(); const order: string[] = [];
     const browserSession = { send: vi.fn(async (method: string) => { if (method === 'Extensions.triggerAction') { order.push('open'); return {}; } return { targetInfos: [{ type: 'tab', targetId: 'tab' }, { type: 'page', targetId: 'page', parentId: 'tab' }] }; }), detach: vi.fn(async () => {}) };
-    const waitForTarget = vi.fn(async () => ({ worker: async () => ({ evaluate: async () => { order.push('ready'); } }) }));
+    const waitForTarget = vi.fn(async () => ({ worker: async () => ({ evaluate: async () => { order.push('ready'); return true; } }) }));
     f.controller.browser = { targets: () => [], waitForTarget, target: () => ({ createCDPSession: async () => browserSession }) };
     f.controller.page = { createCDPSession: async () => ({ send: async () => ({ targetInfo: { targetId: 'page' } }), detach: async () => {} }) };
     await f.controller.open(); await f.controller.open();
     expect(order).toEqual(['ready', 'open', 'open']); expect(waitForTarget).toHaveBeenCalledOnce();
     await f.controller.close();
+  });
+  it('waits for extension APIs that appear after the worker target exists', async () => {
+    vi.useFakeTimers(); const f = fixture(); const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'chrome');
+    const configure = vi.fn(async () => {});
+    Object.defineProperty(globalThis, 'chrome', { configurable: true, writable: true, value: undefined });
+    const browserSession = { send: vi.fn(async (method: string) => method === 'Target.getTargets' ? { targetInfos: [{ type: 'tab', targetId: 'tab' }, { type: 'page', targetId: 'page', parentId: 'tab' }] } : {}), detach: vi.fn(async () => {}) };
+    f.controller.browser = { targets: () => [], waitForTarget: async () => ({ worker: async () => ({ evaluate: async (fn: () => Promise<boolean>) => fn() }) }), target: () => ({ createCDPSession: async () => browserSession }) };
+    f.controller.page = { createCDPSession: async () => ({ send: async () => ({ targetInfo: { targetId: 'page' } }), detach: async () => {} }) };
+    try {
+      const opening = f.controller.open();
+      setTimeout(() => { (globalThis as any).chrome = { sidePanel: { setPanelBehavior: configure } }; }, 150);
+      await vi.advanceTimersByTimeAsync(300); await opening;
+      expect(configure).toHaveBeenCalledOnce(); expect(f.controller.panelBehaviorReady).toBe(true);
+    } finally { await f.controller.close(); if (descriptor) Object.defineProperty(globalThis, 'chrome', descriptor); else delete (globalThis as any).chrome; vi.useRealTimers(); }
+  });
+  it('still triggers the configured extension action when worker API inspection is transiently unavailable', async () => {
+    const f = fixture(); const send = vi.fn(async (method: string) => method === 'Target.getTargets' ? { targetInfos: [{ type: 'tab', targetId: 'tab' }, { type: 'page', targetId: 'page', parentId: 'tab' }] } : {});
+    f.controller.browser = { targets: () => [], waitForTarget: async () => ({ worker: async () => ({ evaluate: async () => { throw new Error('transient worker context'); } }) }), target: () => ({ createCDPSession: async () => ({ send, detach: async () => {} }) }) };
+    f.controller.page = { createCDPSession: async () => ({ send: async () => ({ targetInfo: { targetId: 'page' } }), detach: async () => {} }) };
+    await f.controller.open(); expect(send).toHaveBeenCalledWith('Extensions.triggerAction', { id: 'a'.repeat(32), targetId: 'tab' });
+    expect(f.controller.panelBehaviorReady).toBe(false); await f.controller.close();
   });
   it('does not trigger an already visible extension panel', async () => {
     const f = fixture(); const create = vi.fn();

@@ -85,9 +85,21 @@ export class CustomerPanelController {
       const workerTarget = await browser.waitForTarget((target: any) => target.type() === 'service_worker' && target.url() === `chrome-extension://${this.extensionId}/background.js`, { timeout: 10000 });
       const worker = await workerTarget.worker();
       if (!worker || browser !== this.browser) throw new Error('侧栏尚未就绪');
-      await worker.evaluate(async () => { await (globalThis as any).chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }); });
+      const configured = await worker.evaluate(async () => {
+        for (let attempt = 0; attempt < 100; attempt++) {
+          const sidePanel = (globalThis as any).chrome?.sidePanel;
+          if (typeof sidePanel?.setPanelBehavior === 'function') {
+            await sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+            return true;
+          }
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        return false;
+      }).catch(() => false);
       if (browser !== this.browser) throw new Error('浏览器已变化');
-      this.panelBehaviorReady = true;
+      // The background script may already have configured the action even when
+      // its transient worker execution context cannot yet expose extension APIs.
+      this.panelBehaviorReady = configured === true;
     }
     const browserSession = await this.browser.target().createCDPSession();
     const pageSession = await this.page.createCDPSession();
