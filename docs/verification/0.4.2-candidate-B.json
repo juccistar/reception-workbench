@@ -2,7 +2,7 @@
   "version": "0.4.2",
   "candidate": "B",
   "date": "2026-11-17",
-  "status": "verified_waiting_github_authentication",
+  "status": "verified_publication_blocked_not_authenticated",
   "output": "relase/reception-0.4.2-release-B-20261117",
   "baseline_commit": "1c56ea561d88e12813c88b4133758ac5e6372378",
   "package_commit": "3ca3714f1db43c1370dc0967daa4a2c40c517feb",
@@ -98,8 +98,14 @@
     "repository": "juccistar/reception-workbench-releases",
     "tag": "v0.4.2",
     "authorized": true,
-    "cli_authentication": "official_device_login_retry_pending",
-    "authentication_retry": { "attempt": 2, "method": "official_cli_web_device_flow", "status": "pending" },
+    "cli_authentication": "not_logged_in_device_flow_expired",
+    "active_device_flow": false,
+    "authentication_retry": {
+      "attempt": 2,
+      "method": "official_cli_web_device_flow",
+      "status": "failed_expired_token",
+      "reason": "GitHub returned: This device_code has expired. Subsequent CLI auth status still reports not logged in. No authorization completion is inferred."
+    },
     "authentication_transport_probe": {
       "report": "artifacts/verification/publish-042-B-20261117/oauth-transport-001/report.json",
       "requests": 4,
@@ -107,6 +113,7 @@
       "interpretation": "HTTP responses were received; this does not prove the valid authentication flow or a network fix. No global network setting was changed."
     },
     "authentication_failure": {
+      "attempt": 1,
       "stage": "oauth_access_token_exchange",
       "endpoint": "https://github.com/login/oauth/access_token",
       "reason": "Connection read timed out; CLI auth status remains not logged in. Web authorization completion cannot be inferred from this failure.",
