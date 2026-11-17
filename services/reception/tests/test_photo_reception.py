@@ -190,14 +190,16 @@ class PhotoReceptionTests(unittest.TestCase):
         self.assertEqual({row['role'] for row in refs}, {'buyer', 'seller'})
         self.assertEqual(len(self.inputs[-1]), 6)
 
-    def test_ambiguous_buyer_images_are_not_prepared_for_model(self):
+    def test_new_buyer_images_are_prepared_for_model(self):
         with patch.object(self.service, '_queue_recent_photos', return_value=None):
             self.ingest('photo-2', stamp=1900000000001)
-        with patch.object(self.service.integrations, 'load_photo') as loaded:
+        load = self.service.integrations.load_photo
+        with patch.object(self.service.integrations, 'load_photo', wraps=load) as loaded:
             self.completed(self.generate_ack())
-        loaded.assert_not_called()
-        self.assertEqual(self.inputs[-1], [])
-        self.assertEqual(self.contexts[-1]['photo_context']['direct_images'], [])
+        self.assertEqual(loaded.call_count, 2)
+        self.assertEqual(len(self.inputs[-1]), 2)
+        self.assertEqual([row['message_id'] for row in self.contexts[-1]['photo_context']['direct_images']],
+                         ['photo-1', 'photo-2'])
 
     def test_multiple_images_share_one_call_and_original_cache_is_reused(self):
         self.ingest('photo-2', stamp=1900000000001)

@@ -49,6 +49,8 @@ async function start() {
   (globalThis as any).__windowSendStats = () => client!.invoke('_fixture_send_stats');
   (globalThis as any).__seedWindowQuotes = () => client!.invoke('_fixture_seed_quotes');
   (globalThis as any).__seedWindowShowcase = () => client!.invoke('_fixture_seed_showcase');
+  (globalThis as any).__setWindowReplyProgress = (phase: string) => client!.invoke('_fixture_progress', { phase });
+  (globalThis as any).__setWindowImageProgress = (stage: string) => client!.invoke('_fixture_image_progress', { stage });
   if (process.env.HARNESS_MANUAL_AI_DIRECT === '1') {
     (globalThis as any).__setWindowAiFailure = (enabled: boolean) => client!.invoke('_fixture_ai_failure', { enabled });
     (globalThis as any).__getWindowAiStats = () => client!.invoke('_fixture_ai_stats');

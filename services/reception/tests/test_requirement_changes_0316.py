@@ -267,7 +267,7 @@ class RequirementChangesTests(unittest.TestCase):
         prepared = []
         self.service.integrations.generate_manual = lambda context, request_id, **options: {'reply_messages': [{'body': 'Noted.', 'reply_sources': ['m2']}]}
         self.service._prepare_direct_photos = lambda cid, job, epoch, facade: (prepared.append(cid) or (lambda: None))
-        def sources(repo, owner, case, messages):
+        def sources(repo, owner, case, messages, *, settings=None):
             self.assertEqual(owner['conversation_id'], self.owner['conversation_id'])
             self.assertEqual(case['case_id'], second)
             return [{'message_id': 'm1'}] if repo.get('case', self.initial_case) else []
@@ -284,7 +284,7 @@ class RequirementChangesTests(unittest.TestCase):
         prepared = []
         self.service.integrations.generate = lambda context, request_id, **options: {'action': 'ask', 'reply': 'Noted.', 'reply_sources': ['m2']}
         self.service._prepare_direct_photos = lambda cid, job, epoch, facade: (prepared.append(cid) or (lambda: None))
-        def sources(repo, owner, case, messages):
+        def sources(repo, owner, case, messages, *, settings=None):
             self.assertEqual(owner['conversation_id'], self.owner['conversation_id'])
             self.assertEqual(case['case_id'], second)
             return [{'message_id': 'm1'}] if repo.get('case', self.initial_case) else []

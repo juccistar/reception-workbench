@@ -283,10 +283,13 @@ class ProductPresentationMixin:
             rows = result.get('images')
             if not isinstance(rows, list):
                 rows = [{'url': result['main_image_url'], 'image_index': 0}] if result.get('main_image_url') else []
-            if not rows and result.get('source') not in ('no_image', 'invalid_images'):
-                raise ServiceError('product_display_invalid_response', '商品图片响应结构无法识别', stage='product_metadata')
-            if result.get('source') == 'unavailable':
-                raise ServiceError('product_display_invalid_response', '商品图片响应结构无法识别', stage='product_metadata')
+            if result.get('source') == 'unavailable' or not rows and result.get('source') not in ('no_image', 'invalid_images'):
+                diagnostic = result.get('response_diagnostics') or {}
+                reason = diagnostic.get('product_response_reason')
+                code, message = (('product_display_not_found', '当前账号无法读取此商品') if reason == 'not_found' else
+                                 ('product_display_empty', '暂未取得商品资料') if reason == 'empty_data' else
+                                 ('product_display_invalid_response', '商品图片资料暂不可用'))
+                raise ServiceError(code, message, stage='product_metadata', diagnostics=diagnostic)
             with self._lock, repo.transaction():
                 record = repo.get('product_main_image', identifier) or {}
                 current = repo.get('library_product', identifier) or {}
@@ -295,8 +298,10 @@ class ProductPresentationMixin:
                         or current.get('product_id') != product.get('product_id')):
                     return
                 if rows:
-                    record['stage'] = 'download'
+                    record.update(stage='download', message='正在下载商品图片')
                     repo.put('product_main_image', identifier, record)
+                    self._job_update(job_id, stage='download', message=record['message'])
+            self._changed()
             downloaded = []
             for entry in rows[:5]:
                 source_url = entry.get('url') if isinstance(entry, dict) else None
@@ -373,13 +378,17 @@ class ProductPresentationMixin:
                         and current.get('product_id') == product.get('product_id')):
                     record.update(status=('unknown' if self._stop.is_set() else
                                           'ready' if record.get('asset_sha256') and repo.get('image_asset', record['asset_sha256']) else 'failed'),
-                                  message='商品主图读取失败，客户图片及接待不受影响',
+                                  message={'product_display_not_found': '当前账号无法读取此商品',
+                                           'product_display_empty': '暂未取得商品资料',
+                                           'product_display_invalid_response': '商品图片资料暂不可用'}.get(
+                                               getattr(exc, 'code', ''), '商品图片读取失败'),
                                   stage=getattr(exc, 'stage', None) or 'product_metadata',
                                   error_code=getattr(exc, 'code', 'product_image_read_failed'),
                                   updated_at=max(now_ms(), record.get('updated_at', 0) + 1))
                     repo.put('product_main_image', identifier, record, history=True)
                     job = repo.get('job', job_id)
                     job.update(status='failed', message=record['message'], completed_at=now_ms(),
+                               diagnostics=getattr(exc, 'diagnostics', {}),
                                error={'code': record['error_code'], 'message': record['message']})
                     repo.put('job', job_id, job, history=True)
                     self._emit('job.updated', job)

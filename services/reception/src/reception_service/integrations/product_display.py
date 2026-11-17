@@ -42,18 +42,35 @@ def _check_product_ids(value, product_id):
             _check_product_ids(item, product_id)
 
 
-def _component_image(reply, product_id):
+def _component_image(reply, product_id, diagnostics=None):
     _check_product_ids(reply, product_id)
+    diagnostics = diagnostics if diagnostics is not None else {}
     data = reply.get('data')
-    if not isinstance(data, str):
-        return 'unavailable', None
+    diagnostics['product_data_type'] = ('object' if isinstance(data, dict) else 'string' if isinstance(data, str)
+                                        else 'null' if data is None else 'other')
     try:
-        data = json.loads(data, object_pairs_hook=_unique_object)
+        if isinstance(data, str):
+            if data.strip() == 'Record does not exist.':
+                diagnostics['product_response_reason'] = 'not_found'
+                return 'unavailable', None
+            if not data.strip():
+                diagnostics['product_response_reason'] = 'empty_data'
+                return 'unavailable', None
+            try:
+                data = json.loads(data, object_pairs_hook=_unique_object)
+            except (ValueError, TypeError, RecursionError):
+                diagnostics['product_response_reason'] = 'invalid_json'
+                return 'unavailable', None
+        if data is None:
+            diagnostics['product_response_reason'] = 'empty_data'
+            return 'unavailable', None
         _check_product_ids(data, product_id)
         if not isinstance(data, dict) or not isinstance(data.get('basicInfo'), dict):
+            diagnostics['product_response_reason'] = 'missing_basic_info'
             return 'unavailable', None
         images = data['basicInfo'].get('images')
         if not isinstance(images, list):
+            diagnostics['product_response_reason'] = 'missing_images'
             return 'unavailable', None
         if not images:
             return 'no_image', None
@@ -61,9 +78,11 @@ def _component_image(reply, product_id):
         invalid = []
         for row in images:
             if not isinstance(row, dict):
+                diagnostics['product_response_reason'] = 'invalid_image_item'
                 return 'unavailable', None
             index, url = row.get('imageIndex'), row.get('originalImageUrl')
             if type(index) is not int or index < 0 or index in by_index:
+                diagnostics['product_response_reason'] = 'invalid_image_index'
                 return 'unavailable', None
             by_index[index] = None
             try:
@@ -114,7 +133,8 @@ def read_product_display(native, seller_id, product_id, request_id, *, cancel_ev
         raise ServiceError('product_display_invalid_response', '商品主图查询结果结构无效', stage='read') from None
     if len(raw) > 256_000:
         raise ServiceError('product_display_invalid_response', '商品主图查询结果超出读取预算', stage='read')
-    source, images = _component_image(reply, product_id)
+    response_diagnostics = {}
+    source, images = _component_image(reply, product_id, response_diagnostics)
     invalid_indices = []
     if isinstance(images, tuple):
         images, invalid_indices = images
@@ -123,6 +143,8 @@ def read_product_display(native, seller_id, product_id, request_id, *, cancel_ev
               'images': images, 'source': source, 'result_sha256': hashlib.sha256(raw).hexdigest(),
               'product_binding': 'request_parameters', 'primary_verified': False,
               'selection_rule': 'lowest_image_index' if images else None}
+    if source == 'unavailable':
+        result['response_diagnostics'] = response_diagnostics
     if invalid_indices:
         result['invalid_count'] = len(invalid_indices)
         result['invalid_indices'] = invalid_indices[:5]

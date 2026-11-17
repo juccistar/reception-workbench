@@ -90,6 +90,35 @@ class ProductDisplayTests(unittest.TestCase):
                 self.assertEqual(result['source'], expected)
                 self.assertIsNone(result['main_image_url'])
 
+    def test_object_and_string_envelopes_use_the_same_verified_image_schema(self):
+        data = {'productId': 456, 'basicInfo': {'images': [
+            {'imageIndex': 0, 'originalImageUrl': 'https://sc04.alicdn.com/exact.jpg'}]}}
+        for payload in (data, json.dumps(data)):
+            with self.subTest(payload_type=type(payload).__name__):
+                self.native.process.run.return_value = {'success': True, 'data': payload}
+                result = read_product_display(self.native, '123', '456', 'request')
+                self.assertEqual(result['main_image_url'], 'https://sc04.alicdn.com/exact.jpg')
+                self.assertEqual(result['product_binding'], 'request_parameters')
+        self.native.process.run.return_value = {'success': True, 'data': {**data, 'productId': 999}}
+        with self.assertRaises(ServiceError):
+            read_product_display(self.native, '123', '456', 'request')
+
+    def test_missing_product_and_invalid_shapes_have_content_free_diagnostics(self):
+        for payload, expected in ((None, 'empty_data'), ('', 'empty_data'),
+                ('Record does not exist.', 'not_found'), ('secret-private-output', 'invalid_json'),
+                ({'title': 'private'}, 'missing_basic_info'), ({'basicInfo': {}}, 'missing_images'),
+                ({'basicInfo': {'images': [None]}}, 'invalid_image_item'),
+                ({'basicInfo': {'images': [{'imageIndex': '0'}]}}, 'invalid_image_index')):
+            with self.subTest(reason=expected):
+                self.native.process.run.return_value = {'success': True, 'data': payload}
+                result = read_product_display(self.native, '123', '456', 'request')
+                self.assertEqual(result['source'], 'unavailable')
+                self.assertEqual(result['response_diagnostics']['product_response_reason'], expected)
+                self.assertNotIn('private', str(result))
+                safe = ServiceError('product_display_invalid_response', 'fixed',
+                                    diagnostics=result['response_diagnostics']).to_dict()
+                self.assertEqual(safe['diagnostics']['product_response_reason'], expected)
+
     def test_explicit_mismatched_product_id_is_rejected(self):
         for data in ({'productId': 999, 'basicInfo': {'images': []}}, {'basicInfo': {'productId': '999', 'images': []}}):
             with self.subTest(data=data):

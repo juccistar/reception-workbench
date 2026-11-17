@@ -337,7 +337,7 @@ class MessagePhotosMixin:
             cases = [c for c in self.repo.list('case', conversation_id=cid)
                      if all(c.get(key) == original_conversation.get(key) for key in ('seller_id', 'buyer_id', 'conversation_id'))]
             def selected_images(rows):
-                return get_reception_source_images(self.repo, original_conversation, case, rows)
+                return get_reception_source_images(self.repo, original_conversation, case, rows, settings=self.settings)
             candidates = copy.deepcopy(selected_images(original_messages))
             seconds = self.settings.get('image_prepare_seconds', 60)
             seconds = min(seconds, 300) if type(seconds) is int and seconds >= 1 else 60

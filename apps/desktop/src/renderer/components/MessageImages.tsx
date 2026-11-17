@@ -104,7 +104,7 @@ function ImageCard({ attachment, conversationId, messageId, role, autoLoad, revi
   const status = retrySeconds > 0 ? (image.message === '图片排队较多，请稍后重试' ? image.message : `请在 ${retrySeconds} 秒后重试图片`) : image.status === 'loading' && image.message === '图片排队中' ? image.message : image.status === 'ready' ? (preview ? '图片已加载' : '图片预览不可用') : ({ not_loaded: '图片尚未加载', loading: '图片加载中…', failed: '图片加载失败', unavailable: '图片暂不可用' } as const)[image.status];
   const observation = image.input_mode !== 'direct' && image.vision_status === 'ready' && typeof image.vision_description === 'string' && image.vision_description.trim() && image.vision_description.length <= 2000 ? image.vision_description : null;
   const visionLabel = image.input_mode === 'direct' ? '生成回复时结合此图片' : image.vision_status === 'processing' ? 'AI 正在识别照片…' : observation ? '图片观察 · 待客户确认' : image.vision_status === 'failed' || image.vision_status === 'unavailable' ? '暂未识别，可结合文字或人工确认' : '尚未识别';
-  return <div className="message-image-notice"><strong>{label}</strong><small aria-live="polite">{status}</small>
+  return <div className="message-image-notice" aria-busy={image.status === 'loading'}><strong>{label}</strong><small className="image-loading-status" aria-live="polite">{image.status === 'loading' && <span className="tiny-spinner" aria-hidden="true" />}{status}</small>
     {preview && (role === 'buyer' || image.input_mode === 'direct') && <div className="message-image-observation"><small aria-live="polite">{visionLabel}</small>{observation && <p>{observation}</p>}</div>}
     {preview && <><button type="button" className="message-image-preview" onClick={event => {
       event.currentTarget.focus();

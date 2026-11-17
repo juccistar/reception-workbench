@@ -47,6 +47,24 @@ it('copies the current original with the dedicated button and discards late copy
   expect(screen.queryByText('图片已复制')).not.toBeInTheDocument();
 });
 
+it('shows loading feedback and retries a failed original without keeping the stale request', async () => {
+  let release!: (value: unknown) => void;
+  const image = { bytes: new Uint8Array([1]), media_type: 'image/png', width: 1, height: 1, sha256: 'a' };
+  const getImageOriginal = vi.fn().mockRejectedValueOnce(new Error('synthetic read failure'))
+    .mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  const cancelImageOriginal = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:retried');
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  render(<OriginalImageDialog bridge={{ getImageOriginal, cancelImageOriginal } as unknown as ReceptionBridge} images={[{ ref: first, label: '原图' }]} initial={0} onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByRole('button', { name: '重试读取原图' }));
+  expect(document.querySelector('.original-image-viewport')).toHaveAttribute('aria-busy', 'true');
+  expect(document.querySelector('.original-image-loading .tiny-spinner')).not.toBeNull();
+  expect(cancelImageOriginal).toHaveBeenCalledWith(getImageOriginal.mock.calls[0][1]);
+  release(image);
+  await screen.findByAltText('原图');
+  expect(document.querySelector('.original-image-viewport')).toHaveAttribute('aria-busy', 'false');
+});
+
 it('copies only through the fixed host menu and reports missing original', async () => {
   const feedback = vi.fn();
   copyImageMenu(undefined, first, feedback); expect(feedback).toHaveBeenCalledWith('原图不可用，无法复制图片。');

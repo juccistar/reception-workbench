@@ -173,6 +173,62 @@ class NativeImageRequests(unittest.TestCase):
                     self.assertEqual(payload['message_view'][0]['image_refs'], [{'alias': 'p1', 'image_id': ref['image_id']}])
                     self.assertNotIn('media_notice', payload['message_view'][0])
 
+    def test_new_chat_images_and_supplement_reach_both_protocols(self):
+        from unittest.mock import patch
+        from reception_service.message_photos import MessagePhotosMixin
+        from reception_service.reception_context import shared_context
+        from reception_service.repository import Repository, encoded
+
+        for protocol in ('chat-completions', 'anthropic'):
+            with self.subTest(protocol=protocol):
+                self.configure(protocol)
+                repo = Repository(None, 's')
+                self.addCleanup(repo.close)
+                owner = dict(seller_id='s', buyer_id='b', conversation_id='c', case_id='active')
+                case = {**owner, 'revision': 1, 'state': 'collecting', 'requirements_format': 'ai-v1',
+                        'requirements': {'product': {'value': '现有产品', 'evidence_ids': []}}}
+                repo.put('conversation', 'c', owner)
+                repo.put('case', 'active', case)
+                repo.put('image_asset', self.asset['sha256'], self.asset)
+                for index in (1, 2):
+                    message = {**owner, 'message_id': f'm{index}', 'role': 'buyer', 'own': False,
+                               'text': '[image]', 'timestamp_ms': index, 'attachments': []}
+                    repo.put('message', encoded(['c', message['message_id']]), message)
+                    repo.put('message_image', encoded(['c', message['message_id']]), {
+                        **{k: message[k] for k in ('seller_id', 'buyer_id', 'conversation_id', 'message_id')},
+                        'source_version': photo_version(message), 'sha256': self.asset['sha256'], 'status': 'ready'})
+                attachment = {**owner, 'id': 'supp', 'origin': 'business_supplement',
+                              'sha256': self.asset['sha256'], 'media_type': 'image/png',
+                              'original_b64': self.asset['original_b64']}
+                repo.put('supplement_attachment', 'supp', attachment)
+                note = {'conversation_id': 'c', 'body': '', 'revision': 1,
+                        'attachments': [attachment], 'source_id': None}
+                with patch('reception_service.reception_context.supplement_context', return_value=note):
+                    context = shared_context(repo, owner, case, task_mode='manual')
+                context['case'] = case
+                class PhotoOwner(MessagePhotosMixin):
+                    account_verified = True
+                    seller_id = 's'
+                    _lock = threading.RLock()
+                    def _require(self, kind, key): return self.repo.get(kind, key)
+                    def _supplement(self, cid): return note
+                worker = PhotoOwner()
+                worker.repo = repo
+                inputs = worker._direct_photo_inputs(context)
+                try:
+                    self.facade._business_query(MANUAL, context, inputs)
+                finally:
+                    inputs.owner.close_if_owned()
+                body = self.requests[-1]
+                blocks = body['messages'][0 if protocol == 'anthropic' else 1]['content']
+                payload = json.loads(blocks[0]['text'])['context']
+                self.assertEqual([r.get('message_id') for r in payload['image_manifest'][:2]], ['m1', 'm2'])
+                self.assertEqual(payload['image_manifest'][2]['origin'], 'business_supplement')
+                self.assertEqual(len(blocks), 4)
+                for block in blocks[1:]:
+                    data = block['source']['data'] if protocol == 'anthropic' else block['image_url']['url'].split(',', 1)[1]
+                    self.assertEqual(base64.b64decode(data), self.original)
+
     def test_auto_and_manual_validate_real_image_input_and_source_guards(self):
         from unittest.mock import patch
         from reception_service.errors import ServiceError

@@ -32,6 +32,7 @@ function frames(error: unknown): Array<{ file: string; line: number; column: num
 export class WhatsAppDiagnostics {
   private readonly recent = new Map<string, { at: number; id?: string }>();
   private readonly versions: Record<string, string>;
+  private currentChatState = '';
   private context: Record<string, string | number | boolean> = {};
   setContext(value: { webVersion?: unknown; documentGeneration?: number; postLogout?: boolean; databaseError?: boolean; sessionGeneration?: number; recoveryStage?: 'committed'; previousPhase?: WhatsAppPhase }): void {
     const context: Record<string, string | number | boolean> = {};
@@ -61,6 +62,15 @@ export class WhatsAppDiagnostics {
       appendFileSync(file, bytes, { encoding: 'utf8', mode: 0o600 });
       return true;
     } catch { return false; }
+  }
+  currentChat(attempt: number, status: 'chat' | 'none' | 'unavailable', stage?: string): void {
+    if (!Number.isSafeInteger(attempt) || attempt < 0 || !['chat', 'none', 'unavailable'].includes(status)) return;
+    const safeStage = ['identity', 'collection', 'active', 'id', 'sdk', 'verification'].includes(stage ?? '') ? stage : undefined;
+    const state = `${attempt}:${status}:${safeStage ?? ''}`;
+    if (state === this.currentChatState) return;
+    this.currentChatState = state;
+    this.write({ time_ms: Date.now(), attempt, event: 'current_chat', status,
+      ...(safeStage ? { recognition_stage: safeStage } : {}), versions: this.versions });
   }
   event(attempt: number, phase: WhatsAppPhase, event: 'started' | 'completed', elapsedMs?: number): void {
     if (!phases.has(phase) || !Number.isSafeInteger(attempt) || attempt < 0) return;

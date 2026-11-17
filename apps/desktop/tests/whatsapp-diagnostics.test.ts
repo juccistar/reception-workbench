@@ -34,6 +34,20 @@ it('rotates to three bounded files without adding arbitrary diagnostic content',
   expect(readFileSync(file + '.2', 'utf8')).toBe('previous');
   expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ phase: 'cdp_connect', event: 'completed', elapsed_ms: 13 });
 });
+it('records only changed current-chat stages with no identifiers or arbitrary values', () => {
+  const path = folder(), log = new WhatsAppDiagnostics(path, '0.4.2');
+  log.currentChat(1, 'unavailable', 'collection');
+  log.currentChat(1, 'unavailable', 'collection');
+  log.currentChat(1, 'chat');
+  log.currentChat(1, 'unavailable', 'private-customer');
+  const text = readFileSync(join(path, 'whatsapp-host.jsonl'), 'utf8');
+  const rows = text.trim().split('\n').map(row => JSON.parse(row));
+  expect(rows).toHaveLength(3);
+  expect(rows[0]).toMatchObject({ event: 'current_chat', status: 'unavailable', recognition_stage: 'collection' });
+  expect(rows[1]).toMatchObject({ status: 'chat' });
+  expect(text).not.toMatch(/private-customer|chat_id|account_id|name/);
+});
+
 it('ignores unavailable storage and never throws during connection cleanup', () => {
   const path = folder(), blocked = join(path, 'not-a-directory'); writeFileSync(blocked, 'occupied');
   const log = new WhatsAppDiagnostics(blocked, '0.3.19');

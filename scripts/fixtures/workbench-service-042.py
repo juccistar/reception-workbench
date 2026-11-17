@@ -21,6 +21,7 @@ def create_window_service(*args, **kwargs):
     # Scope is fixture-only and contains no real customer or authorization.
     service.set_scope('selected', ['demo-emma'])
     original_call = service.call
+    progress_view = {'phase': None, 'job': None, 'batch': None, 'image': None, 'image_stamp': 0}
     direct_ai = os.environ.get('HARNESS_MANUAL_AI_DIRECT') == '1'
     ai_state = {'fail': False, 'checks': 0, 'generation_attempts': 0, 'block': False, 'cancel_observed': False}
     ai_release = threading.Event()
@@ -82,6 +83,43 @@ def create_window_service(*args, **kwargs):
         service.integrations.generate_manual = generate_manual
 
     def call(method, params=None):
+        if method == '_fixture_progress' and isinstance(params, dict) and set(params) == {'phase'}:
+            from reception_service.repository import now_ms
+            phase = params['phase']
+            if phase not in ('generating', 'saving', 'prepared', 'sending', 'unknown', 'complete', 'clear'):
+                raise ValueError('Unsupported progress projection')
+            stamp = now_ms()
+            owner = service._require('conversation', 'demo-emma')
+            case = service._require('case', owner['case_id'])
+            source = service._latest_buyer('demo-emma')
+            job = {'job_id': 'window-progress-job', 'kind': 'generate_draft', 'conversation_id': 'demo-emma',
+                   'case_id': case['case_id'], 'status': 'running' if phase in ('generating', 'saving', 'prepared') else 'succeeded',
+                   'stage': {'generating': 'generate_draft', 'saving': 'save_draft', 'prepared': 'prepare_send'}.get(phase, 'complete'),
+                   'message': '回复已保存，正在准备发送' if phase == 'prepared' else '正在生成接待回复', 'automatic': True, 'created_at': stamp,
+                   'started_at': stamp, 'completed_at': stamp if phase in ('sending', 'unknown', 'complete') else None,
+                   'source_case_revision': case['revision'], 'source_message_id': source['message_id'] if source else None,
+                   'result': {'draft_id': 'window-progress-draft'}}
+            batch = {'batch_id': 'window-progress-batch', 'status': {'sending': 'sending', 'unknown': 'waiting_receipt', 'complete': 'accepted'}.get(phase, 'prepared'),
+                     'origin': 'automatic', 'channel': 'international', 'conversation_id': 'demo-emma',
+                     'total': 2, 'accepted': 2 if phase == 'complete' else 0, 'current_index': None if phase == 'complete' else 0,
+                     'pending_operation_ids': ['window-pending'] if phase == 'unknown' else [], 'created_at': stamp, 'updated_at': stamp}
+            progress_view.update(phase=None if phase == 'clear' else phase, job=job if phase != 'clear' else None,
+                                 batch=batch if phase in ('sending', 'unknown', 'complete') else None)
+            if phase != 'clear':
+                service._emit('job.updated', job)
+            else:
+                service._emit('job.updated', {**job, 'status': 'cancelled'})
+            service._changed('demo-emma')
+            return {'phase': phase}
+        if method == '_fixture_image_progress' and isinstance(params, dict) and set(params) == {'stage'} and params['stage'] in ('failed', 'product_metadata', 'download', 'ready'):
+            from reception_service.repository import now_ms
+            progress_view.update(image=params['stage'], image_stamp=now_ms())
+            service._changed('demo-emma')
+            return {'stage': params['stage']}
+        if method == 'request_product_images' and progress_view['image'] is not None:
+            progress_view['image'] = 'product_metadata'
+            service._changed('demo-emma')
+            return {'job_id': 'window-image-job'}
         if method == '_fixture_send_mode' and isinstance(params, dict) and set(params) == {'mode'} and params['mode'] in ('accepted', 'unknown'):
             send_state['mode'] = params['mode']
             send_entered.clear()
@@ -273,6 +311,29 @@ def create_window_service(*args, **kwargs):
                 raise
             if direct_ai and method == 'get_snapshot':
                 result['app'] = {**result['app'], 'mode': 'live', 'account_verified': True, 'company_name': '澄野生活'}
+            if progress_view['phase']:
+                if method == 'get_snapshot':
+                    result['reception'] = {**result['reception'], 'running': True, 'auto_send': True}
+                    result['jobs'].append(progress_view['job'])
+                    for row in result['conversations']:
+                        if row['conversation_id'] == 'demo-emma':
+                            row['human_owned'] = False
+                elif method == 'list_jobs':
+                    result.append(progress_view['job'])
+                elif method == 'get_conversation' and (params or {}).get('conversation_id') == 'demo-emma':
+                    result['conversation'] = {**result['conversation'], 'human_owned': False}
+                    result['reply_batches'] = [progress_view['batch']] if progress_view['batch'] else []
+            if progress_view['image'] is not None:
+                state = progress_view['image']
+                status = 'loading' if state in ('product_metadata', 'download') else state
+                overlay = {'status': status, 'stage': state, 'job_id': 'window-image-job', 'updated_at': progress_view['image_stamp']}
+                if method == 'get_product_main_image':
+                    result.update(overlay)
+                    if status != 'ready':
+                        result.pop('data_url', None)
+                        result['images'] = []
+                elif method == 'get_conversation' and (params or {}).get('conversation_id') == 'demo-emma' and result.get('case'):
+                    result['case']['product_main_image'].update(overlay)
             return result
         if params != {'conversation_id': 'demo-emma', 'text': 'I need 100 pieces'}:
             raise ValueError('Unsupported window fixture input')

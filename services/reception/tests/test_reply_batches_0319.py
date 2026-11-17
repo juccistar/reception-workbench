@@ -63,6 +63,26 @@ class ReplyBatchServiceTests(unittest.TestCase):
             self.service._schedule_reply_batches()
         self.idle()
 
+    def test_progress_stages_follow_persisted_draft_and_real_send_receipt(self):
+        observed = []
+        original_emit = self.service._emit
+        def emit(event, data):
+            if event == 'job.updated':
+                observed.append(copy.deepcopy(data))
+            return original_emit(event, data)
+        with patch.object(self.service, '_emit', side_effect=emit):
+            batch = self.generate()
+            self.tick()
+        generation = [row for row in observed if row.get('kind') == 'generate_draft']
+        stages = [row['stage'] for row in generation]
+        self.assertLess(stages.index('save_draft'), stages.index('prepare_send'))
+        prepared = next(row for row in generation if row['stage'] == 'prepare_send')
+        self.assertTrue(self.service.repo.get('draft', prepared['draft_id']))
+        self.assertTrue(any(row.get('kind') == 'automatic_send' and row['stage'] == 'submit_send' for row in observed))
+        current = self.service.repo.get('reply_batch', batch['batch_id'])
+        self.assertEqual(current['parts'][0]['status'], 'accepted')
+        self.assertTrue(current['parts'][0]['message_id'])
+
     def test_waiting_sync_takeover_stops_only_unsubmitted_tail(self):
         batch = self.generate()
         self.tick()

@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { WhatsAppContext, WhatsAppHostInfo } from '../../shared/whatsapp';
 import type { WhatsAppAccountSnapshot, WhatsAppBindingInput, WhatsAppTakeoverInput } from '../../shared/whatsapp-account';
+import type { CurrentChatResult } from './chrome-host';
 
 type Customer = { conversation_id: string; name: string; buyer_id?: string; company?: string; revision?: number | string };
 export interface CustomerPanelOptions {
@@ -8,7 +9,7 @@ export interface CustomerPanelOptions {
   runtimeInstanceId: string;
   extensionDirectory?: string;
   getStatus(): WhatsAppHostInfo;
-  resolveCurrentChat(): Promise<{ chat_id: string; name?: string } | null>;
+  resolveCurrentChat(): Promise<CurrentChatResult>;
   readState(): Promise<WhatsAppAccountSnapshot>;
   getContext(chatId: string): Promise<WhatsAppContext>;
   saveBinding(input: WhatsAppBindingInput, assertCurrent: () => Promise<void>): Promise<WhatsAppAccountSnapshot>;
@@ -179,8 +180,8 @@ export class CustomerPanelController {
     const chat = await this.options.resolveCurrentChat();
     const after = this.options.getStatus(); const state = snapshot.state;
     if (!state?.connected || !state.account_id || !state.connection_epoch || snapshot.runtime_instance_id !== this.options.runtimeInstanceId || snapshot.profile.workspace_id !== this.options.workspaceId || state.workspace_id !== this.options.workspaceId || before.status !== 'ready' || after.status !== 'ready' || before.account_id !== state.account_id || after.account_id !== state.account_id || before.connection_epoch !== state.connection_epoch || after.connection_epoch !== state.connection_epoch) { this.observedEmptyStatus = '正在连接侧栏'; return null; }
-    this.observedEmptyStatus = '请选择一个单聊';
-    if (!chat || !short(chat.chat_id) || /@g\.us$|@broadcast$/.test(chat.chat_id)) return null;
+    this.observedEmptyStatus = chat.status === 'none' ? '请选择一个单聊' : '暂时无法识别当前客户';
+    if (chat.status !== 'chat' || !short(chat.chat_id) || /@g\.us$|@broadcast$/.test(chat.chat_id)) return null;
     return { chat, snapshot, state };
   }
   private async poll(generation: number) {

@@ -17,12 +17,84 @@ export function currentGeneration(detail: ConversationDetail, jobs: Job[]): Job 
     && job.case_id === currentCase.case_id).sort((a, b) => b.created_at - a.created_at);
   const latest = candidates[0];
   if (!latest || !(['queued', 'running'].includes(latest.status) || (latest.status === 'deferred' && !!latest.retry_at))) return null;
-  if (latest.source_case_revision !== undefined && latest.source_case_revision !== currentCase.revision) return null;
+  const saving = latest.stage === 'save_draft' || latest.stage === 'prepare_send' && latest.draft_id && latest.draft_id === detail.draft?.draft_id;
+  if (!saving && latest.source_case_revision !== undefined && latest.source_case_revision !== currentCase.revision) return null;
   if (latest.source_message_id) {
     const buyer = detail.messages.filter(message => message.role === 'buyer').sort((a, b) => compareMessages(b, a))[0];
     if (buyer?.message_id !== latest.source_message_id) return null;
   }
   return latest;
+}
+
+export type ReplyPhase = 'confirming' | 'queued' | 'running' | 'retry' | 'saving' | 'prepared' | 'sending' | 'receipt' | 'complete' | 'stopped' | 'unknown';
+export interface ReplyProgress { key: string; phase: ReplyPhase; message?: string; created_at?: number; note?: string }
+
+/** Current activity only; send acceptance comes from persisted batches/receipts. */
+export function currentReplyProgress(detail: ConversationDetail, jobs: Job[], now: number, automaticRunning: boolean): ReplyProgress | null {
+  const cid = detail.conversation.conversation_id;
+  const selectedCase = detail.case?.case_id;
+  const currentCase = selectedCase && selectedCase === detail.conversation.case_id;
+  const generation = currentGeneration(detail, jobs);
+  const latestGeneration = jobs.filter(job => job.kind === 'generate_draft' && job.conversation_id === cid && job.case_id === selectedCase)
+    .sort((a, b) => b.created_at - a.created_at)[0];
+  const batches = currentCase ? (detail.reply_batches ?? []).filter(batch => (!batch.origin || batch.origin === 'automatic')
+    && (!batch.channel || batch.channel === 'international') && (!batch.conversation_id || batch.conversation_id === cid))
+    .sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0)) : [];
+  const activeBatch = batches.find(batch => ['prepared', 'sending', 'waiting_sync', 'waiting_retry', 'waiting_receipt', 'unknown'].includes(batch.status)
+    || (batch.pending_operation_ids ?? []).length > 0);
+  const recentBatch = batches[0];
+  const batch = activeBatch ?? (recentBatch && now - (recentBatch.updated_at ?? 0) < 4000
+    && (!latestGeneration || (recentBatch.created_at ?? 0) >= latestGeneration.created_at) ? recentBatch : null);
+  if (batch) {
+    const count = `已发送 ${batch.accepted}/${batch.total} 条`;
+    const index = Math.min(batch.total, (batch.current_index ?? batch.accepted) + 1);
+    const phase: ReplyPhase = ['unknown', 'waiting_receipt'].includes(batch.status) ? 'unknown'
+      : batch.status === 'waiting_retry' ? 'retry' : batch.status === 'waiting_sync' ? 'receipt'
+      : ['accepted', 'completed', 'succeeded'].includes(batch.status) ? 'complete'
+      : ['stopped', 'cancelled', 'failed'].includes(batch.status) ? 'stopped' : batch.status === 'prepared' ? 'prepared' : 'sending';
+    const message = phase === 'unknown' ? `${count}，第 ${index} 条发送结果待确认`
+      : phase === 'complete' ? `本轮回复已发送，共 ${batch.accepted} 条`
+      : phase === 'stopped' ? `${count}，剩余回复已停止`
+      : phase === 'retry' ? `${count}，${batch.retry_at && batch.retry_at > now ? `${Math.ceil((batch.retry_at - now) / 1000)} 秒后重试` : '等待重试'}`
+      : phase === 'receipt' ? `${count}，正在同步发送结果`
+      : `${phase === 'prepared' ? '准备发送' : '正在提交'}第 ${index}/${batch.total} 条${phase === 'sending' ? '，等待平台回执' : ''}`;
+    return { key: `automatic:${cid}`, phase, message, note: batch.message || undefined };
+  }
+  const sends = jobs.filter(job => ['automatic_send', 'continuity_send'].includes(job.kind) && job.conversation_id === cid && job.case_id === selectedCase)
+    .sort((a, b) => b.created_at - a.created_at);
+  const send = sends.find(job => ['queued', 'running', 'deferred', 'unknown'].includes(job.status)) ?? sends[0];
+  if (send && (!generation || send.created_at >= generation.created_at)) {
+    const live = ['queued', 'running', 'deferred', 'unknown'].includes(send.status);
+    const recent = now - (send.completed_at ?? 0) < 4000 && (!latestGeneration || send.created_at >= latestGeneration.created_at);
+    const accepted = send.status === 'succeeded' && send.result?.status === 'accepted';
+    if (live || recent && (send.status !== 'succeeded' || accepted || send.result?.batch_id)) {
+      const phase: ReplyPhase = send.status === 'unknown' || send.result?.status === 'unknown' ? 'unknown'
+        : accepted ? 'complete' : send.status === 'deferred' ? 'retry'
+        : ['cancelled', 'failed', 'stale'].includes(send.status) ? 'stopped'
+        : send.status === 'queued' || send.result?.batch_id ? 'prepared' : 'sending';
+      return { key: `automatic:${cid}`, phase, message: phase === 'complete' ? '本轮回复已发送'
+        : phase === 'unknown' ? '发送结果待确认' : phase === 'stopped' ? '自动回复已停止'
+        : phase === 'retry' ? send.message : phase === 'prepared' ? '回复已保存，正在准备发送' : '正在提交回复，等待平台回执',
+        note: phase === 'stopped' ? send.error?.message || send.message : undefined };
+    }
+  }
+  if (generation && (!generation.automatic || automaticRunning) && !detail.conversation.human_owned) {
+    return { key: generation.automatic ? `automatic:${cid}` : generation.job_id,
+      phase: generation.status === 'deferred' ? 'retry' : generation.status === 'queued' ? 'queued'
+        : generation.stage === 'save_draft' ? 'saving' : generation.stage === 'prepare_send' ? 'prepared' : 'running',
+      message: generation.message, created_at: generation.created_at };
+  }
+  const draft = detail.draft;
+  if (currentCase && automaticRunning && !detail.conversation.human_owned && latestGeneration?.status === 'succeeded'
+      && latestGeneration.result?.draft_id) {
+    if (draft?.status === 'pending' && latestGeneration.result.draft_id === draft.draft_id) {
+      return { key: `automatic:${cid}`, phase: 'prepared', message: '回复已保存，等待发送' };
+    }
+    if (now - (latestGeneration.completed_at ?? 0) < 4000 && latestGeneration.result.draft_id !== draft?.draft_id) {
+      return { key: `automatic:${cid}`, phase: 'prepared', message: '回复已保存，正在更新发送状态' };
+    }
+  }
+  return null;
 }
 
 export function receptionLabel(snapshot: Snapshot | null, detail: ConversationDetail, connected: boolean, closing: boolean): string {

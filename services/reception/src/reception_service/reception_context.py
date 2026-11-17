@@ -92,7 +92,7 @@ def shared_context(repo, owner, case, *, task_mode, continuation=None, settings=
     catalogue = case_catalog(repo, owner) if task_mode != 'polish' else []
     settings = settings or {}
     images_enabled = settings.get('reception_images_enabled', True)
-    sources = get_reception_source_images(repo, owner, case, raw) if task_mode != 'polish' else []
+    sources = get_reception_source_images(repo, owner, case, raw, settings=settings) if task_mode != 'polish' else []
     source_ids = {m['message_id'] for m in sources}
     recent, historical = dialogue_window(messages, {'selected': case or {}, 'catalogue': catalogue}, continuation, source_ids,
                                          limit=settings.get('context_message_count', 50))

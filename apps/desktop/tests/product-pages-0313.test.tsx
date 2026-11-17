@@ -99,6 +99,23 @@ it('clears the old gallery and dialog for a case image refresh and shows the cur
   expect(screen.queryByRole('img', { name: '商品图片 1' })).not.toBeInTheDocument();
 });
 
+it('keeps image retry busy and displays the actual metadata and download stages', async () => {
+  const invoke = vi.fn(async (method: string) => method === 'request_product_images' ? { job_id: 'job1' } : { status: 'loading', stage: 'download' });
+  const view = render(<ProductMainImage caseId="case1" localProductId="p1" metadata={{ status: 'failed' }} invoke={invoke as never} presentation="requirement" />);
+  fireEvent.click(screen.getByRole('button', { name: '读取图片' }));
+  expect(document.querySelector('.requirement-product-images')).toHaveAttribute('aria-busy', 'true');
+  expect(screen.getByText('正在读取商品资料')).toBeInTheDocument();
+  expect(document.querySelector('.requirement-product-unavailable .tiny-spinner')).not.toBeNull();
+  await waitFor(() => expect(invoke).toHaveBeenCalledWith('request_product_images', expect.anything()));
+  view.rerender(<ProductMainImage caseId="case1" localProductId="p1" metadata={{ status: 'loading', stage: 'download', job_id: 'job1' }} invoke={invoke as never} presentation="requirement" />);
+  expect(await screen.findByText('正在下载商品图片')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '正在采集…' })).toBeDisabled();
+  invoke.mockImplementation(async () => ({ status: 'failed', error_code: 'product_display_not_found' }));
+  view.rerender(<ProductMainImage caseId="case1" localProductId="p1" metadata={{ status: 'failed', error_code: 'product_display_not_found', updated_at: 3, job_id: 'job1' }} invoke={invoke as never} presentation="requirement" />);
+  expect(await screen.findByText('当前账号无法读取此商品')).toBeInTheDocument();
+  expect(document.querySelector('.requirement-product-images')).toHaveAttribute('aria-busy', 'false');
+});
+
 it('allows explicit recovery of a persisted loading image record', async () => {
   const invoke = vi.fn(async (method: string) => method === 'request_product_images' ? { job_id: 'recovery' } : { status: 'loading' });
   render(<ProductMainImage caseId="case1" localProductId="p1" metadata={{ status: 'loading', job_id: 'old-job' }} invoke={invoke as never} />);

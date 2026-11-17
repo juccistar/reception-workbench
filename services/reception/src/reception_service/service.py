@@ -2610,7 +2610,7 @@ class ReceptionService(FeishuSettingsMixin, ReplyBatchMixin, WhatsAppMerchantCon
                     self._queue_outbox(case)
                 return {'message': '客户已要求停止联系；未调用 AI 或发送'}
             messages = self.repo.list('message', conversation_id=case['conversation_id'])
-            has_photos = self.settings.get('reception_images_enabled', True) and bool(get_reception_source_images(self.repo, conversation, case, messages))
+            has_photos = self.settings.get('reception_images_enabled', True) and bool(get_reception_source_images(self.repo, conversation, case, messages, settings=self.settings))
         with self._job_phase(job_id, 'photo_prepare_ms'):
             photo_guard = self._prepare_direct_photos(case['conversation_id'], job_id, epoch, facade) if has_photos else None
         with self._lock:
@@ -2702,6 +2702,7 @@ class ReceptionService(FeishuSettingsMixin, ReplyBatchMixin, WhatsAppMerchantCon
         if isinstance(diagnostics, dict):
             self._job_update(job_id, diagnostics=copy.deepcopy(diagnostics))
         facts, validation = self._validate_ai_output(output, context)
+        self._job_update(job_id, stage='save_draft', message='正在整理并保存回复')
         social_reply = bool(latest and not latest.get('attachments') and social_intent(latest['text'])
                             and validation['ready'] and output.get('action') in ('ask', 'wait_quote', 'skip'))
         if social_reply:
@@ -2782,6 +2783,8 @@ class ReceptionService(FeishuSettingsMixin, ReplyBatchMixin, WhatsAppMerchantCon
                 self.repo.put('draft', draft['draft_id'], draft, history=True)
             self.repo.put('ai_result', job_id, {'case_id': current['case_id'], 'reply': output['reply'],
                                               'context_fingerprint': context['fingerprint'], 'status': 'applied'}, history=True)
+        self._job_update(job_id, stage='prepare_send', message='回复已保存，正在准备发送' if self._auto_send and self._running else '回复已保存',
+                         draft_id=draft['draft_id'])
         self._changed(current['conversation_id'], current['case_id'])
         if (self._auto_send and self._running and self._in_scope(current['conversation_id']) and draft['validation']['ready']
                 and (not supplement or draft.get('supplement_issue_ids'))):
@@ -3010,6 +3013,9 @@ class ReceptionService(FeishuSettingsMixin, ReplyBatchMixin, WhatsAppMerchantCon
                         'sync_target_timestamp': activity.get('latest_timestamp', 0), 'authorization_epoch': epoch})
                 return SendGateDecision(True)
         authorized = SendAuthorization(evaluate_gate)
+        if job_id:
+            self._job_update(job_id, stage='submit_send', message='正在提交回复，等待平台回执')
+        self._changed(draft['conversation_id'], case['case_id'])
         try:
             sender = facade.send_chat if draft.get('batch_id') and intent.get('purpose') == 'continuity' else facade.send
             result = sender(intent, authorization=authorized)

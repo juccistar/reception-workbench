@@ -146,6 +146,23 @@ class ProductMainImageTests(unittest.TestCase):
                     self.assertEqual(record['status'], expected)
                     self.assertEqual(record.get('error_code'), code)
 
+    def test_read_failure_classification_preserves_safe_response_diagnostics(self):
+        self.demand()
+        identifier = self.product()['local_product_id']
+        for reason, code in (('not_found', 'product_display_not_found'), ('empty_data', 'product_display_empty'),
+                             ('missing_images', 'product_display_invalid_response')):
+            with self.subTest(reason=reason):
+                with patch.object(self.service.integrations, 'read_product_display', return_value={
+                        'product_id': '1600000000123', 'source': 'unavailable', 'images': [],
+                        'response_diagnostics': {'product_data_type': 'string', 'product_response_reason': reason}}):
+                    ack = self.service.request_product_images('classification-' + reason, local_product_id=identifier)
+                    record = self.wait_image(identifier)
+                self.assertEqual(record['error_code'], code)
+                job = self.service.repo.get('job', ack['job_id'])
+                self.assertEqual(job['diagnostics']['product_response_reason'], reason)
+                self.assertEqual(job['diagnostics']['product_data_type'], 'string')
+                self.assertNotIn('不受影响', record['message'])
+
     def test_missing_binding_is_repaired_without_new_procurement_or_case_revision(self):
         case = self.demand()
         identifier = self.product()['local_product_id']

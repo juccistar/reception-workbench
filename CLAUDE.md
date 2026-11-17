@@ -30,6 +30,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 0.3.17修复阶段已提交1a81250，系统文字/PNG剪贴板和四张实际窗口验收记录见624ad26。WhatsApp采用左侧独立模块和原始WebContentsView，whatsapp-web.js 1.34.8及Puppeteer 24.38.0通过单视图CDP共用该页面，不开全应用调试端口，不使用双浏览器或LocalAuth管理同一partition。自动接待覆盖当前账号全部单聊，国际站绑定可选且仅提供只读背景；WhatsApp实体、摘要和发送账本独立，不反向写回国际站或触发采购/飞书。宿主私有_wa_*入口不进入renderer API，开启/绑定/接管核对账号与连接代次；历史和联系人metadata不触发回复。提交前持久冻结意图，确切消息ID和ACK>=1才受理，unknown不重发。宿主JSONL账本在业务根<mode>/whatsapp-ledgers/<商家SHA>/send-ledger，纳入完整业务备份，Electron登录目录不纳入。SDK锁定生产闭包在开发构建暂存main/node_modules并记录逐文件SHA，发行时封装为resources/whatsapp-runtime.asar，宿主只将两个SDK导入路由到该固定归档；打包逐文件核对归档，不泛化允许app.asar内的开发node_modules。公共扫码页及同DOM检查不等于实号收发验收，后者仍未执行。
 
+## 工作范围
+
+- 先明确用户要解决的问题，核实原因后再提出或实施修改。
+- 以解决问题所需的范围为限，保留无关的现有行为，不自行增加功能、规则或重构。
+- 顺带发现的问题和可选改进单独说明，不自动扩大任务；完成必要修改与验证后结束。
+
 ## 新版本构建后的提交
 
 每次完成新版本构建后，立即在本仓库创建一次 Git commit，不再积累多个版本后统一提交。提交说明使用中文，并写明版本号及主要变更；同时保存该版本相关源码、测试、文档及可纳入仓库的验证记录。提交前检查变更范围、敏感文件及 `git diff --check`，构建产物、业务数据、凭据和私钥继续遵守 `.gitignore`，不得强制纳入提交。

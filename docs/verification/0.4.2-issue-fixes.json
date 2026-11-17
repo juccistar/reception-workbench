@@ -1,0 +1,48 @@
+{
+  "version": "0.4.2",
+  "date": "2026-11-17",
+  "scope": "revised_five_issue_plan",
+  "status": "source_checks_passed_window_verification_pending",
+  "implemented": [
+    "current WhatsApp chat result distinguishes no selection from recognition failure and logs only changed allowlisted stages",
+    "current-window buyer chat images enter reception understanding independently of formal product-image assignment",
+    "product image component accepts the same verified schema in string or object data envelopes and preserves safe failure diagnostics",
+    "image reading and retry show busy animation; original image failures can retry in place",
+    "manual suggestion shows one lower progress card",
+    "generation/save/submission and persisted send batches share one current progress container"
+  ],
+  "targeted_checks": {
+    "whatsapp_and_ui": { "files": 6, "tests": 80, "status": "passed_across_final_file_runs" },
+    "chat_image_chain": { "tests": 77, "status": "passed", "synthetic_requests_only": true },
+    "product_display": { "tests": 13, "status": "passed" },
+    "product_image_service": { "tests": 19, "status": "passed" },
+    "automatic_reply_batches": { "tests": 18, "status": "passed", "new_phase_and_receipt_test": true },
+    "message_images": { "status": "passed_in_initial_ui_run" },
+    "typecheck": "passed",
+    "full_suite_run": false,
+    "failed_attempts_retained": [
+      "initial UI probe exposed a generation-to-detail-refresh container gap; fixed by retaining the acknowledged saved-draft handoff",
+      "next UI run caught the test observing the interim handoff before detail refresh; assertion now waits for the actual sending stage"
+    ]
+  },
+  "limits": {
+    "whatsapp_live_failure_stage": "not_observed",
+    "target_product_new_responses": "unavailable_without_Accio_launch_environment",
+    "public_product_pages": "WebFetch_domain_verification_blocked",
+    "alternate_image_source": "not_integrated_without_verification",
+    "real_provider_replay": false,
+    "no_new_send_failure_gates": true,
+    "formal_requirement_image_ownership_preserved": true
+  },
+  "build": { "status": "passed", "command": "node scripts/build.mjs", "output": "artifacts/app", "package_created": false },
+  "windows": "pending",
+  "boundaries": {
+    "paid_model_calls": 0,
+    "real_customer_sends": 0,
+    "real_profile_or_credentials_read": false,
+    "installed_application_replaced": false,
+    "business_data_migrated": false,
+    "private_source_pushed": false,
+    "release_packaged_or_published": false
+  }
+}

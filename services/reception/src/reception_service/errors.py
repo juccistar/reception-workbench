@@ -48,6 +48,11 @@ def safe_diagnostics(source):
             'specifications', 'customization', 'destination', 'delivery', 'budget',
             'packaging', 'certifications', 'contact'):
         safe['requirement_field'] = source['requirement_field']
+    if source.get('product_data_type') in ('object', 'string', 'null', 'other'):
+        safe['product_data_type'] = source['product_data_type']
+    if source.get('product_response_reason') in ('not_found', 'empty_data', 'invalid_json',
+            'missing_basic_info', 'missing_images', 'invalid_image_item', 'invalid_image_index'):
+        safe['product_response_reason'] = source['product_response_reason']
     if source.get('cancel_reason') in ('source_changed', 'paused', 'shutdown', 'superseded'):
         safe['cancel_reason'] = source['cancel_reason']
     if isinstance(source.get('read_stage'), str) and source['read_stage'] in READ_STAGES:

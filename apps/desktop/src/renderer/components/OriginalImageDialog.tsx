@@ -16,6 +16,7 @@ export function OriginalImageDialog({ images, initial, bridge, onClose, dialogLa
   const [error, setError] = useState('');
   const [originalSize, setOriginalSize] = useState(false);
   const [copying, setCopying] = useState(false);
+  const [readRevision, setReadRevision] = useState(0);
   const owner = useRef({ key: '', generation: 0 });
   const dialog = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
@@ -47,7 +48,7 @@ export function OriginalImageDialog({ images, initial, bridge, onClose, dialogLa
       setUrl(objectUrl);
     }, () => { if (active) setError('原图读取失败或已变化'); });
     return () => { active = false; void bridge.cancelImageOriginal?.(requestId).catch(() => {}); if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [bridge, refKey]);
+  }, [bridge, refKey, readRevision]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCloseRef.current(); }
@@ -63,7 +64,7 @@ export function OriginalImageDialog({ images, initial, bridge, onClose, dialogLa
   }, [images.length]);
   return <div className="image-dialog-backdrop" onClick={onClose}><div ref={dialog} className="image-dialog original-image-dialog" role="dialog" aria-modal="true" aria-label={dialogLabel || image?.label || '图片'} onClick={event => event.stopPropagation()}>
     <header className="original-image-heading"><h2>{dialogLabel || image?.label || '图片'}</h2><button ref={close} type="button" aria-label="关闭图片" onClick={onClose}><X size={18} /></button></header>
-    <div className={`original-image-viewport ${originalSize ? 'original-size' : ''}`} onContextMenu={event => { event.preventDefault(); copyImageMenu(bridge, image?.ref, setError); }}>{url ? <img src={url} alt={image?.label || '图片'} /> : <p role="status">{error || '正在读取原图…'}</p>}</div>
+    <div className={`original-image-viewport ${originalSize ? 'original-size' : ''}`} aria-busy={!url && !error} onContextMenu={event => { event.preventDefault(); copyImageMenu(bridge, image?.ref, setError); }}>{url ? <img src={url} alt={image?.label || '图片'} /> : <div className="original-image-loading"><p className="image-loading-status" role="status">{!error && <span className="tiny-spinner" aria-hidden="true" />}{error || '正在读取原图…'}</p>{error && image?.ref && bridge?.getImageOriginal && <button type="button" onClick={() => { setError(''); setReadRevision(value => value + 1); }}>重试读取原图</button>}</div>}</div>
     {url && error && <small role="status">{error}</small>}
     {images.length > 1 && <div className="gallery-navigation"><button type="button" aria-label={dialogLabel ? `上一张${dialogLabel}` : '上一张'} onClick={() => setIndex((index + images.length - 1) % images.length)}>上一张</button><span>{index + 1} / {images.length}</span><button type="button" aria-label={dialogLabel ? `下一张${dialogLabel}` : '下一张'} onClick={() => setIndex((index + 1) % images.length)}>下一张</button></div>}
     <footer className="original-image-controls"><button type="button" className="original-image-scale" onClick={() => setOriginalSize(value => !value)}>{originalSize ? '适应窗口' : '原始尺寸'}</button><button type="button" onClick={onClose}>关闭</button><button type="button" className="primary" disabled={!url || copying || !bridge?.copyImageOriginal} onClick={() => void copy()}>{copying ? '正在复制' : '复制图片'}</button></footer>

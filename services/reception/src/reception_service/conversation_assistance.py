@@ -258,7 +258,7 @@ class ConversationAssistanceMixin:
             case = self.repo.get('case', context.get('case_id')) if context.get('case_id') else None
             messages = self.repo.list('message', conversation_id=cid)
             owner = self._require('conversation', cid)
-            has_photos = self.settings.get('reception_images_enabled', True) and bool(get_reception_source_images(self.repo, owner, case, messages))
+            has_photos = self.settings.get('reception_images_enabled', True) and bool(get_reception_source_images(self.repo, owner, case, messages, settings=self.settings))
         if context.get('unsent_reply') or not has_photos:
             with self._lock:
                 token = self._read_token(facade)

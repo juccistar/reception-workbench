@@ -9,10 +9,16 @@ import type { WhatsAppTransportHost } from '../whatsapp-coordinator';
 import type { WhatsAppHostInfo } from '../../shared/whatsapp';
 import type { WhatsAppEvent, WhatsAppMessage } from './events';
 import { SendLedger, type FrozenIntent, type SendResult } from './ledger';
+import { WhatsAppDiagnostics } from './diagnostics';
 
 const direct = (id: string) => /@(c\.us|lid)$/.test(id);
 const serial = (id: any): string => typeof id === 'string' ? id : (id?._serialized || '');
 const execFileAsync = promisify(execFile);
+
+export type CurrentChatResult =
+  | { status: 'chat'; chat_id: string; name?: string }
+  | { status: 'none' }
+  | { status: 'unavailable'; stage: 'identity' | 'collection' | 'active' | 'id' | 'sdk' | 'verification' };
 
 type Sdk = { Client: new (options: any) => any };
 export interface ChromeWhatsAppHostOptions {
@@ -67,6 +73,7 @@ export async function resolveGoogleChrome(): Promise<string> {
 
 export class ChromeWhatsAppHost implements WhatsAppTransportHost {
   private readonly ledger: SendLedger;
+  private readonly diagnostics: WhatsAppDiagnostics;
   private client: any;
   private generation = 0;
   private status: WhatsAppHostInfo = { status: 'disconnected', account_id: '', connection_epoch: '', page_state: 'closed' };
@@ -88,6 +95,7 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
   private outgoing: Array<{ account: string; epoch: string; message: WhatsAppMessage }> = [];
   constructor(private readonly options: ChromeWhatsAppHostOptions) {
     this.ledger = new SendLedger(path.join(options.directory, 'send-ledger'));
+    this.diagnostics = new WhatsAppDiagnostics(options.diagnosticsDirectory, options.applicationVersion ?? 'unknown');
   }
   private update(status: string, extra: Partial<WhatsAppHostInfo> = {}): void {
     this.status = { ...this.status, ...extra, status };
@@ -277,43 +285,59 @@ export class ChromeWhatsAppHost implements WhatsAppTransportHost {
     if (this.options.extensionDirectory && !this.panelReady) this.panelOpenRequested = true;
     else await this.options.onOpen?.().catch(() => {});
   }
-  async resolveCurrentChat(): Promise<{ chat_id: string; name?: string } | null> {
+  async resolveCurrentChat(): Promise<CurrentChatResult> {
+    const generation = this.generation;
+    const result = await this.readCurrentChat();
+    this.diagnostics.currentChat(generation, result.status, result.status === 'unavailable' ? result.stage : undefined);
+    return result;
+  }
+  private async readCurrentChat(): Promise<CurrentChatResult> {
     const generation = this.generation, account = this.status.account_id, epoch = this.status.connection_epoch;
     const client = this.client, page = client?.pupPage;
-    if (!this.active(generation, account, epoch) || !page || typeof page.url !== 'function' || !this.allowedPage(page.url())) return null;
+    const allowed = () => { try { return !!page && typeof page.url === 'function' && !page.isClosed() && this.allowedPage(page.url()); } catch { return false; } };
+    if (!this.active(generation, account, epoch) || !allowed()) return { status: 'unavailable', stage: 'identity' };
     // WPPConnect wa-js getActiveChat.ts blob b1a0e6d6b927fdc6f2444eaccec265cb75ae8fc4
     // uses ChatStore/NewsletterStore active models. Its stores.ts maps these to
     // WAWebChatCollection and WAWebNewsletterCollection; the locked SDK uses
     // WAWebCollections.Chat.getModelsArray() for the same chat collection.
-    const readActive = async (): Promise<string | null> => page.evaluate(() => {
+    type ActiveResult = { status: 'active'; id: string } | { status: 'none' } | { status: 'unavailable'; stage: 'collection' | 'active' | 'id' };
+    const readActive = async (): Promise<ActiveResult> => page.evaluate(() => {
       try {
         const collections = (window as any).require('WAWebCollections');
         const chat = collections.Chat;
-        // The pinned SDK exposes the channel collection on WAWebCollections.
-        // Older builds exposed a separate default export; an unreadable store is never empty.
+        // An unreadable store must never be treated as an empty selection.
         const newsletter = 'WAWebNewsletterCollection' in collections ? collections.WAWebNewsletterCollection : (window as any).require('WAWebNewsletterCollection').default;
-        if (typeof chat?.getModelsArray !== 'function' || typeof newsletter?.getModelsArray !== 'function') return null;
+        if (typeof chat?.getModelsArray !== 'function' || typeof newsletter?.getModelsArray !== 'function') return { status: 'unavailable', stage: 'collection' };
         const chats = chat.getModelsArray(), channels = newsletter.getModelsArray();
-        if (!Array.isArray(chats) || !Array.isArray(channels) || channels.some((item: any) => item?.active === true)) return null;
+        if (!Array.isArray(chats) || !Array.isArray(channels)) return { status: 'unavailable', stage: 'collection' };
         const active = chats.filter((item: any) => item?.active === true);
-        if (active.length !== 1) return null;
+        const activeChannels = channels.filter((item: any) => item?.active === true);
+        if (active.length + activeChannels.length > 1) return { status: 'unavailable', stage: 'active' };
+        if (activeChannels.length || !active.length) return { status: 'none' };
         const id = active[0]?.id;
         const value = id?._serialized ?? id?.$1;
-        if (id?._serialized != null && id?.$1 != null && id._serialized !== id.$1) return null;
-        return typeof value === 'string' ? value : null;
-      } catch { return null; }
+        if ((id?._serialized != null && id?.$1 != null && id._serialized !== id.$1) || typeof value !== 'string') return { status: 'unavailable', stage: 'id' };
+        if (/@(g\.us|broadcast)$/.test(value)) return { status: 'none' };
+        if (!/^\d+(?::\d+)?@(c\.us|lid)$/.test(value)) return { status: 'unavailable', stage: 'id' };
+        return { status: 'active', id: value };
+      } catch { return { status: 'unavailable', stage: 'collection' }; }
     });
-    try {
-      const first = await readActive();
-      if (!this.active(generation, account, epoch) || this.client !== client || client.pupPage !== page || !first || !/^\d+(?::\d+)?@(c\.us|lid)$/.test(first)) return null;
-      const chat = await client.getChatById(first);
-      const chatId = chat?.id;
-      const resolvedId = typeof chatId === 'string' ? chatId : (chatId?._serialized ?? chatId?.$1);
-      if (!this.active(generation, account, epoch) || this.client !== client || client.pupPage !== page || !chat || chat.isGroup !== false || resolvedId !== first || (chatId?._serialized != null && chatId?.$1 != null && chatId._serialized !== chatId.$1)) return null;
-      const second = await readActive();
-      if (!this.active(generation, account, epoch) || this.client !== client || client.pupPage !== page || page.isClosed() || !this.allowedPage(page.url()) || second !== first) return null;
-      return { chat_id: first, ...(typeof chat.name === 'string' && chat.name.trim() ? { name: chat.name } : {}) };
-    } catch { return null; }
+    const current = () => this.active(generation, account, epoch) && this.client === client && client.pupPage === page;
+    let first: ActiveResult;
+    try { first = await readActive(); } catch { return { status: 'unavailable', stage: 'collection' }; }
+    if (!current()) return { status: 'unavailable', stage: 'identity' };
+    if (first.status !== 'active') return first;
+    let chat: any;
+    try { chat = await client.getChatById(first.id); } catch { return { status: 'unavailable', stage: 'sdk' }; }
+    if (!current()) return { status: 'unavailable', stage: 'identity' };
+    const chatId = chat?.id;
+    const resolvedId = typeof chatId === 'string' ? chatId : (chatId?._serialized ?? chatId?.$1);
+    if (!chat || chat.isGroup !== false || resolvedId !== first.id || (chatId?._serialized != null && chatId?.$1 != null && chatId._serialized !== chatId.$1)) return { status: 'unavailable', stage: 'sdk' };
+    let second: ActiveResult;
+    try { second = await readActive(); } catch { return { status: 'unavailable', stage: 'verification' }; }
+    if (!current() || !allowed()) return { status: 'unavailable', stage: 'identity' };
+    if (second.status !== 'active' || second.id !== first.id) return { status: 'unavailable', stage: 'verification' };
+    return { status: 'chat', chat_id: first.id, ...(typeof chat.name === 'string' && chat.name.trim() ? { name: chat.name } : {}) };
   }
   async listChats(): Promise<Array<{ chat_id: string; name: string }>> {
     const generation = this.generation, account = this.status.account_id, epoch = this.status.connection_epoch;

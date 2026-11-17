@@ -7,7 +7,7 @@ function fixture() {
   let chat = 'a@c.us', epoch = 'epoch';
   const status = () => ({ status: 'ready', account_id: 'account', connection_epoch: epoch });
   const state = () => ({ workspace_id: 'workspace', account_id: 'account', connection_epoch: epoch, connected: true, enabled: false, allowed_merchant_ids: [], model: { ready: false }, legacy: { status: 'ready' }, bindings: [], conversations: [{ chat_id: chat, human_owned: false, reception_paused: false }], default_merchant_id: 'merchant', default_revision: 0 });
-  const options: any = { workspaceId: 'workspace', runtimeInstanceId: 'runtime', getStatus: status, resolveCurrentChat: vi.fn(async () => ({ chat_id: chat })), readState: vi.fn(async () => ({ profile: { workspace_id: 'workspace' }, runtime_instance_id: 'runtime', state: state(), merchants: [{ merchant_id: 'merchant', name: 'M', available: true }] })), getContext: vi.fn(async () => ({ binding_revision: 0, wa_summary: '', international_background: null })), saveBinding: vi.fn(), takeover: vi.fn(), reconcile: vi.fn(), searchCustomers: vi.fn(async () => []) };
+  const options: any = { workspaceId: 'workspace', runtimeInstanceId: 'runtime', getStatus: status, resolveCurrentChat: vi.fn(async () => ({ status: 'chat', chat_id: chat })), readState: vi.fn(async () => ({ profile: { workspace_id: 'workspace' }, runtime_instance_id: 'runtime', state: state(), merchants: [{ merchant_id: 'merchant', name: 'M', available: true }] })), getContext: vi.fn(async () => ({ binding_revision: 0, wa_summary: '', international_background: null })), saveBinding: vi.fn(), takeover: vi.fn(), reconcile: vi.fn(), searchCustomers: vi.fn(async () => []) };
   const controller: any = new CustomerPanelController(options);
   const messages: any[] = [];
   controller.extensionId = 'a'.repeat(32); controller.contextId = 7; controller.token = 'secret';
@@ -124,7 +124,7 @@ describe('private customer panel bridge', () => {
   it('shows the verified customer while registration is pending and recovers when context becomes available', async () => {
     const f = fixture(); const snapshot = await f.options.readState(); snapshot.state.conversations = [];
     f.options.readState.mockResolvedValue(snapshot);
-    f.options.resolveCurrentChat.mockResolvedValue({ chat_id: 'a@c.us', name: '客户甲' });
+    f.options.resolveCurrentChat.mockResolvedValue({ status: 'chat', chat_id: 'a@c.us', name: '客户甲' });
     f.options.getContext.mockRejectedValueOnce(Object.assign(new Error('WhatsApp 联系人不存在'), { code: 'not_found' }));
     await f.controller.poll(0);
     await vi.waitFor(() => expect(f.controller.view?.context_status).toBe('unavailable'));
@@ -173,8 +173,19 @@ describe('private customer panel bridge', () => {
       expect(f.controller.view.summary).toBe('恢复后的资料');
     } finally { clock.mockRestore(); await f.controller.close(); }
   });
+  it('clears the prior customer on recognition failure and recovers after a verified read', async () => {
+    const f = fixture();
+    f.options.resolveCurrentChat.mockResolvedValue({ status: 'unavailable', stage: 'collection' });
+    await f.controller.poll(0);
+    expect(f.messages.at(-1)).toEqual({ kind: 'clear', status: '暂时无法识别当前客户' });
+    expect(f.controller.view).toBeNull();
+    f.options.resolveCurrentChat.mockResolvedValue({ status: 'chat', chat_id: 'a@c.us' });
+    clearTimeout(f.controller.timer); await f.controller.poll(0);
+    expect(f.controller.view.identity.chat_id).toBe('a@c.us');
+    await f.controller.close();
+  });
   it('publishes the empty selection status again after a panel is retired and reopened', async () => {
-    const f = fixture(); f.options.resolveCurrentChat.mockResolvedValue(null);
+    const f = fixture(); f.options.resolveCurrentChat.mockResolvedValue({ status: 'none' });
     await f.controller.poll(0);
     expect(f.messages.at(-1)).toEqual({ kind: 'clear', status: '请选择一个单聊' });
     const session = f.controller.session; f.controller.retirePanel(); f.messages.length = 0;
@@ -198,7 +209,7 @@ describe('private customer panel bridge', () => {
     await f.controller.close();
   });
   it('restores the empty selection message after a transient snapshot error', async () => {
-    const f = fixture(); f.options.resolveCurrentChat.mockResolvedValue(null);
+    const f = fixture(); f.options.resolveCurrentChat.mockResolvedValue({ status: 'none' });
     await f.controller.poll(0);
     f.options.readState.mockRejectedValueOnce(new Error('temporary read error'));
     clearTimeout(f.controller.timer); await f.controller.poll(0);
