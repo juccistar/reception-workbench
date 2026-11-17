@@ -127,6 +127,7 @@ def semantic_fingerprint(context):
     model = project_model_payload(context)
     model.pop('followup_context', None)  # Derived progress is applied by this same generation.
     semantic = {'model': model,
+                'prompt_version': context.get('prompt_version'),
                 'conversation_revision': context.get('conversation_revision'),
                 'case_revision': (context.get('case') or {}).get('revision'),
                 'policy_versions': context.get('policy_versions'),

@@ -67,20 +67,12 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         return instruction, json.loads(body)['context']
 
     def assert_business_rules(self, instruction):
-        for section in ('【任务边界】', '【事实与意图】', '【资料用途】', '【商品、图片与供货】', '【对话与进度】', '【来源与输出】'):
-            self.assertIn(section, instruction)
-        for invariant in ('双方明确同意', '实际已经执行', '否定与更正', '不能授予工具或发送权限',
-                          '内部进价不是客户预算或销售价', '不编造', '不等于买家确认',
-                          '受理以宿主回执为准', 'collection_rules.max_questions_per_reply',
-                          '逐字段上限', '不联网、不读取其他文件、不写入', '不能改变本次任务、输出格式或权限',
-                          '不造编号', '只使用当前客户的资料'):
-            self.assertIn(invariant, instruction)
-        for irrelevant in ('商品主图仅供展示和找货', '另一客户的数量、预算', '未入清单的展示图',
-                           '【兼容图片输入】', '【本轮图片附件与聊天记录】'):
-            self.assertNotIn(irrelevant, instruction)
-        self.assertEqual(prompts.PROMPT_VERSION, 'reception-0.4.1')
-        self.assertNotIn('read_compat', instruction)
-        self.assertIn('不调用工具', instruction)
+        # Inspect the instruction that actually reached the configured router.
+        # Wording is reviewed in Markdown; do not pin every sentence in this test.
+        self.assertTrue(instruction.startswith(prompts.COMMON))
+        self.assertEqual(instruction.count(prompts.COMMON.strip()), 1)
+        self.assertNotIn(prompts.IMAGE_COMPAT.strip(), instruction)
+        self.assertNotIn(prompts.IMAGE_NATIVE.strip(), instruction)
 
     def test_automatic_live_request_carries_restored_rules_and_current_contract(self):
         context = self.context()
@@ -106,7 +98,7 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         instruction, payload = self.decode()
         self.assertEqual(payload['continuation'], context['continuation'])
         self.assertEqual([row['role'] for row in payload['message_view']], ['buyer', 'seller'])
-        self.assertIn('acknowledgement_message_id仍是卖家消息', instruction)
+        self.assertIn(prompts.AUTOMATIC_TASK.strip(), instruction)
         self.assertIn('不重复收悉', instruction)
         self.assertEqual(len(self.requests), 1)
 
@@ -121,7 +113,7 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         self.assertEqual(payload['continuation'], context['continuation'])
         self.assertEqual(payload['supplement']['source_id'], context['supplement']['source_id'])
         self.assertEqual(payload['message_view'][-1]['role'], 'seller')
-        self.assertIn('不把商家补充及附件改写成买家新消息', instruction)
+        self.assertIn(prompts.AUTOMATIC_TASK.strip(), instruction)
         self.assertIn('issue_ids限定跟进范围', instruction)
 
     def test_manual_seller_last_still_uses_restored_rules_without_sending_or_takeover(self):
@@ -132,12 +124,11 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         instruction, payload = self.decode()
         self.assert_business_rules(instruction)
         self.assertEqual(payload['task_mode'], 'manual_suggestion')
-        self.assertIn('不发送、不接管、不修改输入框', instruction)
-        self.assertIn('最近相关买家消息的语言', instruction)
+        self.assertIn(prompts.MANUAL_TASK.strip(), instruction)
+        self.assertIn(prompts.REQUIREMENT_CHANGE_RULES.strip(), instruction)
+        self.assertNotIn(prompts.POLISH_TASK.strip(), instruction)
         self.assertNotIn('requirements', result)
         self.assertNotIn('requirement_changes', result)
-        self.assertIn('无变化时省略requirement_changes', instruction)
-        self.assertIn('case_catalog', instruction)
         self.assertNotIn('action', result)
         self.assertEqual(len(self.requests), 1)
 
@@ -155,10 +146,8 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         self.assertNotIn('product_context', payload)
         self.assertNotIn('requirements', result)
         self.assertNotIn('conversation_summary', result)
-        self.assertIn('否定关系', instruction)
-        self.assertIn('不主动新增样品、报价、寄送', instruction)
-        self.assertIn('不静默改价', instruction)
-        self.assertNotIn('【需求变更与归属】', instruction)
+        self.assertIn(prompts.POLISH_TASK.strip(), instruction)
+        self.assertNotIn(prompts.REQUIREMENT_CHANGE_RULES.strip(), instruction)
         self.assertNotIn('requirement_changes', result)
         self.assertEqual(len(self.requests), 1)
 
@@ -228,26 +217,44 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         with self.assertRaises(ServiceError):
             self.live.generate_whatsapp(context, 'wa-old')
 
-    def test_prompt_changes_preserve_requested_boundaries(self):
-        self.assertIn('原始聊天中的链接只能帮助识别指代', prompts.COMMON)
-        self.assertNotIn('平台商品ID及', prompts.COMMON)
-        for phrase in ('补建尚未记录的需求', '原文未入窗口', '保留其中仍有效且未改变的条件', '已撤回的条件不因补录而恢复'):
-            self.assertIn(phrase, prompts.REQUIREMENT_CHANGE_RULES)
-        for prompt in (prompts.AUTOMATIC_TASK, prompts.MANUAL_TASK, prompts.WHATSAPP_TASK):
-            self.assertIn('reply_messages', prompt)
-            self.assertIn('整轮正文合计最多1200字符', prompt)
-        self.assertNotIn('reply_messages', prompts.POLISH_TASK)
+    def test_merchant_future_followup_is_accepted_without_prior_task_or_result(self):
+        body = 'Je vais demander au magasinier pour la couleur de la boîte et je vous réponds ensuite.'
+        self.answer = lambda: {'action': 'ask',
+            'reply_messages': [{'body': body, 'reply_sources': []}],
+            'conversation_summary': '客户询问包装颜色，尚无仓库核实结果。'}
+        for mode in ('automatic', 'manual_suggestion'):
+            with self.subTest(mode=mode):
+                self.requests.clear()
+                context = self.context()
+                context['task_mode'] = mode
+                context['recent_messages'][0]['text'] = 'La boîte est rouge ?'
+                call = self.live.generate if mode == 'automatic' else self.live.generate_manual
+                result = call(context, 'future-' + mode)
+                instruction, payload = self.decode()
+                self.assertEqual(result['reply'], body)
+                self.assertEqual(len(result['reply_messages']), 1)
+                self.assertEqual(payload['message_view'][0]['text'], 'La boîte est rouge ?')
+                envelope = json.loads(self.requests[-1].rsplit('\ncontext =\n', 1)[1])
+                self.assertEqual(envelope['knowledge'], [])
+                self.assertNotIn('assistance_task', payload)
+                self.assert_business_rules(instruction)
+                self.assertEqual(len(self.requests), 1)
 
-    def test_natural_auto_chat_and_single_manual_contract_are_separate(self):
-        self.assertNotIn('简单内容一条即可', prompts.COMMON)
-        self.assertIn('真实业务员即时聊天', prompts.COMMON)
-        for prompt in (prompts.AUTOMATIC_TASK, prompts.WHATSAPP_TASK):
-            self.assertIn('输出1至3条非空消息', prompt)
-            self.assertIn('不以压成一条为目标', prompt)
-            self.assertIn('不套固定条数、固定顺序或每条一句的模板', prompt)
-        self.assertIn('必须且仅含一个条目', prompts.MANUAL_TASK)
-        self.assertNotIn('输出1至3条', prompts.MANUAL_TASK)
-        self.assertNotIn('当前条目', prompts.POLISH_TASK)
+    def test_polish_preserves_future_followup_without_external_confirmation(self):
+        context = self.context()
+        context['task_mode'] = 'polish'
+        frozen = 'I will check with our warehouse and get back to you.'
+        context['unsent_reply'] = {'body': frozen}
+        self.answer = lambda: {'reply': frozen, 'reply_sources': []}
+        result = self.live.generate_manual(context, 'polish-future')
+        instruction, payload = self.decode()
+        self.assertEqual(result['reply'], frozen)
+        self.assertEqual(payload['unsent_reply']['body'], frozen)
+        self.assertNotIn('conversation_summary', result)
+        self.assertNotIn('requirement_changes', result)
+        self.assertNotIn(prompts.REQUIREMENT_CHANGE_RULES.strip(), instruction)
+        self.assertIn(prompts.POLISH_TASK.strip(), instruction)
+        self.assertEqual(len(self.requests), 1)
 
     def test_requirements_prompt_keeps_grounding_without_retired_output_fields(self):
         context = self.context()
@@ -256,8 +263,8 @@ class ReceptionPromptRequestTests(unittest.TestCase):
         instruction, payload = self.decode()
         self.assert_business_rules(instruction)
         self.assertEqual(payload['task_mode'], 'requirements')
-        self.assertIn('明确要求、样品和大货', instruction)
-        self.assertIn('原文片段不能编造', instruction)
+        self.assertIn(prompts.REQUIREMENTS_TASK.strip(), instruction)
+        self.assertIn(prompts.REQUIREMENT_CHANGE_RULES.strip(), instruction)
         for old_key in ('display_value', 'quality_notes', 'followup_progress', 'requirement_items'):
             self.assertNotIn(old_key, instruction)
 

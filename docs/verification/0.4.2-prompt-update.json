@@ -1,0 +1,150 @@
+{
+  "version": "0.4.2",
+  "date": "2026-11-17",
+  "status": "source_updated_targeted_checks_passed_not_packaged",
+  "baseline_commit": "1c56ea561d88e12813c88b4133758ac5e6372378",
+  "prompt_version": "reception-0.4.2-r2",
+  "translation_prompt_version": "chat-v4-a297c4e90b5dcf5619049749ff018c3323fc3556149dd55545ce7f2dd13d1591",
+  "reviewed_source": "docs/接待提示词审核稿.md",
+  "runtime_module": "services/reception/src/reception_service/integrations/reception_prompts.py",
+  "prompt_blocks": 12,
+  "principles": [
+    "Reply from the merchant's perspective in natural conversation.",
+    "Future follow-up wording may be used without a pre-existing task or started-work record.",
+    "Specific business facts and already-started or completed progress remain grounded in actual information.",
+    "Polish preserves existing intent and commitments; translation preserves tense and certainty.",
+    "Preserve current output, requirement, image provenance and send-ledger contracts."
+  ],
+  "implementation": {
+    "fixed_prompts_synced": true,
+    "automatic_semantic_fingerprint_includes_prompt_revision": true,
+    "manual_and_polish_context_fingerprints_already_include_revision": true,
+    "whatsapp_merchant_fingerprint_includes_prompt_revision": true,
+    "whatsapp_account_generation_and_send_freeze_revision": true,
+    "translation_revision_derived_from_reviewed_translation_text": true,
+    "builtin_template_versions": {
+      "B01": 2,
+      "B05": 2,
+      "B06": 2
+    },
+    "other_builtin_templates_unchanged": true,
+    "existing_adoption_ui": "资料与政策 → 内置内容 → 编辑新版并更新",
+    "saved_merchant_copies_updated_automatically": false
+  },
+  "upgrade_recovery": {
+    "scope": "obsolete account-owned WhatsApp automatic batches only",
+    "preconditions": [
+      "AccountRepository holds the workspace process lock.",
+      "Only a prepared operation with explicit submission_started=false, no message ID or ACK, and a matching frozen part/identity is cancelled.",
+      "Accepted batches, submitted/unknown operations and any conflicting part ID, ACK or submission evidence remain unchanged; all batches for the same source are checked.",
+      "Regeneration eligibility requires a wholly unsent source across all its batches, next_index=0, a completed original attempt with a known positive count below 3, matching original owner and source fingerprint.",
+      "The original attempt ID, count, source key, operation and batch records are retained; an exhausted budget is not restored.",
+      "Recovery does not restore reception authorization or execute a send."
+    ],
+    "implementation_review_finding": "Old-owner prepared batches missing prompt_version could remain blocked while their generation attempt stayed completed.",
+    "finding_fixed": true,
+    "real_historical_ledger_replay": false
+  },
+  "completed_checks": [
+    {
+      "scope": "runtime prompt generation and exact source consistency",
+      "command": "node scripts/sync-reception-prompts.mjs --check",
+      "status": "passed"
+    },
+    {
+      "scope": "actual generation request assembly and future-follow-up acceptance",
+      "file": "test_reception_prompts_0314.py",
+      "tests": 11,
+      "status": "passed_after_test_fixture_correction",
+      "log": "artifacts/verification/prompt-runtime-update-main-20261117-40qy32no/test_reception_prompts_0314.corrected.log"
+    },
+    {
+      "scope": "historical translation retention and prompt cache identity",
+      "file": "test_translation_retirement_042.py",
+      "tests": 4,
+      "status": "passed",
+      "log": "artifacts/verification/prompt-runtime-update-main-20261117-40qy32no/test_translation_retirement_042.py.log"
+    },
+    {
+      "scope": "translation provider protocol, cancellation and local HTTP",
+      "file": "test_translation_provider.py",
+      "tests": 7,
+      "status": "passed",
+      "log": "artifacts/verification/prompt-runtime-update-main-20261117-40qy32no/test_translation_provider.py.log"
+    },
+    {
+      "scope": "prompt revision invalidation and conservative old-batch recovery",
+      "file": "test_prompt_revision_042.py",
+      "tests": 11,
+      "status": "passed",
+      "log": "artifacts/verification/prompt-runtime-accepted-20261117-b74v32t2/test_prompt_revision_042.py.log"
+    },
+    {
+      "scope": "account-owned WhatsApp generation",
+      "file": "test_whatsapp_account_generation_041.py",
+      "tests": 22,
+      "status": "passed",
+      "log": "artifacts/verification/prompt-runtime-accepted-20261117-b74v32t2/test_whatsapp_account_generation_041.py.log"
+    },
+    {
+      "scope": "builtin version discovery, reviewed adoption and CAS protection",
+      "file": "test_policy_library.py",
+      "tests": 9,
+      "status": "passed",
+      "evidence_workflow_run": "wf_d70825f3-2f4"
+    },
+    {
+      "scope": "generator source checks, translation content revision and CRLF normalization",
+      "file": "scripts/tests/reception-prompts.test.mjs",
+      "tests": 2,
+      "status": "passed",
+      "log": "artifacts/verification/prompt-runtime-update-main-20261117-40qy32no/reception-prompts.test.mjs.final.log"
+    },
+    {
+      "scope": "final diff format",
+      "command": "git diff --check",
+      "status": "passed"
+    }
+  ],
+  "test_totals": {
+    "backend_files": 6,
+    "backend_tests": 64,
+    "tool_files": 1,
+    "tool_tests": 2,
+    "repeated_runs_not_added": true
+  },
+  "pending_checks": [],
+  "prior_check_failures": [
+    "The first request-assembly run inspected knowledge inside the context object rather than at the wire-envelope top level; two subtests errored after the application had already returned the future reply. The assertion was corrected and all 11 tests passed. No production rejection was established by that failure.",
+    "An ad hoc log wrapper encountered a Windows GBK console-encoding error while printing Node test status. The generator tests were rerun with ASCII-safe status output and passed; the application code was unaffected."
+  ],
+  "limits": {
+    "full_suite_run": false,
+    "application_model_calls": 0,
+    "real_platform_requests": 0,
+    "real_customer_sends": 0,
+    "real_merchant_policy_records_modified": false,
+    "real_data_migrated": false,
+    "desktop_built": false,
+    "new_candidate_packaged": false,
+    "installed_application_replaced": false,
+    "private_source_pushed": false,
+    "real_model_naturalness_verified": false
+  },
+  "implementation_review": {
+    "status": "findings_addressed_with_directed_regressions",
+    "initial_run": "wf_d612ad93-ac6",
+    "recovery_run": "wf_e6401ed5-965",
+    "confirmation_run": "wf_bc6287bc-e4a",
+    "resolved": [
+      "retire only proven-unsent obsolete batches despite old owner process IDs",
+      "preserve exhausted or missing attempt budgets and their original completed state",
+      "veto regeneration on part ACKs and any same-source batch submission evidence",
+      "compare historical batch records before and after recovery"
+    ],
+    "post_review_followups": [
+      "Exhausted original attempts remain completed; no counter or eligibility is restored.",
+      "Historical batch equality is checked against a read-only database snapshot taken before recovery initialization."
+    ]
+  }
+}

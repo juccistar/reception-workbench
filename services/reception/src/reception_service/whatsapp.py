@@ -7,6 +7,7 @@ import hashlib
 from .business_supplement import supplement_context
 from .collection_rules import collection_rules
 from .errors import ServiceError
+from .integrations.reception_prompts import PROMPT_VERSION
 from .model_payload import model_json
 from .policy_library import select_policy_inputs
 from .repository import encoded, new_id, now_ms
@@ -322,7 +323,9 @@ class WhatsAppMixin(WhatsAppMediaMixin):
 
     def _wa_fingerprint(self, chat_id, batch=None):
         own_ids = [p['message_id'] for p in batch['parts'] if p.get('status') == 'accepted' and p.get('message_id')] if batch else []
-        return hashlib.sha256(encoded(self.get_whatsapp_context(chat_id, exclude_message_ids=own_ids)).encode('utf-8')).hexdigest()
+        basis = {'prompt_version': PROMPT_VERSION,
+                 'context': self.get_whatsapp_context(chat_id, exclude_message_ids=own_ids)}
+        return hashlib.sha256(encoded(basis).encode('utf-8')).hexdigest()
 
     def _schedule_whatsapp(self):
         if not self._wa_enabled or self._wa_status != 'connected' or self._closing or self._stop.is_set():

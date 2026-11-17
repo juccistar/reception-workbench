@@ -2,7 +2,7 @@ import threading
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from reception_service.translation_provider import RouterTranslator
 from reception_service.repository import Repository
@@ -71,6 +71,47 @@ class TranslationRetirementTests(unittest.TestCase):
         self.assertTrue(router.resolve.call_args.kwargs['allow_unchecked'])
         self.assertTrue(router.generate.call_args.kwargs['_allow_unchecked'])
         self.assertEqual(router.assert_current.call_count, 2)
+
+    def test_previous_prompt_translation_is_history_not_a_fresh_cache_hit(self):
+        from reception_service.repository import encoded
+        with tempfile.TemporaryDirectory() as directory:
+            control = Repository(Path(directory) / 'control.sqlite3')
+            repo = Repository(Path(directory) / 'seller.sqlite3', 'seller-a')
+            try:
+                service = TranslationMixin()
+                service._lock = threading.RLock()
+                service._control, service.repo = control, repo
+                service.seller_id, service.mode = 'seller-a', 'live'
+                service._translation_settings = {'model': ''}
+                service.settings = {}
+                service._chat_owner = lambda cid: {'conversation_id': cid, 'seller_id': 'seller-a', 'buyer_id': 'buyer-a'}
+                service._translation_cache_model = lambda: ['synthetic-route']
+                service._new_translation_provider = Mock(side_effect=AssertionError('history display must not call a model'))
+                source = {'conversation_id': 'c', 'message_id': 'm', 'seller_id': 'seller-a',
+                          'buyer_id': 'buyer-a', 'role': 'seller', 'text': 'I will ask our warehouse.'}
+                repo.put('message', encoded(['c', 'm']), source)
+                item = {'kind': 'message', 'source_id': 'm'}
+                with patch('reception_service.translation_service.TRANSLATION_PROMPT_VERSION', 'chat-v3-reviewed-039'):
+                    identity, old_key, payload = service._translation_sources('c', [item])[0]
+                old_record = {**identity, 'conversation_id': 'c', 'seller_id': 'seller-a',
+                              'context_hash': _hash(payload['context']), 'status': 'ready',
+                              'text': '我去问一下仓库。', 'error': None}
+                repo.put('translation_v2', old_key, old_record)
+                _, current_key, current_payload = service._translation_sources('c', [item])[0]
+                self.assertNotEqual(current_key, old_key)
+                self.assertEqual(current_payload, payload)
+                shown = service.get_translations('c', [item])['items'][0]
+                self.assertEqual(shown['text'], old_record['text'])
+                self.assertTrue(shown['legacy'])
+                self.assertEqual(shown['provider'], '第三方历史缓存')
+                self.assertEqual(shown['cache_key'], current_key)
+                self.assertIsNone(repo.get('translation_v2', current_key))
+                self.assertEqual(repo.get('translation_v2', old_key), old_record)
+                self.assertEqual(repo.get('message', encoded(['c', 'm'])), source)
+                service._new_translation_provider.assert_not_called()
+            finally:
+                repo.close()
+                control.close()
 
     def test_history_projection_requires_matching_identity_and_context(self):
         service = TranslationMixin()

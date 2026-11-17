@@ -771,6 +771,7 @@ class WhatsAppAccountService(AccountMediaMixin, AccountGenerationMixin):
                 or contact.get('pending_message_id') != op.get('pending_message_id')
                 or binding.get('merchant_id') != op.get('merchant_id') or binding.get('revision') != op.get('binding_revision')
                 or binding.get('segment_id') != op.get('segment_id') or binding.get('requested_binding') is not None
+                or (op.get('batch_id') and not self._account_prompt_current(op.get('prompt_version')))
                 or (op.get('source_fingerprint') is not None and op['source_fingerprint'] != self._account_source_fingerprint(op['account_id'], op['chat_id'], op['segment_id']))
                 or not lease or lease.get('revision') != op.get('context_revision')
                 or (op.get('context_instance_id') is not None and lease.get('instance_id') != op['context_instance_id'])

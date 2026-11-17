@@ -1,0 +1,66 @@
+{
+  "version": "0.4.2",
+  "candidate": "B",
+  "date": "2026-11-17",
+  "status": "built_candidate_verification_pending",
+  "output": "relase/reception-0.4.2-release-B-20261117",
+  "baseline_commit": "1c56ea561d88e12813c88b4133758ac5e6372378",
+  "package_commit": null,
+  "prompt_version": "reception-0.4.2-r2",
+  "included_changes": [
+    "Existing 0.4.2 redesign and generation fixes from candidate A.",
+    "Post-candidate source fixes for reception image selection, progress feedback and safe diagnostics.",
+    "Reviewed merchant-voice prompts, revision invalidation, translation cache identity and builtin-rule v2 adoption.",
+    "Conservative recovery for proven-unsent obsolete WhatsApp batches without resetting attempts or clearing receipt evidence."
+  ],
+  "prebuild_validation": {
+    "backend_files": 6,
+    "backend_tests": 64,
+    "tool_tests": 2,
+    "full_suite_run": false,
+    "record": "docs/verification/0.4.2-prompt-update.json"
+  },
+  "build": {
+    "status": "passed",
+    "started_at": "2026-11-17T10:35:19.764288+00:00",
+    "immediate_local_commit_required": true,
+    "finished_at": "2026-11-17T10:38:44.554486+00:00",
+    "exit_code": 0,
+    "staging": "artifacts/build/package-input-1794911738567",
+    "files": 179,
+    "archive_sha256": "a806fa0c5e54a2fc34cad5da3bce813c51aca61a8358274351dd3bdd7073e8b8",
+    "installer_signed": false,
+    "release_signature": "ed25519",
+    "log": "artifacts/verification/publish-042-B-20261117/package.log"
+  },
+  "verification": {
+    "integrity": "not_run",
+    "zip": "not_run",
+    "source_inputs": "not_run",
+    "fixed_update_signature": "not_run",
+    "installer_resource_parity": "not_run",
+    "frozen_backend": "not_run",
+    "candidate_windows": "not_run",
+    "independent_exe_entry": "not_run_existing_user_processes_will_be_preserved"
+  },
+  "publication": {
+    "repository": "juccistar/reception-workbench-releases",
+    "tag": "v0.4.2",
+    "authorized": true,
+    "cli_authentication": "not_logged_in",
+    "public_latest_before_build": "v0.3.21",
+    "target_public_tag_exists_before_build": false,
+    "metadata_source": "public GitHub HTML redirects; unauthenticated API was rate limited",
+    "draft_created": false,
+    "uploaded": false,
+    "published": false
+  },
+  "boundaries": {
+    "previous_candidate_overwritten": false,
+    "installed_application_replaced": false,
+    "real_data_migrated": false,
+    "real_customer_sends": 0,
+    "paid_model_calls": 0,
+    "private_source_pushed": false
+  }
+}

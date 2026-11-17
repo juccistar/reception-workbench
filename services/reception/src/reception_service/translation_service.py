@@ -13,6 +13,7 @@ from .errors import ServiceError
 from .photos import is_photo_placeholder
 from .repository import encoded, new_id, now_ms
 from .translation_provider import RouterTranslator, TranslationProviderError, normalize_base_url
+from .integrations.reception_prompts import TRANSLATION_PROMPT_VERSION
 
 _DEFAULT = {'enabled': False, 'base_url': 'https://api.deepseek.com/v1', 'model': '',
             'revision': 0, 'credential_ref': None, 'enabled_data_root': None}
@@ -350,7 +351,7 @@ class TranslationMixin:
             context.reverse()
             identity = {'kind': kind, 'source_id': item['source_id'], 'field': None, 'source_hash': digest}
             key = _hash([2, self.seller_id, cid, identity, 'zh-CN', self._translation_cache_model(),
-                         'chat-v3-reviewed-039', context])
+                         TRANSLATION_PROMPT_VERSION, context])
             payload = {'text': text, 'speaker': source['role'] if kind == 'message' else 'seller', 'context': context}
             resolved.append((identity, key, payload))
         if sum(len(payload['text']) for _, _, payload in resolved) > 100000:

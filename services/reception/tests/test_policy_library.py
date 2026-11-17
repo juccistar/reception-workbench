@@ -65,6 +65,33 @@ class PolicyLibraryTests(unittest.TestCase):
         self.assertEqual(list_builtin_policies(self.service)['items'][0]['content'].startswith('使用即时聊天'), True)
         self.assertEqual(len(self.service.repo.list('policy')), 1)
 
+    def test_updated_catalog_requires_review_and_preserves_merchant_copy(self):
+        for template_id in ('B01', 'B05', 'B06'):
+            with self.subTest(template_id=template_id):
+                original = save_policy(self.service, 'policy', '商家名称', '商家自定义正文', ['coat'], True, False,
+                                       category='reception', enabled=False, usage='internal_guidance',
+                                       internal_notes='商家备注', template_id=template_id, template_version=1)
+                entry = next(item for item in list_builtin_policies(self.service)['items']
+                             if item['template_id'] == template_id)
+                self.assertEqual(entry['template_version'], 2)
+                self.assertTrue(entry['available_update'])
+                self.assertEqual(self.service.repo.get('policy', original['policy_id']), original)
+                self.assertEqual(adopt_builtin_policy(self.service, template_id), original)
+                with self.assertRaises(ServiceError) as conflict:
+                    adopt_builtin_policy(self.service, template_id, content='过期的审核结果', update=True,
+                                         expected_revision=original['revision'] - 1)
+                self.assertEqual(conflict.exception.code, 'revision_conflict')
+                self.assertEqual(self.service.repo.get('policy', original['policy_id']), original)
+                updated = adopt_builtin_policy(self.service, template_id, content='商家审核合并后的正文',
+                                               update=True, expected_revision=original['revision'])
+                for key in ('policy_id', 'title', 'enabled', 'product_scope', 'usage', 'internal_notes'):
+                    self.assertEqual(updated[key], original[key], key)
+                self.assertEqual(updated['content'], '商家审核合并后的正文')
+                self.assertEqual(updated['template_version'], 2)
+                entry = next(item for item in list_builtin_policies(self.service)['items']
+                             if item['template_id'] == template_id)
+                self.assertFalse(entry['available_update'])
+
     def test_template_update_preserves_local_fields_and_applies_explicit_choices(self):
         p = adopt_builtin_policy(self.service, 'B02')
         p = save_policy(self.service, p['kind'], '本地名称', '本地规则', ['coat'], False, False,

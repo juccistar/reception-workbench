@@ -1,4 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,8 +32,12 @@ const prompts = {
   LEGACY_TRANSLATION: block('## 9. P07：'),
   LEGACY_OBSERVATION: block('## 10. P08：'),
 };
+const promptVersion = 'reception-0.4.2-r2';
+// Translation text changes must never reuse the previous prompt's cache key.
+const translationPromptVersion = 'chat-v4-' + createHash('sha256').update(prompts.TRANSLATION, 'utf8').digest('hex');
 const output = ['"""Reviewed, shared generation prompts. Regenerate with scripts/sync-reception-prompts.mjs."""',
-  'PROMPT_VERSION = "reception-0.4.2"',
+  `PROMPT_VERSION = ${JSON.stringify(promptVersion)}`,
+  `TRANSLATION_PROMPT_VERSION = ${JSON.stringify(translationPromptVersion)}`,
   ...Object.entries(prompts).map(([name, value]) => `${name} = ${JSON.stringify(value)}`),
   'AUTOMATIC = COMMON + "\\n" + AUTOMATIC_TASK + "\\n" + REQUIREMENT_CHANGE_RULES + "\\ncontext =\\n"',
   'WHATSAPP = COMMON + "\\n" + WHATSAPP_TASK + "\\ncontext =\\n"',
@@ -48,4 +53,5 @@ if (check) {
 } else {
   await writeFile(target, output, 'utf8');
 }
-console.log(JSON.stringify({ status: check ? 'matched' : 'generated', prompts: Object.keys(prompts), version: 'reception-0.4.2' }));
+console.log(JSON.stringify({ status: check ? 'matched' : 'generated', prompts: Object.keys(prompts), version: promptVersion,
+  translation_version: translationPromptVersion }));

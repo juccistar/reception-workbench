@@ -8,13 +8,16 @@ import time
 import uuid
 
 from .errors import ServiceError
-from .integrations.reception_prompts import WHATSAPP, IMAGE_NATIVE
+from .integrations.reception_prompts import WHATSAPP, IMAGE_NATIVE, PROMPT_VERSION
 from .model_inputs import resolve_whatsapp_images
 from .model_payload import model_json
 from .reply_messages import normalize_reply_output
 
 
 class AccountGenerationMixin:
+    def _account_prompt_current(self, version):
+        return version == PROMPT_VERSION
+
     def _account_source_fingerprint(self, account, chat, segment):
         rows = [row for row in self.repo.list_owned('message', account, chat, segment) if not row.get('from_me')]
         rows.sort(key=lambda row: (row.get('timestamp_ms', 0), row.get('id', '')))
@@ -28,6 +31,85 @@ class AccountGenerationMixin:
         self._generation_closed = False
         self._generation_timer = None
         self._generation_run_id = uuid.uuid4().hex
+        self._retire_obsolete_account_batches()
+
+    def _retire_obsolete_account_batches(self):
+        # AccountRepository holds the workspace's exclusive process lock. A
+        # persisted False is the exact pre-submit boundary: the host only gets
+        # a send body after _wa_prepare_send persists submission_started=True.
+        with self.repo.transaction():
+            operations_by_batch, operations_by_source = {}, {}
+            for op in self.repo.list('operation'):
+                batch_id = op.get('batch_id')
+                if isinstance(batch_id, str) and batch_id:
+                    operations_by_batch.setdefault(batch_id, []).append(op)
+                source = self._account_key(op.get('account_id'), op.get('chat_id'), op.get('pending_message_id'))
+                operations_by_source.setdefault(source, []).append(op)
+            batches = self.repo.list('reply_batch')
+            batches_by_source = {}
+            for batch in batches:
+                source = self._account_key(batch.get('account_id'), batch.get('chat_id'), batch.get('pending_message_id'))
+                batches_by_source.setdefault(source, []).append(batch)
+
+            def wholly_unsent(batch):
+                parts = batch.get('parts')
+                return (batch.get('status') in ('prepared', 'stopped') and batch.get('next_index') == 0
+                        and isinstance(parts, list) and bool(parts)
+                        and all(isinstance(part, dict) and part.get('status') in ('planned', 'prepared', 'cancelled')
+                                and part.get('message_id') is None and part.get('ack') is None
+                                and part.get('submission_started', False) is False for part in parts))
+
+            for batch in batches:
+                batch_id = batch.get('batch_id')
+                if (not isinstance(batch_id, str) or not batch_id or batch.get('status') == 'accepted'
+                        or self._account_prompt_current(batch.get('prompt_version'))):
+                    continue
+                fields = ('account_id', 'connection_epoch', 'chat_id', 'merchant_id', 'pending_message_id',
+                          'segment_id', 'binding_revision', 'source_fingerprint')
+                if any(batch.get(key) is None for key in fields) or not batch.get('source_fingerprint'):
+                    continue
+                batch_ops = operations_by_batch.get(batch_id, [])
+                parts = batch.get('parts')
+                if not batch_ops or not isinstance(parts, list) or not parts or any(not isinstance(part, dict) for part in parts):
+                    continue
+                changed = False
+                for op in batch_ops:
+                    index = op.get('part_index')
+                    if (op.get('status') != 'prepared' or op.get('submission_started') is not False
+                            or op.get('message_id') is not None or op.get('ack') is not None or op.get('legacy_receipt')
+                            or any(op.get(key) != batch.get(key) for key in fields)
+                            or type(index) is not int or not 0 <= index < len(parts)
+                            or parts[index].get('operation_id') != op.get('operation_id')
+                            or parts[index].get('status') != 'prepared' or parts[index].get('message_id') is not None
+                            or parts[index].get('ack') is not None or parts[index].get('submission_started', False) is not False
+                            or parts[index].get('body') != op.get('body')):
+                        continue
+                    op.update(status='cancelled', cancellation_reason='prompt_revision_changed')
+                    parts[index]['status'] = 'cancelled'
+                    self.repo.put('operation', op['operation_id'], op)
+                    changed = True
+                if changed:
+                    batch.update(status='stopped', updated_at=time.time_ns() // 1_000_000)
+                    self.repo.put('reply_batch', batch['batch_id'], batch)
+                if batch.get('status') != 'stopped':
+                    continue
+                # A new prompt may regenerate only a wholly unsent source. A
+                # partially accepted batch or any unresolved submission keeps
+                # its original attempt and receipts; counts are never reset.
+                source_key = self._account_key(batch['account_id'], batch['chat_id'], batch['pending_message_id'])
+                related = operations_by_source.get(source_key, [])
+                if (not related or any(op.get('status') not in ('prepared', 'cancelled')
+                        or op.get('submission_started') is not False or op.get('message_id') is not None
+                        or op.get('ack') is not None or op.get('legacy_receipt') for op in related)
+                        or not all(wholly_unsent(other) for other in batches_by_source[source_key])):
+                    continue
+                attempt = self.repo.get('generation_attempt', source_key, {})
+                if (attempt.get('status') == 'completed' and type(attempt.get('count')) is int
+                        and 0 < attempt['count'] < 3 and attempt.get('owner_run_id')
+                        and all(op.get('owner_run_id') == attempt['owner_run_id'] for op in batch_ops)
+                        and attempt.get('source_fingerprint') == batch['source_fingerprint']):
+                    attempt.update(status='failed', runtime_settled=True)
+                    self.repo.put('generation_attempt', source_key, attempt)
 
     def _arm_account_schedule(self, delay=1):
         if self._generation_closed or self._generation_timer:
@@ -60,7 +142,8 @@ class AccountGenerationMixin:
             self._generation_timer = None
 
     def _generation_current(self, job):
-        if (self._generation_closed or job['cancel'].is_set() or not self.enabled
+        if (not self._account_prompt_current(job.get('prompt_version'))
+                or self._generation_closed or job['cancel'].is_set() or not self.enabled
                 or not self.connected or (self.account, self.epoch) != (job['account_id'], job['connection_epoch'])
                 or job['merchant_id'] not in self.allowed):
             return False
@@ -113,6 +196,7 @@ class AccountGenerationMixin:
             job = dict(request, connection_epoch=self.epoch, segment_id=binding['segment_id'],
                        pending_message_id=row['pending_message_id'], source_key=source_key,
                        cancel=threading.Event(), context_deadline_ms=now + 10000,
+                       prompt_version=PROMPT_VERSION,
                        source_fingerprint=self._account_source_fingerprint(self.account, chat, binding['segment_id']))
             row['last_attempt_at_ms'] = now
             self.repo.put('conversation', self._account_key(self.account, chat), row)
@@ -294,7 +378,8 @@ class AccountGenerationMixin:
                          'chat_id': job['chat_id'], 'merchant_id': job['merchant_id'], 'segment_id': job['segment_id'],
                          'binding_revision': job['binding_revision'], 'pending_message_id': job['pending_message_id'],
                          'context_revision': job['merchant_context']['revision'], 'context_instance_id': job['merchant_context']['instance_id'],
-                         'model_snapshot': result['model_snapshot'], 'source_fingerprint': job['source_fingerprint'], 'status': 'prepared',
+                         'model_snapshot': result['model_snapshot'], 'source_fingerprint': job['source_fingerprint'],
+                         'prompt_version': job['prompt_version'], 'status': 'prepared',
                          'created_at': time.time_ns() // 1_000_000, 'updated_at': time.time_ns() // 1_000_000}
                 self.repo.db.execute('BEGIN IMMEDIATE')
                 try:
@@ -333,7 +418,8 @@ class AccountGenerationMixin:
         operation_id = uuid.uuid4().hex
         op = {key: batch[key] for key in ('account_id', 'connection_epoch', 'chat_id', 'merchant_id', 'segment_id',
               'binding_revision', 'pending_message_id', 'context_revision', 'context_instance_id', 'model_snapshot', 'batch_id', 'source_fingerprint')}
-        op.update(operation_id=operation_id, part_index=batch['next_index'], body=batch['parts'][batch['next_index']]['body'],
+        op.update(prompt_version=batch.get('prompt_version'),
+                  operation_id=operation_id, part_index=batch['next_index'], body=batch['parts'][batch['next_index']]['body'],
                   status='prepared', submission_started=False, message_id=None, ack=None, owner_run_id=self._generation_run_id)
         batch['parts'][batch['next_index']].update(status='prepared', operation_id=operation_id)
         batch.update(status='prepared', updated_at=time.time_ns() // 1_000_000)
