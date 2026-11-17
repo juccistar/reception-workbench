@@ -98,7 +98,20 @@
     "repository": "juccistar/reception-workbench-releases",
     "tag": "v0.4.2",
     "authorized": true,
-    "cli_authentication": "official_device_authorization_pending",
+    "cli_authentication": "official_device_login_retry_pending",
+    "authentication_retry": { "attempt": 2, "method": "official_cli_web_device_flow", "status": "pending" },
+    "authentication_transport_probe": {
+      "report": "artifacts/verification/publish-042-B-20261117/oauth-transport-001/report.json",
+      "requests": 4,
+      "observed_http_status": 404,
+      "interpretation": "HTTP responses were received; this does not prove the valid authentication flow or a network fix. No global network setting was changed."
+    },
+    "authentication_failure": {
+      "stage": "oauth_access_token_exchange",
+      "endpoint": "https://github.com/login/oauth/access_token",
+      "reason": "Connection read timed out; CLI auth status remains not logged in. Web authorization completion cannot be inferred from this failure.",
+      "old_device_flow_running": false
+    },
     "public_latest_before_build": "v0.3.21",
     "target_public_tag_exists_before_build": false,
     "metadata_source": "public GitHub HTML redirects; unauthenticated API was rate limited",
