@@ -1,7 +1,8 @@
 {
   "version": "0.4.2",
   "date": "2026-11-17",
-  "status": "source_updated_targeted_checks_passed_not_packaged",
+  "status": "packaged_in_candidate_B_targeted_checks_passed",
+  "candidate_record": "docs/verification/0.4.2-candidate-B.json",
   "baseline_commit": "1c56ea561d88e12813c88b4133758ac5e6372378",
   "prompt_version": "reception-0.4.2-r2",
   "translation_prompt_version": "chat-v4-a297c4e90b5dcf5619049749ff018c3323fc3556149dd55545ce7f2dd13d1591",
@@ -125,8 +126,8 @@
     "real_customer_sends": 0,
     "real_merchant_policy_records_modified": false,
     "real_data_migrated": false,
-    "desktop_built": false,
-    "new_candidate_packaged": false,
+    "desktop_built": true,
+    "new_candidate_packaged": true,
     "installed_application_replaced": false,
     "private_source_pushed": false,
     "real_model_naturalness_verified": false

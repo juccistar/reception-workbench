@@ -2,10 +2,10 @@
   "version": "0.4.2",
   "candidate": "B",
   "date": "2026-11-17",
-  "status": "built_candidate_verification_pending",
+  "status": "verified_waiting_github_authentication",
   "output": "relase/reception-0.4.2-release-B-20261117",
   "baseline_commit": "1c56ea561d88e12813c88b4133758ac5e6372378",
-  "package_commit": null,
+  "package_commit": "3ca3714f1db43c1370dc0967daa4a2c40c517feb",
   "prompt_version": "reception-0.4.2-r2",
   "included_changes": [
     "Existing 0.4.2 redesign and generation fixes from candidate A.",
@@ -23,7 +23,6 @@
   "build": {
     "status": "passed",
     "started_at": "2026-11-17T10:35:19.764288+00:00",
-    "immediate_local_commit_required": true,
     "finished_at": "2026-11-17T10:38:44.554486+00:00",
     "exit_code": 0,
     "staging": "artifacts/build/package-input-1794911738567",
@@ -31,36 +30,97 @@
     "archive_sha256": "a806fa0c5e54a2fc34cad5da3bce813c51aca61a8358274351dd3bdd7073e8b8",
     "installer_signed": false,
     "release_signature": "ed25519",
-    "log": "artifacts/verification/publish-042-B-20261117/package.log"
+    "log": "artifacts/verification/publish-042-B-20261117/package.log",
+    "immediate_local_commit_completed": true,
+    "commit_precheck_correction": "The post-build documentation writer emitted CRLF, which git diff --check rejected. Generated documentation and records were normalized to LF and the explicit 22-file source set was committed before candidate validation. No rebuild or intervening candidate validation was run."
   },
   "verification": {
-    "integrity": "not_run",
-    "zip": "not_run",
-    "source_inputs": "not_run",
-    "fixed_update_signature": "not_run",
-    "installer_resource_parity": "not_run",
-    "frozen_backend": "not_run",
-    "candidate_windows": "not_run",
-    "independent_exe_entry": "not_run_existing_user_processes_will_be_preserved"
+    "workflow": "wf_80b05306-b85",
+    "integrity": { "status": "passed", "files": 179, "report": "artifacts/verification/publish-042-B-20261117/integrity.json" },
+    "zip": { "status": "passed", "entries": 180, "all_hashes_and_crcs": true, "report": "artifacts/verification/publish-042-B-20261117/zip.json" },
+    "source_inputs": {
+      "status": "passed", "python_inputs": 118, "frozen_backend_files": 83,
+      "compiled_app_files": 11, "external_launch_modules": 7,
+      "source_manifest_sha256": "7b6ad01d4cff017c5512148282d13803c2ace43f82f4249159d5c3e76683c9b7",
+      "app_asar_sha256": "08f091a15eeb6aa55f45f62efd8de618f317dfccdbf05b4bb833b3918c595b27",
+      "report": "artifacts/verification/publish-042-B-20261117/source.json"
+    },
+    "fixed_update_signature": {
+      "status": "passed", "algorithm": "ed25519", "windows_signed": false,
+      "public_key_sha256": "af96939c43f836d2f4d20e9d86985256513987e22903936dd5d9e7d7028ed078",
+      "report": "artifacts/verification/publish-042-B-20261117/update.json"
+    },
+    "installer_resource_parity": { "status": "passed", "identical_resources": 99, "report": "artifacts/verification/publish-042-B-20261117/installer-resources.json" },
+    "sdk_and_extension": {
+      "status": "passed", "sdk_files": 3377, "sdk_packages": 193, "extension_files": 5,
+      "sdk_asar_sha256": "eaee2930b1140de6363549f9f1212aa0ade411b640581bb48ec18f600779f317",
+      "report": "artifacts/verification/publish-042-B-20261117/closures.json"
+    },
+    "frozen_backend": {
+      "status": "passed",
+      "executable_sha256": "1658c39894b890a32ab698c804740e20fe4d56e4ba5151d3a1d11482917f8464",
+      "embedded_source_modules": 7,
+      "prompt_version": "reception-0.4.2-r2",
+      "builtin_template_versions": { "B01": 2, "B05": 2, "B06": 2 },
+      "bytecode_report": "artifacts/verification/publish-042-B-20261117/frozen-prompts.json",
+      "bytecode_method": "Read the executable embedded PYZ archive and recursively compare bytecode operands, names and constants with compiled current source; do not execute application modules.",
+      "model_protocols_report": "artifacts/verification/packaged-models-042-candidate-b-001/report.json",
+      "synthetic_http_requests": 18,
+      "synthetic_image_attachments": 14,
+      "recovery_report": "artifacts/verification/prompt-revision-042-candidate-b-001/report.json",
+      "recovery_scenarios": ["unsent_count1", "exhausted_count3", "unknown", "partially_accepted"],
+      "unknown_backup_restore_report": "artifacts/verification/whatsapp-account-exe-041-release-042-b-20261117-001/report.json",
+      "scope": "Synthetic account databases, loopback HTTP and embedded bytecode inspection; no real model naturalness or real merchant ledger replay."
+    },
+    "candidate_windows": {
+      "status": "passed",
+      "workbench_checks": 24, "workbench_screenshots_reviewed": 49,
+      "launcher_and_chrome_checks": 17, "launcher_and_chrome_screenshots_reviewed": 14,
+      "all_original_screenshots_individually_read": true,
+      "workbench_report": "artifacts/verification/workbench-042-candidate-b-001/report.json",
+      "launcher_report": "artifacts/verification/launcher-supplement-042-candidate-b-001/report.json",
+      "screenshot_review": "artifacts/verification/publish-042-B-20261117/window-review.json",
+      "observations": ["Two narrow-window screenshots contain a dismissible saved-range notice over part of a disabled save button or policy heading. Static images do not establish a persistent obstruction; no extra product change was made."],
+      "scope": "Actual isolated Electron and owned system Chrome windows with synthetic customers. Workbench uses candidate renderer/preload with source synthetic business support; launcher uses candidate SDK, extension and frozen account backend. This is not a new exhaustive design comparison or a real merchant acceptance test."
+    },
+    "independent_exe_entry": {
+      "status": "not_run",
+      "reason": "The earlier candidate A entry exited before opening a window while installed user processes remained. This round preserved those processes and used isolated candidate-resource window probes; B independent entry is not claimed passed."
+    }
   },
+  "public_assets": [
+    { "name": "ReceptionWorkbench-Setup-0.4.2.exe", "bytes": 145117174, "sha256": "0d052cce8fbbe1307d5f1af1b4d79e49ed47470ad8831825116c468617579196" },
+    { "name": "ReceptionWorkbench-Setup-0.4.2.exe.blockmap", "bytes": 150987, "sha256": "0d430f8bae72c018e1bb8aeca5e73dfe27af0d31ac9d268e3f8642400eb9ff04" },
+    { "name": "latest.yml", "bytes": 722, "sha256": "a2a27290f583c4fb79cbbc98ac8997422a947096d8d1568a8375dc7dc8a4af4c" },
+    { "name": "ReceptionWorkbench-0.4.2.zip", "bytes": 188966522, "sha256": "a806fa0c5e54a2fc34cad5da3bce813c51aca61a8358274351dd3bdd7073e8b8" }
+  ],
   "publication": {
     "repository": "juccistar/reception-workbench-releases",
     "tag": "v0.4.2",
     "authorized": true,
-    "cli_authentication": "not_logged_in",
+    "cli_authentication": "official_device_authorization_pending",
     "public_latest_before_build": "v0.3.21",
     "target_public_tag_exists_before_build": false,
     "metadata_source": "public GitHub HTML redirects; unauthenticated API was rate limited",
     "draft_created": false,
     "uploaded": false,
-    "published": false
+    "published": false,
+    "public_download_verification": "not_run_before_publication"
   },
+  "initial_check_failures": [
+    "The build itself succeeded. A post-build documentation newline check failed before commit; corrected to LF and committed without another build.",
+    "The update verifier initially compared a lowercase drive path against delivery's uppercase drive path; using the exact absolute candidate path passed. Original diagnostic: artifacts/verification/publish-042-B-20261117/update-initial-failure.txt.",
+    "The first unknown-backup probe label collided with an older 0.4.1 report directory and stopped at mkdir before spawning a backend. A fresh release-042-b-20261117-001 label passed; the historical report was not overwritten or counted."
+  ],
   "boundaries": {
     "previous_candidate_overwritten": false,
     "installed_application_replaced": false,
     "real_data_migrated": false,
+    "real_merchant_ledger_replay": false,
+    "real_model_naturalness_verified": false,
     "real_customer_sends": 0,
     "paid_model_calls": 0,
-    "private_source_pushed": false
+    "private_source_pushed": false,
+    "full_suite_run": false
   }
 }
