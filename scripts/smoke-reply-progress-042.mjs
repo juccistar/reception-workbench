@@ -67,7 +67,7 @@ try {
   ];
   for (let index = 0; index < phases.length; index++) {
     const [phase, text] = phases[index];
-    await app.evaluate(value => globalThis.__setWindowReplyProgress(value), phase);
+    await app.evaluate((_, value) => globalThis.__setWindowReplyProgress(value), phase);
     await page.locator('.reply-activity').getByText(text, { exact: true }).waitFor();
     if (index === 0) await page.locator('.reply-activity').evaluate(node => { node.dataset.continuity = 'preserved'; });
     else assert.equal(await page.locator('.reply-activity').getAttribute('data-continuity'), 'preserved', `Progress container changed at ${phase}`);
@@ -82,7 +82,7 @@ try {
   await page.getByRole('button', { name: '读取图片', exact: true }).click();
   await page.getByText('正在读取商品资料', { exact: true }).waitFor();
   assert.equal(await page.locator('.requirement-product-images').getAttribute('aria-busy'), 'true');
-  assert.equal(await page.locator('.requirement-product-images .tiny-spinner').evaluate(node => getComputedStyle(node).animationName), 'spin');
+  await until(() => page.locator('.requirement-product-images .tiny-spinner').evaluateAll(nodes => nodes.some(node => node.isConnected && getComputedStyle(node).animationName === 'spin')), 'Image loading animation is missing');
   await shot('08-image-metadata.png');
   await app.evaluate(() => globalThis.__setWindowImageProgress('download'));
   await page.getByText('正在下载商品图片', { exact: true }).waitFor();

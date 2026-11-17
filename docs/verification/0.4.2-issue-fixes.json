@@ -2,7 +2,10 @@
   "version": "0.4.2",
   "date": "2026-11-17",
   "scope": "revised_five_issue_plan",
-  "status": "source_checks_passed_window_verification_pending",
+  "status": "source_and_isolated_window_passed_two_live_issues_pending",
+  "source_build_commit": "1418614",
+  "immediate_commit_after_build": true,
+  "test_logs": "artifacts/verification/issue-fixes-042-20261117",
   "implemented": [
     "current WhatsApp chat result distinguishes no selection from recognition failure and logs only changed allowlisted stages",
     "current-window buyer chat images enter reception understanding independently of formal product-image assignment",
@@ -35,7 +38,26 @@
     "formal_requirement_image_ownership_preserved": true
   },
   "build": { "status": "passed", "command": "node scripts/build.mjs", "output": "artifacts/app", "package_created": false },
-  "windows": "pending",
+  "windows": {
+    "status": "passed",
+    "report": "artifacts/verification/reply-progress-042-issue-fixes-003/report.json",
+    "actual_electron_window": true,
+    "synthetic_python_business": true,
+    "automatic_stages_projected": true,
+    "manual_suggestion_uses_real_local_job": true,
+    "checks": 4,
+    "screenshots": 10,
+    "screenshots_actually_viewed": 10,
+    "renderer_errors": 0,
+    "normal_shutdown": true,
+    "motion_enabled": true,
+    "busy_animation_observed": true,
+    "same_progress_dom_node_preserved": true,
+    "earlier_attempts": [
+      { "report": "artifacts/verification/reply-progress-042-issue-fixes-001/report.json", "status": "failed", "reason": "driver passed Electron module as callback argument; corrected argument position" },
+      { "report": "artifacts/verification/reply-progress-042-issue-fixes-002/report.json", "status": "failed", "reason": "driver sampled detached image spinner during rerender; now waits for a connected animated element" }
+    ]
+  },
   "boundaries": {
     "paid_model_calls": 0,
     "real_customer_sends": 0,
